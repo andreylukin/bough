@@ -1,0 +1,302 @@
+# A project's preflight (orb.Preflight: the orb panel's Preflight list and
+# `bough project status`) against what a session start then actually does
+# (orb.Prepare + Start: rt.Available, SyncRepos, addWorktree, the image,
+# the container). The project has one repo; identity lists gh; there is
+# one secret. Everything the start and the check both read about the
+# host is the "world" below, and it only moves while no start is running.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - A failing secret or gh check never fails a start: secretValues
+#     leaves an unresolved secret out (a stderr line, once) and passes an
+#     empty one as NAME=; identityEnv just omits GH_TOKEN. The panel's
+#     "A session started now will fail the same way" is false for both
+#     (FailVerdictFailsSameWay stops at the checks a start needs).
+#   - The base ref is not checked for EITHER kind of repo: a remote with
+#     `branch:` naming a missing branch passes ls-remote HEAD exactly like
+#     a path repo passes rev-parse --git-dir; both fail in addWorktree.
+#   - A credential prompt hangs the start for a cached remote too, not
+#     only on the first clone: syncCache's fetch goes through gitOut,
+#     which sets no GIT_TERMINAL_PROMPT=0 either, and the prompt sits
+#     until plugins/orb's 30-minute context kills it. Preflight says
+#     "warn: the cached clone is used" for exactly that remote.
+#   - The panel re-reads the detail on its own only when the definition's
+#     summary changes (projects.tsx useEffect on project.orb): a keychain,
+#     network, gh or runtime change stays shown stale until Re-check,
+#     and Re-check is offered only inside the failing callout.
+#   - The detail GET is bounded (10 s per clone check, 5 s gh, 30 s per
+#     keychain read, the runtime timeout) but synchronous, so Answer is
+#     fair and "bounded" holds; the N x 10 s stall is a latency note.
+#   - The port forwards, identity dirs and the image recipe are unchecked
+#     but do not fail a fresh start (a busy port is dropped with a reason,
+#     a missing identity dir is not mounted, the build is its own flow,
+#     orb-image-build); they are left out of the world.
+#   - The cache clone is keyed by the repo NAME, not its URL: adding a
+#     token to the same remote keeps `cached`; switching to a path repo
+#     (another name) drops it.
+#
+# Fields (role Project):
+#   rt       the container runtime answers (rt.Available)
+#   repo     remote | path: the project's one repo
+#   net      the remote as a git without a terminal sees it: online |
+#            offline | auth (needs credentials no helper holds: an
+#            interactive git would prompt). A path repo keeps "online".
+#   cached   the bare cache clone exists (only a remote start makes it)
+#   token    the remote URL carries userinfo (https://user:tok@host/...)
+#   base     the repo's base ref (branch: or HEAD) exists
+#   creds    ok | secret_empty | secret_missing | gh_missing: the one
+#            secret's keychain item, and `gh auth token`. One of them is
+#            broken at a time: both only ever fail the check, never the
+#            start, so their combinations add states and no behaviour.
+#   panel    the orb panel: closed | loading | stale (the definition
+#            changed since its read; the list poll will re-read) |
+#            pass (shown, no failing check) | fail (the failing callout
+#            with Edit project.yml and Re-check)
+#   leak     the last detail shown carries the URL's credential
+#   start    none | ok | fail | hang: the latest session start
+#   cause    why it failed: runtime | clone | worktree | prompt
+
+# --- the product's functions, as the code computes them ---
+
+# cloneCheck: a path repo only has to be a git checkout; a remote has to
+# answer ls-remote HEAD (prompts off), or have a cached clone.
+def clone_check(p):
+    if p.repo == "path":
+        return "ok"
+    if p.net == "online":
+        return "ok"
+    if p.cached:
+        return "warn"
+    return "fail"
+
+def failing(p):
+    k = []
+    if not p.rt:
+        k.append("runtime")
+    if clone_check(p) == "fail":
+        k.append("clone")
+    if p.creds == "gh_missing":
+        k.append("gh")
+    if p.creds in ("secret_empty", "secret_missing"):
+        k.append("secret")
+    return k
+
+def verdict(p):
+    if len(failing(p)) > 0:
+        return "fail"
+    if clone_check(p) == "warn":
+        return "warn"
+    return "ok"
+
+# The detail text of the clone check before stripUserinfo: git's last
+# line and "cannot reach <remote>" carry the URL, userinfo included,
+# whenever ls-remote failed.
+def raw_leak(p):
+    return p.repo == "remote" and p.token and p.net != "online"
+
+# stripUserinfo runs (deferred) on both the warn and the fail detail.
+# The token is modelled as one that appears in the URL as it decodes: a
+# percent-encoded one (ab%2Fcd) is replaced in its decoded form only and
+# survives in "cannot reach <remote>" (see notes), and the username is
+# replaced everywhere, so a user "git" mangles "git" in git's message.
+def shown_leak(p):
+    return False
+
+# Prepare then Start: runtime, clone/fetch, worktree. Secrets and gh do
+# not enter; the prompt paths are git without GIT_TERMINAL_PROMPT=0.
+def start_outcome(p):
+    if not p.rt:
+        return "fail", "runtime"
+    if p.repo == "remote":
+        if p.net == "auth":
+            return "hang", "prompt"
+        if p.net == "offline" and not p.cached:
+            return "fail", "clone"
+    if not p.base:
+        return "fail", "worktree"
+    return "ok", ""
+
+role Project:
+    action Init:
+        self.rt = True
+        self.repo = "remote"
+        self.net = "online"
+        self.cached = False
+        self.token = False
+        self.base = True
+        self.creds = "ok"
+        self.panel = "closed"
+        self.leak = False
+        self.start = "none"
+        self.cause = ""
+
+    # --- the orb panel (#/projects/<slug>/orb) ---
+
+    atomic action OpenOrbPanel:
+        require self.start == "none" and self.panel == "closed"
+        self.panel = "loading"
+
+    atomic action ClosePanel:
+        require self.start == "none" and self.panel != "closed"
+        self.panel = "closed"
+
+    # GET /api/projects/<slug>/orb returns with Preflight computed now.
+    atomic fair action Answer:
+        require self.panel == "loading"
+        self.panel = "fail" if verdict(self) == "fail" else "pass"
+        self.leak = shown_leak(self)
+
+    # Re-check is a button in the failing callout only.
+    atomic action ClickReCheck:
+        require self.start == "none" and self.panel == "fail"
+        self.panel = "loading"
+
+    # The list poll brings the new summary; the effect re-reads.
+    atomic fair action Reload:
+        require self.panel == "stale"
+        self.panel = "loading"
+
+    # --- project.yml edits (a definition change moves the summary) ---
+
+    atomic action EditRepoToPath:
+        require self.start == "none" and self.repo == "remote"
+        self.repo = "path"
+        self.net = "online"
+        self.cached = False
+        self.token = False
+        self.base = True
+        self.edited()
+
+    atomic action EditRepoToRemote:
+        require self.start == "none" and self.repo == "path"
+        self.repo = "remote"
+        self.base = True
+        self.edited()
+
+    atomic action EditRemoteToken:
+        require self.start == "none" and self.repo == "remote"
+        self.token = not self.token
+        self.edited()
+
+    atomic action EditBaseRef:
+        require self.start == "none" and not self.base
+        self.base = True
+        self.edited()
+
+    # --- the host changes under the project ---
+
+    atomic action RuntimeStops:
+        require self.start == "none" and self.rt
+        self.rt = False
+
+    atomic action RuntimeStarts:
+        require self.start == "none" and not self.rt
+        self.rt = True
+
+    atomic action RemoteOffline:
+        require self.start == "none" and self.repo == "remote" and self.net != "offline"
+        self.net = "offline"
+
+    atomic action RemoteOnline:
+        require self.start == "none" and self.repo == "remote" and self.net != "online"
+        self.net = "online"
+
+    # The credential a helper held is revoked (or never was there).
+    atomic action RemoteNeedsAuth:
+        require self.start == "none" and self.repo == "remote" and self.net != "auth"
+        self.net = "auth"
+
+    atomic action BaseRefMissing:
+        require self.start == "none" and self.base
+        self.base = False
+
+    atomic action GhLoggedOut:
+        require self.start == "none" and self.creds == "ok"
+        self.creds = "gh_missing"
+
+    atomic action GhLoggedIn:
+        require self.start == "none" and self.creds == "gh_missing"
+        self.creds = "ok"
+
+    atomic action SecretEmptied:
+        require self.start == "none" and self.creds == "ok"
+        self.creds = "secret_empty"
+
+    atomic action SecretRemoved:
+        require self.start == "none" and self.creds == "ok"
+        self.creds = "secret_missing"
+
+    atomic action SecretStored:
+        require self.start == "none" and self.creds in ("secret_empty", "secret_missing")
+        self.creds = "ok"
+
+    # --- a session start (the page moves to the new thread) ---
+
+    atomic action StartSession:
+        require self.start == "none"
+        self.panel = "closed"
+        r = start_outcome(self)
+        self.start = r[0]
+        self.cause = r[1]
+        if self.start == "ok" and self.repo == "remote":
+            self.cached = True
+
+    # plugins/orb's 30-minute context kills the prompting git.
+    atomic fair action PromptTimesOut:
+        require self.start == "hang"
+        self.start = "fail"
+
+    atomic action SessionEnds:
+        require self.start in ("ok", "fail")
+        self.start = "none"
+        self.cause = ""
+
+    atomic func edited():
+        if self.panel in ("pass", "fail"):
+            self.panel = "stale"
+
+action Init:
+    project = Project()
+
+# A start after an ok or warn verdict fails (or hangs) only for a reason
+# the preflight does not check: the base ref (StartFailsDespiteOk), or
+# the credential prompt behind a cached remote's warn.
+always assertion OkVerdictFailsOnlyUnchecked:
+    if project.start not in ("fail", "hang") or verdict(project) == "fail":
+        return True
+    return project.cause in ("worktree", "prompt")
+
+# A failing runtime or clone check fails the start the same way.
+always assertion FailVerdictFailsSameWay:
+    if project.start == "none":
+        return True
+    k = failing(project)
+    if "runtime" in k:
+        return project.start == "fail" and project.cause == "runtime"
+    if "clone" in k:
+        return project.start in ("fail", "hang") and project.cause in ("clone", "prompt")
+    # Only secret or gh fail: the start works (StartOkDespiteFail), which
+    # is the gap in the panel's "will fail the same way" (see notes).
+    return True
+
+# No detail the panel shows carries the remote URL's credential.
+always assertion NoCredentialInDetail:
+    return not project.leak
+
+# The mapped "never blocks on a prompt" does not hold (see notes); what
+# holds is that a start hangs only on a remote preflight flagged.
+always assertion HangOnlyWhenRemoteFlagged:
+    if project.cause != "prompt":
+        return True
+    return clone_check(project) != "ok"
+
+# The detail answers, however unreachable the remotes.
+always eventually assertion DetailAnswers:
+    return project.panel != "loading"
+
+# An edited definition is eventually what the panel shows.
+always eventually assertion ReCheckReflectsDefinition:
+    return project.panel != "stale"
+
+# A hung start ends (at the 30-minute context).
+always eventually assertion StartSettles:
+    return project.start != "hang"
