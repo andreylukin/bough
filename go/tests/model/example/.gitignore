@@ -1,0 +1,3 @@
+# fizz writes the parsed AST next to the spec and runs under out/.
+*.json
+out/

@@ -1,0 +1,21 @@
+# A three-state toy used to document fizz's state-graph output
+# (go/tests/model/GRAPH.md). Red -> Green -> Yellow -> Red, one action
+# per edge so every link in the graph carries a distinct action name.
+
+always assertion ValidColor:
+    return color in ("red", "green", "yellow")
+
+action Init:
+    color = "red"
+
+atomic action Go:
+    require color == "red"
+    color = "green"
+
+atomic action Slow:
+    require color == "green"
+    color = "yellow"
+
+atomic action Stop:
+    require color == "yellow"
+    color = "red"
