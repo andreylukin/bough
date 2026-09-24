@@ -1,0 +1,214 @@
+---
+# A started session is where this flow ends (StartOk has no successor):
+# that is the goal state, not a deadlock.
+deadlock_detection: false
+---
+
+# First run in the web UI (go/internal/serve/web/src/welcome.tsx, the
+# welcome state in app.tsx, and go/internal/serve/setup.go): an empty
+# server opens on the welcome; the person saves a provider key, the page
+# asks the provider whether it works, checks the folder the session would
+# start in, and a sample prompt starts the first session.
+#
+# One role, Setup, is the page as a phone shows it (the narrow layout is
+# the one with a pane to get wrong; on a desktop both panes are on screen).
+#
+#   welcome   app.tsx's state: "auto" (shown while no session exists),
+#             "on" (palette "Show the welcome"), "off" (skipped / closed)
+#   done      localStorage bough:welcome-done, what the next visit reads
+#   skipped   the person pressed Skip (the other writer of done)
+#   session   a session exists on the server (POST /api/sessions
+#             succeeded); it opens at once, which unmounts the welcome
+#   pane      the phone's pane: "list" or "thread" (the welcome lives in
+#             the thread pane)
+#   key       the step-1 line for the one provider modelled: "unset",
+#             "saving" (POST /api/setup/key in flight), "checking"
+#             (GET /api/setup/check in flight), "works", "rejected".
+#             "" while the welcome is not mounted.
+#   keyset    the server has a key for it (~/.bough/env or process env):
+#             what a remounted welcome re-checks
+#   typed     the folder path in the field, by what is there: "plain"
+#             (exists, not a git checkout: read-only session), "checkout"
+#             (exists, inside a checkout: the agent can edit), "missing".
+#             The field starts at serve's start dir, modelled as "plain"
+#             (a fresh HOME). "" while not mounted.
+#   folder    the line under the field: "checking" or the answer of
+#             GET /api/setup?cwd= for the typed path. "" while not mounted.
+#   start     "idle", "starting" (POST /api/sessions in flight), "failed"
+#
+# Where this corrects the mapped model (checked against the code):
+# - KeyOk and KeyUnknown are one state, "works": keyLine counts an
+#   unchecked key as usable and prints the same line for both, so no
+#   reader of the page can tell them apart.
+# - A folder that is not a checkout can start a session (read-only):
+#   ready is keys.working && folder.exists, not folder.checkout.
+# - The folder field opens only once a key works (reach[1]), and the key
+#   form is offered only while no key works (unset or rejected).
+# - The model ends at the first session. "Show the welcome" after one
+#   exists, and the phone's Back arrow (welcome off without writing
+#   bough:welcome-done), are left out to keep the graph walkable.
+
+
+# Whether the welcome is on screen: app.tsx showWelcome, and the thread
+# pane renders it only while no session is open.
+def shown(s):
+    return (not s.session) and (s.welcome == "on" or s.welcome == "auto")
+
+# The welcome's `ready`: a key that works (or could not be asked) and a
+# folder that exists, and no start already in flight.
+def ready(s):
+    return (s.key == "works"
+            and (s.folder == "plain" or s.folder == "checkout")
+            and s.start != "starting")
+
+role Setup:
+    action Init:
+        self.welcome = "auto"
+        self.done = False
+        self.skipped = False
+        self.session = False
+        self.pane = "thread"
+        self.keyset = False
+        self.key = "unset"
+        self.typed = "plain"
+        self.folder = "checking"
+        self.start = "idle"
+
+    # --- step 1: the key -------------------------------------------------
+
+    atomic action SaveKey:
+        require shown(self)
+        require self.key == "unset" or self.key == "rejected"
+        self.key = "saving"
+
+    atomic action SaveOk:
+        require self.key == "saving"
+        self.keyset = True
+        # A new provider list re-asks every set key.
+        self.key = "checking"
+
+    atomic action SaveFail:
+        require self.key == "saving"
+        # The form stays as it was: a rejected key is still the one set.
+        self.key = "rejected" if self.keyset else "unset"
+
+    atomic action KeyOk:
+        require self.key == "checking"
+        self.key = "works"
+
+    atomic action KeyRejected:
+        require self.key == "checking"
+        self.key = "rejected"
+
+    # The server gives up on the provider after 8 s (checkSetupKey's
+    # context timeout) and answers "unknown", so a check always settles:
+    # this is the action the liveness claim needs to be fair.
+    atomic fair action KeyUnknown:
+        require self.key == "checking"
+        # keyLine counts a key it could not check as usable, and says so
+        # in the same words as a key the provider accepted.
+        self.key = "works"
+
+    # --- step 2: the folder ----------------------------------------------
+    # The field is open only once a key works (reach[1] in welcome.tsx);
+    # the check of serve's start dir runs from the first render. An edit
+    # is one path typed and its answer awaited: the 250 ms debounce and
+    # the dropped answer for an older path are welcome.tsx's own effect,
+    # and the claim they serve is FolderLineMatchesTypedPath.
+
+    atomic action EditMissing:
+        require shown(self) and self.typed != "missing"
+        require self.key == "works"
+        require self.folder != "checking"
+        self.typed = "missing"
+        self.folder = "checking"
+
+    atomic action EditPlain:
+        require shown(self) and self.typed != "plain"
+        require self.key == "works"
+        require self.folder != "checking"
+        self.typed = "plain"
+        self.folder = "checking"
+
+    atomic action EditCheckout:
+        require shown(self) and self.typed != "checkout"
+        require self.key == "works"
+        require self.folder != "checking"
+        self.typed = "checkout"
+        self.folder = "checking"
+
+    atomic action FolderAnswer:
+        require self.folder == "checking"
+        self.folder = self.typed
+
+    # --- step 3: start ---------------------------------------------------
+
+    atomic action Start:
+        require shown(self) and ready(self)
+        self.start = "starting"
+
+    atomic action StartOk:
+        require self.start == "starting"
+        self.session = True
+        self.done = True
+        self.key = ""
+        self.typed = ""
+        self.folder = ""
+        self.start = "idle"
+
+    atomic action StartFail:
+        require self.start == "starting"
+        self.start = "failed"
+
+    # --- leaving and coming back -----------------------------------------
+
+    atomic action Skip:
+        require shown(self)
+        self.done = True
+        self.skipped = True
+        self.welcome = "off"
+        self.pane = "list"
+        self.key = ""
+        self.typed = ""
+        self.folder = ""
+        self.start = "idle"
+
+    # The palette's "Show the welcome": goList, then the welcome mounts
+    # afresh in the thread pane and asks /api/setup again.
+    atomic action ShowWelcome:
+        require not shown(self)
+        # The palette offers it after a session exists too; see the header.
+        require not self.session
+        self.welcome = "on"
+        self.pane = "thread"
+        self.key = "checking" if self.keyset else "unset"
+        self.typed = "plain"
+        self.folder = "checking"
+        self.start = "idle"
+
+
+action Init:
+    setup = Setup()
+
+# The folder line is the answer for the path in the field, or "checking":
+# never an answer for a path typed before.
+always assertion FolderLineMatchesTypedPath:
+    return setup.folder in ("", "checking") or setup.folder == setup.typed
+
+# bough:welcome-done is written only once a session exists: a start that
+# failed must leave the welcome there on the next visit.
+always assertion DismissedOnlyWithSession:
+    return not setup.done or setup.session or setup.skipped
+
+# An empty server on a phone opens on the welcome (thread pane), not on
+# the empty list.
+always assertion PhoneShowsWelcomeOnEmptyServer:
+    return not shown(setup) or setup.pane == "thread"
+
+# A rejected key never counts as working: nothing can start on it.
+always assertion RejectedKeyNeverWorks:
+    return not (setup.key == "rejected" and (ready(setup) or setup.start == "starting"))
+
+# Every key check settles: accepted, rejected, or unknown (the 8 s timeout).
+always eventually assertion KeyCheckSettles:
+    return setup.key != "checking"

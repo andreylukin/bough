@@ -31,6 +31,11 @@ import { PortalPane } from "./portal";
 
 export type View = "sessions" | "me" | "projects" | "project" | "hooks" | "wiki";
 
+// The welcome's start goes through act, which puts the reason in the
+// toast and resolves false instead of throwing: passed straight through, a
+// refused start read as a started one there, wrote bough:welcome-done and
+// left "Starting…" up for good. Its own callout points at the toast.
+const START_REFUSED = "The notice at the bottom says why.";
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -5861,7 +5866,7 @@ export default function App() {
         <PendingThread sending={pending[selected]} />
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
-          {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => { setWelcome("off"); if (narrow) goList(); }} onBack={narrow ? () => { setWelcome("off"); goList(); } : undefined} /> : <>
+          {!selected ? (showWelcome ? <Welcome onStart={async (cwd, p) => { if (!(await start(cwd, p))) throw new Error(START_REFUSED); }} onSkip={() => { setWelcome("off"); if (narrow) goList(); }} onBack={narrow ? () => { setWelcome("off"); goList(); } : undefined} /> : <>
             <ControlOverview actions={home ? <>
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
                 <button className="btn ov-new" onClick={async () => { if (newMode.mode === "project" && !(await confirmFailedBuild(projects.find((p) => p.slug === newMode.project)))) return; void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>

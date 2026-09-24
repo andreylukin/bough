@@ -175,7 +175,7 @@ const heartbeat = 15 * time.Second
 func NewAPI(sup *Supervisor) *API {
 	home, _ := os.UserHomeDir()
 	start, _ := os.Getwd()
-	a := &API{sup: sup, mux: http.NewServeMux(), home: home, start: start, getenv: os.Getenv, setenv: os.Setenv, checkKey: checkProviderKey}
+	a := &API{sup: sup, mux: http.NewServeMux(), home: home, start: start, getenv: os.Getenv, setenv: os.Setenv, checkKey: keyChecker(os.Getenv("BOUGH_SETUP_CHECK_URL"))}
 	a.ingest = a.spawnIngest
 	a.brief = a.spawnBrief
 	a.mux.HandleFunc("GET /api/health", a.health)

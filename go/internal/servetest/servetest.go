@@ -49,6 +49,9 @@ type Options struct {
 	Files map[string]string
 	// Env is appended to the child's environment ("K=V").
 	Env []string
+	// Dir is where serve starts, relative to HOME and created before
+	// start; "" is HOME. It is the folder first-run setup offers.
+	Dir string
 	// ReadyTimeout bounds the wait for /api/health; default 30s.
 	ReadyTimeout time.Duration
 }
@@ -75,7 +78,10 @@ type Server struct {
 // launch starts serve from bin on s's HOME and address.
 func (s *Server) launch(bin string) error {
 	cmd := exec.Command(bin, "serve", "--run", s.Addr)
-	cmd.Dir = s.Home
+	cmd.Dir = filepath.Join(s.Home, s.opts.Dir)
+	if err := os.MkdirAll(cmd.Dir, 0o755); err != nil {
+		return err
+	}
 	cmd.Env = childEnv(s.Home, s.opts.Env)
 	cmd.Stdout, cmd.Stderr = s.out, s.out
 	setProcessGroup(cmd)

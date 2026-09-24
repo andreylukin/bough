@@ -29,11 +29,14 @@ export interface ServeOpts {
    *  Defaults to an llm-echo row so no test reaches a provider. */
   config?: string;
   readyTimeoutMs?: number;
-  /** Extra environment for serve and the sessions it starts. */
+  /** Extra environment for serve and the sessions it starts (after the key scrub). */
   env?: Record<string, string>;
   /** What to run instead of bough, with the same `serve --run ADDR`
    *  (tests/model/orbserve: serve over a container runtime the test owns). */
   bin?: string;
+  /** serve's working directory, relative to HOME (default HOME itself):
+   *  the folder the welcome offers first. */
+  cwd?: string;
 }
 
 export interface Serve {
@@ -96,6 +99,10 @@ export async function startServe(
 
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
+  // cwd is HOME or a folder under it, neither with a ./bough.yml, so
+  // ~/.bough/bough.yml is the one in force.
+  const cwd = path.join(home, opts.cwd ?? '');
+  fs.mkdirSync(cwd, { recursive: true });
   const chunks: string[] = [];
   const output = () => chunks.join('');
   // A restart spawns serve again on the same HOME and port: the child,
@@ -104,8 +111,7 @@ export async function startServe(
   let exited!: Promise<void>;
   let bin = opts.bin ?? boughBin;
   const launch = (b: string) => {
-    // cwd = HOME, which has no ./bough.yml, so ~/.bough/bough.yml is the one in force.
-    const c = spawn(b, ['serve', '--run', `127.0.0.1:${port}`], { cwd: home, env: hermeticEnv(home, opts.env) });
+    const c = spawn(b, ['serve', '--run', `127.0.0.1:${port}`], { cwd, env: hermeticEnv(home, opts.env) });
     c.stdout?.on('data', (d) => chunks.push(String(d)));
     c.stderr?.on('data', (d) => chunks.push(String(d)));
     exited = new Promise<void>((resolve) => c.once('exit', () => resolve()));

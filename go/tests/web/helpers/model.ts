@@ -100,7 +100,10 @@ export function modelTests<C>(flow: Flow<C>): void {
     if (!flow.shared && (flow.config || flow.env)) test.use({ serveOpts: opts });
 
     loadPaths(flow.spec).forEach((trace, i) => {
-      const walk = trace.slice(1).map((s) => s.action.slice(flow.role.length + 1)).join(' → ');
+      // "end" is fizz's self-link on a state with no action out of it (a
+      // goal state): nothing to do, the state is read again.
+      const name = (a: string) => (a === 'Init' || a === 'end' ? a : a.slice(flow.role.length + 1));
+      const walk = trace.slice(1).map((s) => name(s.action)).join(' → ');
       const title = `path ${i}: ${walk}`;
       const run = async (serve: Serve, page: Page, info: TestInfo) => {
         const errors: string[] = [];
@@ -121,12 +124,12 @@ export function modelTests<C>(flow: Flow<C>): void {
         c = await flow.init(page, serve);
         try {
           for (const [n, step] of trace.entries()) {
-            const name = step.action === 'Init' ? 'Init' : step.action.slice(flow.role.length + 1);
-            const where = `step ${n} (${name})`;
-            if (n > 0) {
-              const act = flow.actions[name];
-              if (!act) throw new Error(`${flow.spec}: no action for ${step.action}`);
-              await act(c);
+            const act = name(step.action);
+            const where = `step ${n} (${act})`;
+            if (n > 0 && act !== 'end') {
+              const perform = flow.actions[act];
+              if (!perform) throw new Error(`${flow.spec}: no action for ${step.action}`);
+              await perform(c);
             }
             // The page settles on its own time (polls, acks), so the
             // state is polled, each read a few page-seconds after the
