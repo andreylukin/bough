@@ -151,12 +151,29 @@ export function Select({ value, options: given, onChange, label, placeholder = "
     else if (e.key === "Tab") hide(false);
   };
 
+  return <SelectView open={open} save={save} shown={shown} at={at} value={value} current={current} listId={listId} optId={optId}
+    label={label} placeholder={placeholder} searchable={searchable} align={align} note={note} detailHeading={detailHeading}
+    footer={footer} suffix={suffix} disabled={disabled} pos={pos} q={q} root={root} btn={btn} list={list} pop={pop}
+    onKey={onKey} onButton={() => (open ? hide(false) : show())} onRetrySave={() => save && commit(save.value)}
+    onQ={(v) => { setQ(v); setAt(0); }} onHover={setAt} onPick={pick} />;
+}
+
+/** The Select as its state says: the button, a save in flight or refused, and, open, the options. */
+export function SelectView({ open, save, shown, at, value, current, listId, optId, label, placeholder, searchable, align, note, detailHeading, footer, suffix, disabled, pos, q, root, btn, list, pop, onKey, onButton, onRetrySave, onQ, onHover, onPick }: {
+  open: boolean; save: { value: string; state: "saving" | "failed" } | null; shown: Option[]; at: number; value: string; current?: Option;
+  listId: string; optId: (i: number) => string; label: string; placeholder: string; searchable: boolean; align: "start" | "end";
+  note?: string; detailHeading?: string; footer?: (o: Option | undefined) => React.ReactNode; suffix?: string; disabled: boolean;
+  pos: React.CSSProperties; q: string;
+  root?: React.Ref<HTMLDivElement>; btn?: React.Ref<HTMLButtonElement>; list?: React.Ref<HTMLDivElement>; pop?: React.Ref<HTMLDivElement>;
+  onKey: (e: React.KeyboardEvent) => void; onButton: () => void; onRetrySave: () => void; onQ: (q: string) => void;
+  onHover: (i: number) => void; onPick: (o: Option) => void;
+}) {
   return (
     <div className={"sel" + (open ? " sel-open" : "")} ref={root} onKeyDown={onKey}>
       <button ref={btn} type="button" className="sel-btn" role="combobox" aria-haspopup="listbox" aria-expanded={open} disabled={disabled}
               aria-controls={listId} aria-activedescendant={open && !searchable && shown[at] ? optId(at) : undefined}
               aria-label={`${label}: ${current?.label ?? (value || placeholder)}`}
-              onClick={() => (open ? hide(false) : show())}>
+              onClick={onButton}>
         {/* A value the options do not list yet (the catalogue still
             loading, a project since deleted) is shown as itself. */}
         <span className={"sel-value" + (current || value ? "" : " sel-placeholder")}>{current?.short ?? current?.label ?? (value ? value.split("/").pop() : placeholder)}</span>
@@ -168,7 +185,7 @@ export function Select({ value, options: given, onChange, label, placeholder = "
       </button>
       {save && (
         save.state === "saving" ? <span className="sel-save" role="status">Saving…</span>
-          : <button type="button" className="sel-save sel-save-failed" onClick={() => commit(save.value)}>Couldn’t save · Retry</button>
+          : <button type="button" className="sel-save sel-save-failed" onClick={onRetrySave}>Couldn’t save · Retry</button>
       )}
       {open && (
         <div ref={pop} style={pos} className={"sel-pop sel-" + align}>
@@ -176,7 +193,7 @@ export function Select({ value, options: given, onChange, label, placeholder = "
             <input className="sel-search" autoFocus value={q} placeholder={`Search ${label.toLowerCase()}`}
                    aria-label={`Search ${label.toLowerCase()}`} role="combobox" aria-expanded="true"
                    aria-controls={listId} aria-autocomplete="list" aria-activedescendant={shown[at] ? optId(at) : undefined}
-                   onChange={(e) => { setQ(e.target.value); setAt(0); }} />
+                   onChange={(e) => onQ(e.target.value)} />
           )}
           {note && <p className="sel-note">{note}</p>}
           {detailHeading && <div className="sel-cols" aria-hidden="true"><span>{label}</span><span>{detailHeading}</span></div>}
@@ -187,7 +204,7 @@ export function Select({ value, options: given, onChange, label, placeholder = "
                 <button type="button" role="option" id={optId(i)} tabIndex={-1} aria-selected={o.value === value}
                         data-at={i === at ? 1 : 0}
                         className={"sel-item" + (i === at ? " sel-on" : "")}
-                        onMouseEnter={() => setAt(i)} onClick={() => pick(o)}>
+                        onMouseEnter={() => onHover(i)} onClick={() => onPick(o)}>
                   <span className="sel-label">{o.label}</span>
                   {o.detail && <span className="num sel-detail" title={detailHeading}>{o.detail}</span>}
                   <svg className="sel-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
