@@ -117,7 +117,14 @@ func TestMcpHooksInitjsHookFailures(t *testing.T) {
 		{"pre times out", map[string]string{"pre-code-exec/a.js": `while (true) {}`}, "RAN 2", ""},
 		{"pre returns string", map[string]string{"pre-code-exec/a.js": `return "garbage"`}, "RAN 2", ""},
 		{"pre code not string", map[string]string{"pre-code-exec/a.js": `return {code: 42}`}, "RAN 2", ""},
-		{"pre deny non-string", map[string]string{"pre-code-exec/a.js": `return {deny: true}`}, "RAN 2", ""},
+		// The ledger records {deny: true} as denied, so the block must not
+		// run (it did, while the ledger said denied); false decides nothing.
+		{"pre deny true", map[string]string{"pre-code-exec/a.js": `return {deny: true}`}, "[hook denied: denied]", "RAN"},
+		{"pre deny false", map[string]string{"pre-code-exec/a.js": `return {deny: false}`}, "RAN 2", ""},
+		{"pre deny number", map[string]string{"pre-code-exec/a.js": `return {deny: 1}`}, "RAN 2", ""},
+		// A block on pre-code-exec refuses like a deny: recorded
+		// "blocked", it must not run (fail closed).
+		{"pre blocks", map[string]string{"pre-code-exec/a.js": `return {block: "not here"}`}, "[hook denied: not here]", "RAN"},
 		{"pre syntax error", map[string]string{"pre-code-exec/a.js": `return {{{`}, "RAN 2", ""},
 		{"pre denies", map[string]string{"pre-code-exec/a.js": `return {deny: "nope"}`}, "[hook denied: nope]", "RAN"},
 		{"pre deny then broken", map[string]string{"pre-code-exec/a.js": `return {deny: "first"}`, "pre-code-exec/b.js": `throw 1`}, "[hook denied: first]", ""},

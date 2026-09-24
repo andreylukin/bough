@@ -443,7 +443,8 @@ Discovery: `~/.bough/hooks/<event>/*.js` plus `./.bough/hooks/<event>/*.js`;
 a project file shadows a global one with the same file name. Files run in
 base-name order and are **re-read on every fire** — edit them live, no
 restart. Results merge in file order (later keys win); a `block`/`deny`
-key short-circuits remaining files. A file that fails to read or run is
+that is a string or `true` short-circuits remaining files (`false`
+decides nothing). A file that fails to read or run is
 logged to stderr and skipped, never fatal.
 
 Optional metadata is a leading `// Description: ...` comment. The first
@@ -466,7 +467,7 @@ Events and honored result keys:
 |----------------------|---------------------|-----------------------------------|
 | `session-start`      | `{}`                | `context` → appended to system prompt |
 | `user-prompt-submit` | `{input}`           | `block` → refuse turn; `input` → rewrite |
-| `pre-code-exec`      | `{code}` per block  | `deny` → skip, model sees `[hook denied: ...]`; `code` → rewrite |
+| `pre-code-exec`      | `{code}` per block  | `deny` or `block` (a string or `true`) → skip, model sees `[hook denied: ...]`; `code` → rewrite |
 | `post-result`        | `{code, result}`    | `result` → rewrite                |
 | `stop`               | `{}`                | —                                 |
 | `session-end`        | `{}`                | — (fires at unmount, not from the loop) |

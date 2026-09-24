@@ -224,21 +224,23 @@ func (s *Service) Fires(limit int) []Fire {
 }
 
 // decision reads what a hook result did to the payload: a block or a
-// deny short-circuits the event, and any key of the payload the
-// result replaced is a rewrite. Anything else is a pass.
-func decision(payload, res map[string]any) string {
+// deny that refuses (hookmeta.Refusal) short-circuits the event, and
+// any key of the payload the result replaced is a rewrite, when the
+// fire site applies that key (applies nil: every key). Anything else is
+// a pass.
+func decision(payload, res map[string]any, applies []string) string {
 	if res == nil {
 		return ""
 	}
-	if _, ok := res["block"]; ok {
-		return "blocked"
-	}
-	if _, ok := res["deny"]; ok {
-		return "denied"
+	if d, _ := hookmeta.Refusal(res); d != "" {
+		return d
 	}
 	for k, v := range res {
 		if k == "notice" {
 			continue // the diagnostic channel decides nothing
+		}
+		if applies != nil && !slices.Contains(applies, k) {
+			continue // nothing at this fire site acts on it
 		}
 		if old, ok := payload[k]; ok && !reflect.DeepEqual(old, v) {
 			return "rewrote"
@@ -335,22 +337,30 @@ func (s *Service) AddWithDescription(event, name, description string, fn func(pa
 
 // Fire runs every hook file for event, in base-name order, project
 // shadowing global. Results merge in order (later keys overwrite);
-// a "block" or "deny" key short-circuits remaining files. A file
+// a "block" or "deny" that refuses (hookmeta.Refusal) short-circuits
+// remaining files. A file
 // that fails to read or run is logged to stderr and skipped. A hook
 // the user has turned off in off.yml does not run at all.
 // No hook files, or none returning anything, is a nil result.
 func (s *Service) Fire(ctx context.Context, event string, payload map[string]any) (map[string]any, error) {
-	return s.fire(ctx, "", event, payload)
+	return s.fire(ctx, "", event, payload, nil)
 }
 
 // FireAs is Fire with the fires recorded under session, whatever
 // SetSession last named: two sessions firing at once in one process
 // (the engine's parent and its subagents) cannot share one setting.
 func (s *Service) FireAs(ctx context.Context, session, event string, payload map[string]any) (map[string]any, error) {
-	return s.fire(ctx, session, event, payload)
+	return s.fire(ctx, session, event, payload, nil)
 }
 
-func (s *Service) fire(ctx context.Context, session, event string, payload map[string]any) (map[string]any, error) {
+// FireApplying is FireAs for a fire site that applies only the payload
+// keys named in applies: a result replacing any other key is recorded
+// as no rewrite, because nothing will act on it.
+func (s *Service) FireApplying(ctx context.Context, session, event string, payload map[string]any, applies ...string) (map[string]any, error) {
+	return s.fire(ctx, session, event, payload, applies)
+}
+
+func (s *Service) fire(ctx context.Context, session, event string, payload map[string]any, applies []string) (map[string]any, error) {
 	var merged map[string]any
 	s.mu.Lock()
 	gohs := append([]goHook(nil), s.gohs[event]...)
@@ -365,7 +375,7 @@ func (s *Service) fire(ctx context.Context, session, event string, payload map[s
 		res := h.fn(payload)
 		cut := capKeys(res)
 		f.At, f.Ms = start, time.Since(start).Milliseconds()
-		f.Decision, f.Notice, f.Truncated = decision(payload, res), notice(res), cut
+		f.Decision, f.Notice, f.Truncated = decision(payload, res, applies), notice(res), cut
 		f.captureOutput(res)
 		s.record(f, session)
 		if res == nil {
@@ -375,10 +385,7 @@ func (s *Service) fire(ctx context.Context, session, event string, payload map[s
 			merged = map[string]any{}
 		}
 		mergeInto(merged, res)
-		if _, ok := res["block"]; ok {
-			return merged, nil
-		}
-		if _, ok := res["deny"]; ok {
+		if d, _ := hookmeta.Refusal(res); d != "" {
 			return merged, nil
 		}
 		// A later hook sees what an earlier one rewrote.
@@ -426,7 +433,7 @@ func (s *Service) fire(ctx context.Context, session, event string, payload map[s
 		}
 		cut := capKeys(res)
 		f.At, f.Ms = start, time.Since(start).Milliseconds()
-		f.Decision, f.Notice, f.Truncated = decision(payload, res), notice(res), cut
+		f.Decision, f.Notice, f.Truncated = decision(payload, res, applies), notice(res), cut
 		f.captureOutput(res)
 		s.record(f, session)
 		if res == nil {
@@ -436,10 +443,7 @@ func (s *Service) fire(ctx context.Context, session, event string, payload map[s
 			merged = map[string]any{}
 		}
 		mergeInto(merged, res)
-		if _, ok := res["block"]; ok {
-			break
-		}
-		if _, ok := res["deny"]; ok {
+		if d, _ := hookmeta.Refusal(res); d != "" {
 			break
 		}
 	}

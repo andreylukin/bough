@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/andreylukin/bough/internal/agenttools"
+	"github.com/andreylukin/bough/internal/hookmeta"
 )
 
 // Firer is the slice of the hooks service (plugins/hooks.Service) the
@@ -34,6 +35,12 @@ type sessionNamer interface{ SetSession(id string) }
 type sessionFirer interface {
 	FireAs(ctx context.Context, session, event string, payload map[string]any) (map[string]any, error)
 	TakeFireRecordsFor(session string) []map[string]any
+}
+
+// applyingFirer is sessionFirer for a fire site that applies only some
+// payload keys, so the ledger records a rewrite only of those.
+type applyingFirer interface {
+	FireApplying(ctx context.Context, session, event string, payload map[string]any, applies ...string) (map[string]any, error)
 }
 
 // Bridge adapts a Firer to the engine's hook points.
@@ -67,7 +74,7 @@ func (b *Bridge) notify(kind, text string) {
 // because one throwing hook file must not void what the others said. A
 // notice is shown and then dropped from the result, so it can never be
 // read as a decision.
-func (b *Bridge) fire(ctx context.Context, event string, payload map[string]any) map[string]any {
+func (b *Bridge) fire(ctx context.Context, event string, payload map[string]any, applies ...string) map[string]any {
 	if b.get == nil {
 		return nil
 	}
@@ -77,7 +84,9 @@ func (b *Bridge) fire(ctx context.Context, event string, payload map[string]any)
 	}
 	var res map[string]any
 	var err error
-	if sf, ok := h.(sessionFirer); ok && b.Session != "" {
+	if af, ok := h.(applyingFirer); ok && b.Session != "" && applies != nil {
+		res, err = af.FireApplying(ctx, b.Session, event, payload, applies...)
+	} else if sf, ok := h.(sessionFirer); ok && b.Session != "" {
 		res, err = sf.FireAs(ctx, b.Session, event, payload)
 	} else {
 		if n, ok := h.(sessionNamer); ok && b.Session != "" {
@@ -150,17 +159,16 @@ func (b *Bridge) Drain() []map[string]any {
 
 // PreTool fires pre-code-exec before a native call. "code" carries the
 // call's whole text (see codeOf), so a hook matching command text
-// matches native calls too. A "deny" reason refuses the call; an
-// "args" object replaces its arguments.
+// matches native calls too. A deny or block that refuses
+// (hookmeta.Refusal: a string or true) refuses the call, as on the
+// loop; an "args" object replaces its arguments. "code" is only read
+// here, so the ledger is told a rewrite of it is none.
 func (b *Bridge) PreTool(ctx context.Context, tool string, c agenttools.Call, detail string) (json.RawMessage, string) {
 	res := b.fire(ctx, "pre-code-exec", map[string]any{
 		"code": codeOf(tool, c.Args, detail), "tool": tool, "args": argsObject(c.Args), "call": c.ID,
-	})
-	if d, ok := res["deny"].(string); ok {
-		if d == "" {
-			d = "denied" // an empty reason still denies; the model needs some text
-		}
-		return nil, d
+	}, "args")
+	if d, reason := hookmeta.Refusal(res); d != "" {
+		return nil, reason
 	}
 	if a, ok := res["args"].(map[string]any); ok {
 		if raw, err := json.Marshal(a); err == nil {

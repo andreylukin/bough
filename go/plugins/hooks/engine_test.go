@@ -81,6 +81,35 @@ func TestEnginePreToolThroughJSHooks(t *testing.T) {
 	}
 }
 
+// The engine refuses what the ledger records as refused, and records a
+// rewrite only of the key it applies ("args", not the call's "code").
+func TestEnginePreToolDecisionsMatchLedger(t *testing.T) {
+	for _, tc := range []struct {
+		body, deny, ledger string
+	}{
+		{`return {deny: "no"}`, "no", "denied"},
+		{`return {deny: true}`, "denied", "denied"},
+		{`return {deny: false}`, "", ""},
+		{`return {block: "stop"}`, "stop", "blocked"},
+		{`return {code: "other"}`, "", ""},
+		{`return {args: {command: "ls"}}`, "", "rewrote"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			s := fixture(t)
+			writeHook(t, ".", "pre-code-exec", "a.js", tc.body)
+			b, _ := engineBridge(s)
+			_, deny := b.PreTool(context.Background(), "bash", agenttools.Call{ID: "c1", Args: json.RawMessage(`{"command":"rm"}`)}, "rm")
+			if deny != tc.deny {
+				t.Errorf("deny = %q, want %q", deny, tc.deny)
+			}
+			recs := b.Drain()
+			if len(recs) != 1 || recs[0]["decision"] != tc.ledger {
+				t.Fatalf("records %v, want one with decision %q", recs, tc.ledger)
+			}
+		})
+	}
+}
+
 // post-result sees the text the model would read and may rewrite it;
 // a throwing hook file is reported and the other file's rewrite stands.
 func TestEnginePostToolThroughJSHooks(t *testing.T) {

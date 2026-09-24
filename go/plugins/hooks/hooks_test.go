@@ -153,6 +153,58 @@ func TestLedgerRecordsDeny(t *testing.T) {
 	}
 }
 
+// The ledger's word and the fire loop's stop follow what a fire site
+// refuses (hookmeta.Refusal): {deny: true} is a denial and stops the
+// later hooks; {deny: false} decides nothing and they run.
+func TestLedgerDenyTrueAndFalse(t *testing.T) {
+	for _, tc := range []struct {
+		body  string
+		fires []string // newest first, name/decision
+	}{
+		{`return {deny: true}`, []string{"a.js/denied"}},
+		{`return {deny: false}`, []string{"b.js/", "a.js/"}},
+		{`return {block: false}`, []string{"b.js/", "a.js/"}},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			s := fixture(t)
+			cwd, _ := os.Getwd()
+			writeHook(t, cwd, "pre-code-exec", "a.js", tc.body)
+			writeHook(t, cwd, "pre-code-exec", "b.js", `return null`)
+			if _, err := s.Fire(context.Background(), "pre-code-exec", map[string]any{"code": "rm"}); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, f := range s.Fires(0) {
+				got = append(got, f.Name+"/"+f.Decision)
+			}
+			if strings.Join(got, " ") != strings.Join(tc.fires, " ") {
+				t.Fatalf("fires %v, want %v", got, tc.fires)
+			}
+		})
+	}
+}
+
+// A fire site that applies only some payload keys says which, and a
+// result replacing any other key is no rewrite: the engine's
+// pre-code-exec carries the call's text as "code" but applies "args".
+func TestLedgerRewroteOnlyAppliedKeys(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	writeHook(t, cwd, "pre-code-exec", "a.js", `return event.args ? {code: "other"} : null`)
+	writeHook(t, cwd, "pre-code-exec", "b.js", `return {args: {command: "ls"}}`)
+	payload := map[string]any{"code": "rm", "args": map[string]any{"command": "rm"}}
+	if _, err := s.FireApplying(context.Background(), "sess", "pre-code-exec", payload, "args"); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range s.Fires(0) {
+		got = append(got, f.Name+"/"+f.Decision)
+	}
+	if strings.Join(got, " ") != "b.js/rewrote a.js/" {
+		t.Fatalf("fires %v, want b.js rewrote and a.js passed", got)
+	}
+}
+
 // A rules row rides the same seam, so its decisions land in the ledger
 // without the rules package knowing the ledger exists.
 func TestLedgerRecordsGoHook(t *testing.T) {

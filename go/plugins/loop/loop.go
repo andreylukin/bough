@@ -28,6 +28,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/andreylukin/bough/internal/hookmeta"
 	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
@@ -1915,7 +1916,10 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			}
 			code := m[1]
 			if res := r.fire(ctx, "pre-code-exec", map[string]any{"code": code}, emit); res != nil {
-				if reason, ok := res["deny"].(string); ok {
+				// What the ledger records as refused (a deny or a block,
+				// string or true) is refused here, or the ledger says
+				// denied about a block that ran.
+				if d, reason := hookmeta.Refusal(res); d != "" {
 					note("result", "[hook denied: "+reason+"]", map[string]any{"code": code})
 					continue
 				}
