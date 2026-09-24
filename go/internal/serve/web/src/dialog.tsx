@@ -11,7 +11,7 @@ import { BINDINGS, keyChips } from "./keys";
  * voice. One host is mounted in the app; askText and askConfirm return
  * promises, so a call site reads as plainly as prompt() did.
  */
-type Req =
+export type Req =
   | { kind: "text"; title: string; body?: string; initial: string; placeholder?: string; action: string; allowEmpty: boolean;
       danger?: boolean; onSubmit?: (v: string) => Promise<void>; resolve: (v: string | null) => void }
   | { kind: "confirm"; title: string; body: string; action: string; danger: boolean; safe: boolean;
@@ -120,9 +120,10 @@ export function useModal(box: RefObject<HTMLElement | null>, active: boolean) {
   }, [box, active]);
 }
 
-export function DialogHost() {
-  const [req, setReq] = useState<Req | null>(null);
-  const [text, setText] = useState("");
+/** seed: a request already up, with what is typed in it, for a render that has no one to call askText (a test). */
+export function DialogHost({ seed }: { seed?: { req: Req; text: string } } = {}) {
+  const [req, setReq] = useState<Req | null>(seed?.req ?? null);
+  const [text, setText] = useState(seed?.text ?? "");
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState("");
   const input = useRef<HTMLInputElement>(null);

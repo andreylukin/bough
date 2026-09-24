@@ -74,6 +74,9 @@ export interface Flow<C> {
    * anything else logged is still a failure.
    */
   expectedErrors?: RegExp[];
+  /** Checks this flow's surface owes at every node beyond the shared
+   *  ones (helpers/ui-invariants.ts has the usual set). */
+  invariants?(c: C, where: string): Promise<void>;
 }
 
 /** The role's fields out of a graph state, keyed by bare field name. */
@@ -146,6 +149,7 @@ export function modelTests<C>(flow: Flow<C>): void {
               return flow.read(c);
             }, { message: `${where}: state`, timeout: 10_000 }).toEqual(roleState(flow.role, step.state));
             await invariants(page, flow.status(c), errors, where);
+            await flow.invariants?.(c, where);
           }
         } finally {
           await flow.cleanup?.(c);

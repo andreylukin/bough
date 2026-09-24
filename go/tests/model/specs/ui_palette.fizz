@@ -1,0 +1,475 @@
+# The palette (⌘K) as the page shows it, client side: closed or open, in
+# which mode, what is typed, which groups of rows it lists, which row
+# Enter would take, the folder it is aimed at, the path completion, the
+# "Start in folder" dialog it hands off to, and how it closes. Crossed
+# with the server only where the server changes this surface: the
+# full-text search and the folder lookup answering (or the search
+# failing), a create landing, and the open session's turn running (which
+# adds "Stop this turn"). Recipe: go/tests/model/README.md.
+#
+# Code this is checked against:
+#   web/src/palette.tsx  Palette (hits, keys, pick, afterClose,
+#                        closeOnNavigate), pathRows, useDirs, useFullText
+#   web/src/app.tsx      palette/palMode/palCwd state, ⌘P and ⌥N keys,
+#                        newSession (the New button), commands (new:*,
+#                        s:*), start() and its "Starting a session…" status
+#   web/src/dialog.tsx   askText (the "Start in folder" dialog), useModal
+#   web/src/keys.ts      paletteKeyOpens, switchKey, newSessionKey
+#   serve/setup.go       dirs (GET /api/dirs)
+#
+# The fixture behind the abstract values: one serve, started in a folder
+# that is not a git checkout; home known; one local session S whose cwd
+# is home; no projects, no wiki, no failures. Then the suggestions are
+# exactly "New session in home" (and, with S open, S's own commands),
+# and ⌥N lists new:here, new:folder and new:project, in that order.
+#   text   a phrase said in S's transcript and in no title or command
+#          label (not even as a subsequence): only /api/search finds it
+#   path   `~/wor`, which /api/dirs completes to ~/work (empty folder)
+#   full   `~/work/`, what Tab on that row writes: ~/work itself
+#   nopath `~/nope`: no such folder, no sibling that starts with it
+#
+# Rows are abstracted to kinds, one row each except "this":
+#   session  S, under Recent (empty query) or Mentioned in (text query)
+#   cmd      "New session in home" (new:here)
+#   ask      "New session in a folder…" (new:folder, ⌥N/New mode)
+#   project  "New project…" (new:project, ⌥N/New mode; not picked here)
+#   this     S's "Review changes" and "Inspect context" (not picked here:
+#            changes_review.fizz and the context page own them)
+#   stop     "Stop this turn", while S's turn runs
+#   dir      "New session in work"
+#   missing  "New session in ~/nope" / Folder not found
+#   start    "Start a session: “…”", the explicit start with the text
+#
+# Where the code disagrees with the palette as first mapped:
+# - Picking a folder row creates nothing: afterClose closes the palette
+#   (onClose clears palCwd and the mode) and then onStartIn reopens it,
+#   aimed at the folder, in mode "all", with an empty query. "Aimed" is
+#   not a mode: ⌘K keeps it, ⌘P and ⌥N clear it.
+# - ⌘K, ⌘P and ⌥N work while the palette is open (the field does not
+#   stop the key): they switch the mode and keep what is typed.
+# - ⌥N/New mode never reads transcripts; "all" and "switch" read them
+#   for any query of two or more characters, a path included.
+# - A path with no folder row yet has no Start row either: Enter never
+#   sends a path as a first message by default.
+# - The "Start in folder" dialog opens prefilled with the folder, and its
+#   Start is disabled until the text is changed (askText refuses the same
+#   text again, a rule written for renames), so Enter there does nothing
+#   until the person edits it.
+# - A create landing while the palette is up changes the hash, and the
+#   hashchange closes the palette under the person.
+#
+# Product gaps found while mapping (reported, not asserted away):
+# - ⌘K is not guarded against an open dialog (usePaletteKey checks no
+#   .dlg-scrim, unlike ⌘P/⌥N), so ⌘K over "Start in folder" puts a
+#   second aria-modal dialog up. OpenAll is not offered over the dialog
+#   here; OneModal is what the product owes.
+# - The "Folder not found" row is selectable, the footer calls its Enter
+#   "Start", and picking it closes the palette and does nothing
+#   (PickMissing).
+# - A second create while one is starting: the first one's finally
+#   clears "Starting a session…" while the second is still in flight.
+#   The model starts one create at a time.
+#
+# Pruned, because every generated path is one browser test; each pruned
+# step is one the page takes the same way from a walked state:
+# - Typing is walked on the list only, text in "all"/"new" and paths in
+#   "new" (where the placeholder asks for a folder). Switching the mode
+#   while open is walked from an empty query only.
+# - The arrows are walked on the list only, where every kind is one row.
+# - Back is walked from S (reached only from the list) and Resize from
+#   the list, both from ⌘K's empty query: they close the same from any
+#   other state. The scrim click is Escape. Hover selects like the
+#   arrows (setAtId).
+# - While a create is starting only ⌘K is walked, which Created closes.
+# - After a create lands only ⌘K and Escape are walked: the list now
+#   holds a second session, which the kinds above do not describe.
+# - S's turn starts while the palette is closed and S is open; while it
+#   runs only ⌘K (which lists Stop) and Escape are walked.
+# - A failed create's toast is session_create.fizz's.
+# - The viewport class is not a field: crossing 720px only closes the
+#   palette (closeOnNavigate), which Resize is.
+
+# All kinds, in the order the palette lists them, for what is on screen.
+def hits(p):
+    if not p.open:
+        return []
+    if p.query == "empty":
+        if p.mode == "new":
+            return ["cmd", "ask", "project"]
+        recent = []
+        if p.route != "s":
+            recent = ["session"]
+        if p.mode == "switch":
+            return recent
+        mine = []
+        if p.route == "s":
+            mine = ["this"]
+            if p.running:
+                mine = ["this", "stop"]
+        return recent + ["cmd"] + mine
+    if p.query == "text":
+        if p.search == "done":
+            return ["session", "start"]
+        return ["start"]
+    if p.dirs != "answered":
+        return []
+    if p.query == "nopath":
+        return ["missing", "start"]
+    return ["dir", "start"]
+
+# The row Enter takes: the one picked with the arrows while it is still
+# listed, else the first (nothing in this fixture is destructive).
+def sel(p):
+    h = hits(p)
+    if len(h) == 0:
+        return ""
+    if p.at in h:
+        return p.at
+    return h[0]
+
+# What the footer's Enter says for the selected row.
+def enter(p):
+    s = sel(p)
+    if s in ["dir", "missing", "start"]:
+        return "Start"
+    if s == "session":
+        return "Open"
+    return "Run"
+
+# Something on screen says what the palette has: rows, "Searching…",
+# "Text search failed", "No results for …", or the filter tip (every
+# mode but ⌥N, with nothing typed).
+def says(p):
+    if not p.open:
+        return True
+    if len(hits(p)) > 0 or p.search in ["loading", "error"]:
+        return True
+    return p.query != "empty" or p.mode != "new"
+
+role Palette:
+    action Init:
+        # The page behind: "list" (#/, no session open), "s" (S open),
+        # "new" (the session a create made is open).
+        self.route = "list"
+        # S's turn is running: its row's glyph, and "Stop this turn".
+        self.running = False
+        # The palette.
+        self.open = False
+        # "all" (⌘K), "switch" (⌘P), "new" (⌥N or the New button).
+        self.mode = "all"
+        # palCwd is set: Start rows say "in <folder>".
+        self.aimed = False
+        # "empty" | "text" | "path" | "full" | "nopath"
+        self.query = "empty"
+        # /api/search for the query: idle | loading | done | error.
+        self.search = "idle"
+        # /api/dirs for a path query: none | pending | answered.
+        self.dirs = "none"
+        # The row the arrows picked (atId), "" for none.
+        self.at = ""
+        # The "Start in folder" dialog, and whether its text was changed.
+        self.dialog = False
+        self.edited = False
+        # Where keyboard focus is: page | field (the palette's input) |
+        # dialog (the dialog's input).
+        self.focus = "page"
+        # start() is in flight: "Starting a session…" is up.
+        self.creating = False
+
+    # onClose: palette gone, palQuery/palCwd/palMode reset; the next
+    # open starts empty.
+    atomic func close():
+        self.open = False
+        self.mode = "all"
+        self.aimed = False
+        self.query = "empty"
+        self.search = "idle"
+        self.dirs = "none"
+        self.at = ""
+        self.focus = "page"
+
+    # A fresh palette in mode m, focus in its field.
+    atomic func show(m):
+        self.open = True
+        self.focus = "field"
+        self.query = "empty"
+        self.search = "idle"
+        self.dirs = "none"
+        self.at = ""
+        self.mode = m
+
+    # A typed path: the folder lookup (120 ms debounce) is under way.
+    atomic func typePath(q):
+        self.query = q
+        self.at = ""
+        self.dirs = "pending"
+        self.search = "idle"
+
+    # --- opening ---------------------------------------------------------
+
+    # ⌘K: from anywhere, the palette's own field included; open, it
+    # switches the mode and keeps the folder it is aimed at.
+    atomic action OpenAll:
+        require not self.dialog and not (self.open and self.mode == "all")
+        require not self.creating or not self.open
+        require not self.open or self.query == "empty"
+        if not self.open:
+            self.show("all")
+        self.mode = "all"
+        self.at = ""
+
+    # ⌘P: sessions only, never aimed. Not over a dialog (.dlg-scrim).
+    atomic action OpenSwitch:
+        require not self.dialog and not self.creating and not self.running and self.route != "new"
+        require not (self.open and self.mode == "switch")
+        require not self.open or self.query == "empty"
+        self.show("switch")
+        self.aimed = False
+
+    # ⌥N: the places to start, not aimed (palCwd ""). On the list the
+    # New button is this too.
+    atomic action OpenNew:
+        require not self.dialog and not self.creating and not self.running and self.route != "new"
+        require not (self.open and self.mode == "new" and not self.aimed)
+        require not self.open or self.query == "empty"
+        self.show("new")
+        self.aimed = False
+
+    # The New button with S open: aimed at S's folder (home). The page
+    # behind an open palette or dialog is inert, so only while closed.
+    atomic action NewButton:
+        require not self.open and not self.dialog and not self.creating and not self.running and self.route == "s"
+        self.show("new")
+        self.aimed = True
+
+    # --- typing (walked on the list) --------------------------------------
+
+    # A phrase: "all" searches transcripts for it, "new" does not.
+    atomic action TypeText:
+        require self.open and not self.creating and self.route == "list"
+        require self.query != "text" and self.mode != "switch"
+        self.query = "text"
+        self.at = ""
+        self.dirs = "none"
+        self.search = "loading" if self.mode != "new" else "idle"
+
+    # `~/wor`, where ⌥N's placeholder asks for a folder.
+    atomic action TypePath:
+        require self.open and not self.creating and self.route == "list"
+        require self.query != "path" and self.mode == "new"
+        self.typePath("path")
+
+    # `~/nope`.
+    atomic action TypeMissing:
+        require self.open and not self.creating and self.route == "list"
+        require self.query != "nopath" and self.mode == "new"
+        self.typePath("nopath")
+
+    # Select all, delete: back to the suggestions.
+    atomic action Clear:
+        require self.open and self.query != "empty"
+        self.query = "empty"
+        self.at = ""
+        self.dirs = "none"
+        self.search = "idle"
+
+    # Tab on the folder row: the query becomes `~/work/` and is looked up
+    # again. Still a path; nothing is created. Tab on `~/work/` writes the
+    # same text, which changes nothing, so it is not offered there.
+    atomic action Complete:
+        require self.open and sel(self) == "dir" and self.query == "path"
+        self.typePath("full")
+
+    # --- the server answering -------------------------------------------
+
+    atomic fair action SearchDone:
+        require self.open and self.search == "loading"
+        self.search = "done"
+
+    atomic action SearchFail:
+        require self.open and self.search == "loading"
+        self.search = "error"
+
+    # "Text search failed · Retry".
+    atomic action Retry:
+        require self.open and self.search == "error"
+        self.search = "loading"
+
+    atomic fair action DirsAnswer:
+        require self.open and self.dirs == "pending"
+        self.dirs = "answered"
+
+    # Someone prompts S (another tab, the CLI) while it is open here.
+    atomic action TurnStarts:
+        require self.route == "s" and not self.running
+        require not self.open and not self.dialog and not self.creating
+        self.running = True
+
+    atomic fair action TurnEnds:
+        require self.running
+        self.running = False
+
+    # --- the selection ---------------------------------------------------
+
+    atomic action Down:
+        require self.open and self.route == "list" and sel(self) != ""
+        require hits(self).index(sel(self)) < len(hits(self)) - 1
+        h = hits(self)
+        self.at = h[h.index(sel(self)) + 1]
+
+    # Back onto the first row: atId names it, but the page shows the
+    # same selection as none picked (and nothing lands ahead of it in any
+    # state walked here), so it is "" as the page reads it.
+    atomic action Up:
+        require self.open and self.route == "list" and sel(self) != ""
+        require hits(self).index(sel(self)) > 0
+        h = hits(self)
+        i = h.index(sel(self)) - 1
+        self.at = h[i] if i > 0 else ""
+
+    # --- Enter (or a click) on the selected row --------------------------
+
+    # Opens S: the hash changes, the palette is gone.
+    atomic action PickSession:
+        require self.open and self.route == "list" and sel(self) == "session"
+        self.route = "s"
+        self.close()
+
+    # "New session in home" or the explicit Start: start(); the create
+    # answers later. One create at a time (see the gap above).
+    atomic action PickStart:
+        require self.open and not self.creating and not self.running and self.route != "new"
+        require sel(self) in ["cmd", "start"]
+        self.creating = True
+        self.close()
+
+    # The folder row: close, then reopen aimed at it, mode "all", empty.
+    atomic action PickDir:
+        require self.open and sel(self) == "dir"
+        self.show("all")
+        self.aimed = True
+
+    # "Folder not found": closes and does nothing (the gap above).
+    atomic action PickMissing:
+        require self.open and sel(self) == "missing"
+        self.close()
+
+    # "New session in a folder…": the palette closes, the dialog asks,
+    # prefilled with the folder.
+    atomic action PickAsk:
+        require self.open and not self.creating and sel(self) == "ask"
+        self.close()
+        self.dialog = True
+        self.edited = False
+        self.focus = "dialog"
+
+    # --- the dialog ------------------------------------------------------
+
+    atomic action DialogType:
+        require self.dialog and not self.edited
+        self.edited = True
+
+    # Start (or Enter), enabled once the text differs from the prefill.
+    atomic action DialogStart:
+        require self.dialog and self.edited and not self.creating
+        self.dialog = False
+        self.edited = False
+        self.focus = "page"
+        self.creating = True
+
+    # Escape, Cancel or a click on its scrim.
+    atomic action DialogCancel:
+        require self.dialog
+        self.dialog = False
+        self.edited = False
+        self.focus = "page"
+
+    # --- the create landing ----------------------------------------------
+
+    # 201: the new session opens (hash change), closing an open palette.
+    atomic fair action Created:
+        require self.creating
+        self.creating = False
+        self.route = "new"
+        if self.open:
+            self.close()
+
+    # --- closing ---------------------------------------------------------
+
+    # Escape in the field (or a click on the scrim), from anywhere.
+    atomic action Escape:
+        require self.open and not self.creating
+        self.close()
+
+    # Browser Back from S to the list: popstate closes the palette.
+    atomic action Back:
+        require self.open and not self.creating and not self.running and self.route == "s"
+        require self.query == "empty" and self.mode == "all"
+        self.route = "list"
+        self.close()
+
+    # The viewport crossing 720px closes it.
+    atomic action Resize:
+        require self.open and not self.creating and self.route == "list"
+        require self.query == "empty" and self.mode == "all"
+        self.close()
+
+action Init:
+    palette = Palette()
+
+# Exactly one modal is up at a time: the palette or the dialog.
+always assertion OneModal:
+    return not (palette.open and palette.dialog)
+
+# Focus is in the modal that is up, and on the page when none is.
+always assertion FocusInModal:
+    if palette.open:
+        return palette.focus == "field"
+    if palette.dialog:
+        return palette.focus == "dialog"
+    return palette.focus == "page"
+
+# The palette always says something: rows, Searching…, the failure, No
+# results, or the filter tip.
+always assertion StatusVisible:
+    return says(palette)
+
+# A typed path is never sent by Enter unless the person moved onto Start:
+# its default row is a folder row.
+always assertion PathNotAPrompt:
+    return palette.query in ["empty", "text"] or palette.at == "start" or sel(palette) != "start"
+
+# ⌥N/New mode never reads transcripts; a closed palette reads nothing.
+always assertion SearchOnlyWhenAsked:
+    return palette.search == "idle" or (palette.open and palette.mode != "new" and palette.query != "empty")
+
+# The folder lookup runs only for a path the palette is showing.
+always assertion DirsOnlyForPath:
+    return palette.dirs == "none" or (palette.open and palette.query in ["path", "full", "nopath"])
+
+# Aimed at a folder only while starting is on offer: never in ⌘P.
+always assertion AimedStarts:
+    return not palette.aimed or (palette.open and palette.mode != "switch")
+
+# No row offers what would fail: "Stop this turn" only while S's turn
+# runs, S's own commands only while S is open, Start only for typed text.
+always assertion NoDeadRows:
+    h = hits(palette)
+    if "stop" in h and not (palette.running and palette.route == "s"):
+        return False
+    if "this" in h and palette.route != "s":
+        return False
+    return "start" not in h or palette.query != "empty"
+
+# Enter names what it does: Open a session, Start from a row that starts.
+always assertion EnterSaysWhat:
+    s = sel(palette)
+    return (s != "session" or enter(palette) == "Open") and (s not in ["start", "dir"] or enter(palette) == "Start")
+
+# Closed is clean: the next open starts empty, in "all", not aimed.
+always assertion ClosedIsClean:
+    return palette.open or (palette.query == "empty" and palette.mode == "all" and not palette.aimed and palette.at == "")
+
+# A create in flight shows "Starting a session…", and it lands.
+always eventually assertion CreateLands:
+    return not palette.creating

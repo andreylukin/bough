@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
 import type { Row, Status } from "./types";
-import { ago } from "./app";
+import { ago } from "./loading";
 import { hasOwnTitle, plainTitle, sessionTitle, titleKey } from "./render";
 import { StatusMark, shownStatus, statusWord } from "./status";
 import { isMac, paletteKeyOpens } from "./keys";
@@ -83,12 +83,17 @@ export function pathRows(typed: string, places: { folder: DirHit | null; dirs: D
   return rows;
 }
 
+const NO_DIRS = { folder: null, dirs: [] as DirHit[], home: "" };
+
 /** The typed folder and the folders its path completes to, from the server. */
 function useDirs(q: string, open: boolean, on: boolean): { folder: DirHit | null; dirs: DirHit[]; home: string } {
-  const [res, setRes] = useState<{ folder: DirHit | null; dirs: DirHit[]; home: string }>({ folder: null, dirs: [], home: "" });
+  // An answer belongs to the path that asked for it: after Tab wrote
+  // `~/work/` the rows for `~/wor` stayed up until the new answer came,
+  // and Enter there started the folder of a path no longer typed.
+  const [res, setRes] = useState<{ q: string; folder: DirHit | null; dirs: DirHit[]; home: string }>({ q: "", ...NO_DIRS });
   useEffect(() => {
     const typed = q.trim();
-    if (!on || !open || !isPathQuery(typed)) { setRes({ folder: null, dirs: [], home: "" }); return; }
+    if (!on || !open || !isPathQuery(typed)) { setRes({ q: "", ...NO_DIRS }); return; }
     const ctl = new AbortController();
     const t = setTimeout(() => {
       getJSON<{ folder?: DirHit; dirs?: DirHit[] }>("/api/dirs?path=" + encodeURIComponent(typed), ctl.signal)
@@ -96,13 +101,13 @@ function useDirs(q: string, open: boolean, on: boolean): { folder: DirHit | null
           const folder = d.folder ?? null;
           // The server expands ~ by prefixing home, so home is what the typed rest does not account for.
           const home = folder && typed.startsWith("~") ? folder.path.slice(0, folder.path.length - (typed.length - 1)) : "";
-          setRes({ folder, dirs: Array.isArray(d.dirs) ? d.dirs : [], home });
+          setRes({ q: typed, folder, dirs: Array.isArray(d.dirs) ? d.dirs : [], home });
         })
-        .catch(() => { if (!ctl.signal.aborted) setRes({ folder: null, dirs: [], home: "" }); });
+        .catch(() => { if (!ctl.signal.aborted) setRes({ q: typed, ...NO_DIRS }); });
     }, 120);
     return () => { ctl.abort(); clearTimeout(t); };
   }, [q, open, on]);
-  return res;
+  return res.q === q.trim() ? res : NO_DIRS;
 }
 
 /**
@@ -302,7 +307,7 @@ export function useFullText(q: string, open: boolean): { hits: SearchHit[]; stat
   return { hits: current ? hits : [], state: state === "loading" || current || state === "idle" ? state : "loading", retry: () => setTries((n) => n + 1) };
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onStartIn, onOpenWikiPage, initialQuery = "", current = null, startIn, mode = "all", visited = [] }: {
+interface PaletteProps {
   open: boolean;
   /** "switch" is ⌘P: sessions only, in visit order. "new" is ⌥N: only the places to start. */
   mode?: "all" | "switch" | "new";
@@ -325,16 +330,16 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   initialQuery?: string;
   /** The open session: it ranks below other matches and says it is the one you are in. */
   current?: string | null;
-}) {
+}
+
+export function Palette(props: PaletteProps) {
+  const { open, onClose, onStartIn, onOpenWikiPage, initialQuery = "", mode = "all" } = props;
   const [q, setQ] = useState(initialQuery);
   // The selection is a result, not a position: results that land late
   // (full-text, wiki) never move Enter onto something else.
   const [atId, setAtId] = useState<string | null>(null);
   const field = useRef<HTMLInputElement>(null);
-  const list = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
-  const box = useRef<HTMLDivElement>(null);
-  useModal(box, open);
 
   // Focus goes back to the opener only once the palette is gone and the
   // page behind it is no longer inert.
@@ -358,9 +363,33 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     return closeOnNavigate(window, onClose, window.matchMedia?.("(max-width:720px)") ?? null);
   }, [open, onClose]);
 
-  const { hits: found, state: searching, retry } = useFullText(q, open && mode !== "new" && !commandQuery(q).only);
+  const search = useFullText(q, open && mode !== "new" && !commandQuery(q).only);
   const pages = useWikiHits(q, open, Boolean(onOpenWikiPage) && mode === "all" && !commandQuery(q).only);
   const places = useDirs(q, open, Boolean(onStartIn));
+  return <PaletteView {...props} q={q} setQ={setQ} atId={atId} setAtId={setAtId} search={search} pages={pages} places={places} field={field} opener={opener} />;
+}
+
+/**
+ * The palette drawn from its state alone: what is typed, the row picked,
+ * and what the server has answered. Palette owns that state and its
+ * effects, so a test can render any state the palette reaches from here.
+ */
+export function PaletteView({ open, onClose, rows, commands, onOpenSession, onStart, onStartIn, onOpenWikiPage, current = null, startIn, mode = "all", visited = [],
+  q, setQ, atId, setAtId, search, pages, places, field, opener }: PaletteProps & {
+  q: string;
+  setQ: (q: string) => void;
+  atId: string | null;
+  setAtId: (id: string | null) => void;
+  search: { hits: SearchHit[]; state: SearchState; retry: () => void };
+  pages: WikiHit[];
+  places: { folder: DirHit | null; dirs: DirHit[]; home: string };
+  field: RefObject<HTMLInputElement | null>;
+  opener: RefObject<Element | null>;
+}) {
+  const list = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useModal(box, open);
+  const { hits: found, state: searching, retry } = search;
 
   const hits = useMemo(() => {
     // project:, after: and status: narrow the sessions; the rest is matched.
@@ -530,6 +559,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   const offers = (c: Command) => c.id.startsWith("start:") || c.id.startsWith("dir:");
   const onlyStart = hits.length > 0 && hits.every(offers) && !isPathQuery(typed) && searching !== "loading";
   const cut = typed.length > 40 ? typed.slice(0, 40) + "…" : typed;
+  const aimed = Boolean(startIn) && mode !== "switch";
   const sel = hits[at];
   const enter = !sel ? "Open" : offers(sel) ? "Start" : isResult(sel) ? "Open" : "Run";
   const insert = (token: string) => { setQ(token + " "); setAtId(null); field.current?.focus(); };
@@ -549,29 +579,36 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
           <svg className="pal-glass" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
             <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" />
           </svg>
-          <input ref={field} className={"pal-field" + (mode === "switch" ? " pal-field-tag" : "")} value={q} onChange={(e) => { setQ(e.target.value); setAtId(null); }}
+          <input ref={field} className={"pal-field" + (mode === "switch" || aimed ? " pal-field-tag" : "")} value={q} onChange={(e) => { setQ(e.target.value); setAtId(null); }}
                  onKeyDown={keys} placeholder={mode === "switch" ? "Switch to a session…" : mode === "new" ? "Start in a folder, or type a first message…" : "Search sessions or run a command…"}
                  aria-label="Search sessions or run a command"
                  role="combobox" aria-expanded={hits.length > 0} aria-controls="pal-list" aria-autocomplete="list"
-                 aria-activedescendant={hits[at] ? "pal-" + hits[at].id : undefined} />
+                 aria-activedescendant={hits[at] ? "pal-" + hits[at].id : undefined}
+                 aria-describedby={aimed ? "pal-aim" : undefined} />
           {mode === "switch" && <span className="pal-mode" aria-hidden="true">Sessions</span>}
+          {/* Picking a folder clears what was typed: without this nothing
+              on screen said the palette now starts there. */}
+          {aimed && <span id="pal-aim" className="pal-mode pal-aim" title={`Starts in ${startIn}`}>in {startIn}</span>}
         </div>
         {opWords.length > 0 && (
           <div className="pal-ops" aria-label="Filters">
             {opWords.map((w) => { const i = w.indexOf(":"); return <code key={w} className="pal-op"><span className="pal-op-k">{w.slice(0, i + 1)}</span><span className="pal-op-v">{w.slice(i + 1)}</span></code>; })}
           </div>
         )}
-        <div id="pal-list" ref={list} className="pal-list" role="listbox" aria-label="Results">
+        {/* The listbox holds only its options: the status lines and the tip
+            beside them made it a listbox with children it may not own. */}
+        <div ref={list} className="pal-list">
           {searching === "error" && (
             <div className="pal-none" role="status">
               <p className="pal-none-1">
                 <svg className="pal-warn" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4.5L21 19H3z" /><path d="M12 10v4" /><path d="M12 16.5h.01" /></svg>
                 Text search failed
               </p>
-              <p className="pal-none-2">Showing title matches only. <button className="btn btn-ghost btn-sm" onClick={retry}>Retry</button></p>
+              <p className="pal-none-2">Showing title matches only. <button className="btn btn-ghost btn-sm" onClick={() => { retry(); field.current?.focus(); }}>Retry</button></p>
             </div>
           )}
           {onlyStart && searching !== "error" && noMatch(<>Press <kbd>↵</kbd> to start a session with it.</>, " pal-none-lead")}
+          <div id="pal-list" role="listbox" aria-label="Results">
           {hits.map((c, i) => {
             const head = c.group !== lastGroup ? (lastGroup = c.group) : "";
             if (head) groupId = "palg-" + c.id;
@@ -595,6 +632,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
               </div>
             );
           })}
+          </div>
           {hits.length === 0 && searching === "loading" && (
             <p className="pal-none pal-none-2" role="status"><StatusMark status="running" size={12} bare /> Searching…</p>
           )}
