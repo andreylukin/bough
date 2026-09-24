@@ -129,11 +129,23 @@ func writeLines(t *testing.T, path, word string, n int) {
 
 // Init is a fresh idle local session in the same serve, the page
 // closed, and the skill back on: off.yml outlives a walk.
+//
+// The session's child is stopped (archive kills it, unarchive leaves it
+// stopped): a running child keeps the context files it started with,
+// so filing it would not change what it reads until it starts again
+// (specs/context_page_truth.fizz). With none running, the page lists
+// what the next start reads, which is what this spec's files are.
 func (a *contextInspectorAdapter) Init() error {
 	ctx, cancel := actionCtx()
 	defer cancel()
 	row, err := a.s.CreateSession(ctx, a.cwd, "")
 	if err != nil {
+		return err
+	}
+	if _, err := a.s.Archive(ctx, row.ID); err != nil {
+		return err
+	}
+	if _, err := a.s.Unarchive(ctx, row.ID); err != nil {
 		return err
 	}
 	if err := a.setOff(ctx, false); err != nil {

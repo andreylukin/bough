@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/andreylukin/bough/plugins/contextmd"
 	"github.com/andreylukin/bough/plugins/skills"
@@ -50,11 +51,25 @@ func (a *API) sessionContext(w http.ResponseWriter, r *http.Request) {
 	if cat == nil {
 		cat = []skills.SkillInfo{}
 	}
+	// A running child fixed its context-md paths at its start, and
+	// filing it since changes only what the NEXT start reads: list what
+	// the child reads, and name both so the page can say they differ.
+	// With no child running, the next start is the one that counts.
+	next := a.sessionSlug(id, in.Project)
+	slug := next
+	if in.Project == "" && a.sup.Live(id) {
+		slug = a.sup.StartedIn(id)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cwd":          cwd,
 		"rules":        a.ruleRows(cwd),
-		"contextFiles": a.contextFiles(cwd, a.sessionSlug(id, in.Project)),
+		"contextFiles": a.contextFiles(cwd, slug),
+		"project":      slug,
+		"nextProject":  next,
 		"skills":       cat,
+		// When this was read: the page keeps a snapshot while the files,
+		// the filing and the child move on, and says how old it is.
+		"readAt": time.Now().UTC().Format(time.RFC3339Nano),
 	})
 }
 
