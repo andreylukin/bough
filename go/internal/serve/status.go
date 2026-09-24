@@ -98,6 +98,14 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 			// answer, and without this the session said "Waiting for
 			// you" with live buttons for a question nobody was waiting on.
 			pending = nil
+		case "ask/end":
+			// The Asker's own record of an ask that ended unanswered (a
+			// timeout, a cancel). A rule's approval of a bash call ends
+			// as that bash call, which names no ask, so without it the
+			// page kept offering Run for a command nothing waited on.
+			if pending != nil && pending.ID == str(e.Data["id"]) {
+				pending = nil
+			}
 		case "call":
 			// The engine's native ask is a call, not a block: its end is
 			// the same signal a result is above (answered, timed out or

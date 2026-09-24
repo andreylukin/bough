@@ -15,6 +15,7 @@
 package rules
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -48,18 +49,28 @@ func addHook(h hooker, event, name, description string, fn func(payload map[stri
 }
 
 type policer interface {
-	SetPolicy(fn func(cmd string) error)
+	SetPolicyContext(fn func(ctx context.Context, cmd string) error)
 }
 type asker interface {
 	Ask(question string, options ...string) (string, error)
+}
+
+// ctxAsker is an asker whose question the caller's context releases.
+type ctxAsker interface {
+	AskContext(ctx context.Context, question string, options ...string) (string, error)
 }
 type sections interface{ Set(name, text string) }
 
 // Service holds the directories and what has been shown.
 type Service struct {
 	home, project string
-	ask           asker
-	findAsk       func() asker // lazy: the ask row mounts after this one
+	ask           asker // a fixed one (tests); else findAsk's, per approval
+	// findAsk is the ask row's current "ask-answers", looked up on every
+	// approval: the ask row mounts after this one, and a reload can
+	// remount it without remounting this row. The first one found used to be
+	// kept, and after a remount approvals went to the disposed Asker,
+	// whose questions no answer could reach.
+	findAsk func() asker
 
 	mu       sync.Mutex
 	shown    map[string]bool // scoped rule paths already put in front of the model
@@ -248,6 +259,12 @@ func (s *Service) short(p string) string {
 // Policy is the bash gate: nil when the command may run, else the
 // refusal the model reads.
 func (s *Service) Policy(cmd string) error {
+	return s.PolicyContext(context.Background(), cmd)
+}
+
+// PolicyContext is Policy for a command run under ctx (the block's run,
+// the native call's): a prompt rule's question is released by its end.
+func (s *Service) PolicyContext(ctx context.Context, cmd string) error {
 	rules, errs := s.codex(pathsIn(cmd))
 	for _, err := range errs {
 		s.mu.Lock()
@@ -274,17 +291,24 @@ func (s *Service) Policy(cmd string) error {
 		}
 		return fmt.Errorf("command refused by rule %s", rule)
 	case "prompt":
-		if s.ask == nil && s.findAsk != nil {
-			s.ask = s.findAsk()
+		ask := s.ask
+		if ask == nil && s.findAsk != nil {
+			ask = s.findAsk()
 		}
-		if s.ask == nil {
+		if ask == nil {
 			return nil
 		}
 		q := fmt.Sprintf("Rule %s asks before running:\n%s", rule, cmd)
 		if why.Justification != "" {
 			q += "\n" + why.Justification
 		}
-		answer, err := s.ask.Ask(q, "run", "refuse")
+		var answer string
+		var err error
+		if c, ok := ask.(ctxAsker); ok {
+			answer, err = c.AskContext(ctx, q, "run", "refuse")
+		} else {
+			answer, err = ask.Ask(q, "run", "refuse")
+		}
 		if err != nil {
 			return fmt.Errorf("command not run: %w", err)
 		}
@@ -383,8 +407,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}))
 	}
 	if p, err := kernel.Get[policer](ctx, "turn-stats"); err == nil {
-		p.SetPolicy(s.Policy)
-		ctx.Effect(func() { p.SetPolicy(nil) })
+		p.SetPolicyContext(s.PolicyContext)
+		ctx.Effect(func() { p.SetPolicyContext(nil) })
 	}
 	if sec, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
 		if text := s.scopedSection(); text != "" {

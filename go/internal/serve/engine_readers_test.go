@@ -195,6 +195,26 @@ func TestStatusOfEngineSecretTimeout(t *testing.T) {
 	}
 }
 
+// A rule's approval of a bash call records no call of its own: its end
+// with no answer (a timeout) is the Asker's "ask/end" for that id, and
+// only that id's end lets go of Needs you. Found by
+// tests/model/mbt/rules_prompt_approval_test.go (Bash, Timeout).
+func TestStatusOfApprovalEnd(t *testing.T) {
+	t.Parallel()
+	ask := ent(3, "ask", map[string]any{"id": "ask-1", "question": "Rule echo danger asks before running:\necho danger", "options": []any{"run", "refuse"}})
+	base := entries(ent(1, "input", text("x")), ask)
+	other := append(append([]history.Entry{}, base...),
+		ent(4, "ask/end", map[string]any{"id": "ask-0"}),
+		ent(5, "call", map[string]any{"tool": "bash", "text": "echo danger", "id": "c1", "error": "command not run: ask: no answer after 10m0s"}))
+	if st, a := StatusOf(other, true); st != StatusNeedsYou || a == nil || a.ID != "ask-1" {
+		t.Fatalf("another ask's end: %s %+v, want needs-you on ask-1", st, a)
+	}
+	ended := append(append([]history.Entry{}, base...), ent(4, "ask/end", map[string]any{"id": "ask-1", "text": "No answer: the question timed out"}))
+	if st, a := StatusOf(ended, true); st != StatusRunning || a != nil {
+		t.Fatalf("ended: %s %+v, want running with no ask", st, a)
+	}
+}
+
 func TestLastModelFromEngineEntry(t *testing.T) {
 	t.Parallel()
 	es := entries(

@@ -282,6 +282,23 @@ func TestNativeBashPolicy(t *testing.T) {
 	}
 }
 
+// A policy that asks the person gets the call's context, so Stop (the
+// call's cancel) releases an approval still waiting. Found by
+// tests/model/mbt/rules_prompt_approval_test.go (engine Bash, Stop).
+func TestNativeBashPolicyGetsTheCallsContext(t *testing.T) {
+	t.Parallel()
+	_, reg, st := mountNative(t, nil)
+	st.SetPolicyContext(func(ctx context.Context, cmd string) error {
+		<-ctx.Done()
+		return errors.New("rules: not run: " + ctx.Err().Error())
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	if r := call(t, ctx, reg, "bash", "c", `{"command":"echo hi"}`, nil); !strings.Contains(r.Error, "not run: context canceled") {
+		t.Fatalf("policy = %+v", r)
+	}
+}
+
 // Adopt numbers an engine call as a job on the same counter background
 // bash uses; the strip lists it, job reads its live output, job_kill
 // reaches the engine's kill, and finish records the typed entry.

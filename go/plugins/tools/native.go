@@ -200,7 +200,7 @@ func (s *Stats) nativeBash(ctx context.Context, c agenttools.Call) (agenttools.R
 	policy := s.policy
 	s.mu.Unlock()
 	if policy != nil {
-		if err := policy(a.Command); err != nil {
+		if err := policy(ctx, a.Command); err != nil {
 			return fail(err.Error())
 		}
 	}

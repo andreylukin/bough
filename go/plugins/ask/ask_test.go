@@ -139,8 +139,8 @@ func TestAskTimeoutErrors(t *testing.T) {
 	}
 	// The pending ask is gone: a late answer errors.
 	entries := hist.all()
-	if len(entries) != 1 || entries[0].Kind != "ask" {
-		t.Fatalf("timeout should leave only the ask entry, got %+v", entries)
+	if len(entries) != 2 || entries[0].Kind != "ask" || entries[1].Kind != "ask/end" {
+		t.Fatalf("timeout should leave the ask and its end, no answer, got %+v", entries)
 	}
 	id, _ := entries[0].Data["id"].(string)
 	if err := a.Answer(id, "late"); err == nil {

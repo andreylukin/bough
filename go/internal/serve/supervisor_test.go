@@ -543,10 +543,14 @@ func TestSupervisorAskEndWithoutAnswerDisarms(t *testing.T) {
 		{"call", map[string]any{"tool": "ask", "id": "c1", "error": "ask: no answer after 10m0s"}},
 		{"call", map[string]any{"tool": "secret", "id": "c1", "error": "secret: ask: no answer after 10m0s"}},
 		{"result", nil},
+		// A rule's approval of a bash call ends as the bash call, which
+		// says nothing about the ask; the Asker's own end names it.
+		{"ask/end", map[string]any{"id": "ask-1"}},
 	} {
 		emit("ask", "which?", map[string]any{"id": "ask-1"})
 		emit("call", "which?", map[string]any{"tool": "ask", "id": "c1", "phase": "start"})
 		emit("call", "ls", map[string]any{"tool": "bash", "id": "c0"})
+		emit("ask/end", "", map[string]any{"id": "ask-0"})
 		if f.sup.PendingAsk("sess-end") == nil {
 			t.Fatalf("%s: a live start or another tool's end disarmed the ask", end.kind)
 		}

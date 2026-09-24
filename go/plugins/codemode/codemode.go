@@ -383,6 +383,13 @@ func (cm *CodeMode) Park() func() {
 	}
 }
 
+// Owned reports whether the calling goroutine holds the VM: a host call
+// made from a block (tools.bash) does, an engine's native call does not.
+// A tool that waits on the person parks only in the first case.
+func (cm *CodeMode) Owned() bool {
+	return cm.owner.Load() == gid()
+}
+
 // Interrupt aborts the running script (the loop's turn cancel); the
 // next Run clears it, so an interrupt landing between runs is inert.
 func (cm *CodeMode) Interrupt() {

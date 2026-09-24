@@ -904,6 +904,13 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 	switch kind {
 	case "ask":
 		s.asks[id] = askFrom(ev)
+	case "ask/end":
+		// The ask ended unanswered, by the Asker's own word: the one
+		// signal a rule's approval has. Another ask's end leaves this
+		// one armed.
+		if a := s.asks[id]; a != nil && a.ID == extra["id"] {
+			delete(s.asks, id)
+		}
 	case "done", "cancelled", "error", "exit":
 		// The turn (or the process) ended: stop routing stdin to an
 		// ask nobody is waiting on any more.

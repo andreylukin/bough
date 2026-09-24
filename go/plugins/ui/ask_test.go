@@ -217,6 +217,27 @@ func TestAskExpiresOnDone(t *testing.T) {
 	}
 }
 
+// The Asker's ask/end (a rule's approval that timed out mid-turn)
+// expires that one ask and releases the composer, with no line of its
+// own; another ask's end leaves it pending.
+func TestAskExpiresOnItsEnd(t *testing.T) {
+	t.Parallel()
+	d, _ := askDrv(t)
+	d.feed(askEvent())
+	d.feed(eventMsg{Kind: "ask/end", ID: "ask-0"})
+	if d.m.pendingAsk != "ask-1" {
+		t.Fatal("another ask's end released this one")
+	}
+	d.feed(eventMsg{Kind: "ask/end", ID: "ask-1"})
+	p := d.plain()
+	if !strings.Contains(p, "❯? fav color? → (expired)") || strings.Contains(p, "ask/end") {
+		t.Errorf("ended ask should expire, with no line of its own:\n%s", p)
+	}
+	if d.m.pendingAsk != "" || d.m.input.Placeholder != "say something" {
+		t.Error("the ask's end should release the composer")
+	}
+}
+
 func TestAskReplayCollapsed(t *testing.T) {
 	t.Parallel()
 	h := fakeHist{path: "/tmp/x.jsonl", entries: []history.Entry{

@@ -15,7 +15,10 @@ import (
 // second, and a credential typed for a secret could land in a plain
 // ask, unmasked and recorded. A codemode block asks one question at a
 // time by construction, so the loop's path is left as it was.
-func (a *Asker) oneAtATime(done <-chan struct{}) (release func(), err error) {
+func (a *Asker) oneAtATime(done <-chan struct{}, question string) (release func(), err error) {
+	if err := a.testHold(done, "grant", question); err != nil {
+		return nil, err
+	}
 	a.mu.Lock()
 	if a.native == nil {
 		a.native = make(chan struct{}, 1)
@@ -57,7 +60,10 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 				if err := agenttools.Decode("ask", c.Args, &v); err != nil {
 					return agenttools.Result{}, err
 				}
-				release, err := a.oneAtATime(ctx.Done())
+				if err := a.testHold(ctx.Done(), "req", v.Question); err != nil {
+					return agenttools.Result{Error: err.Error()}, nil
+				}
+				release, err := a.oneAtATime(ctx.Done(), v.Question)
 				if err != nil {
 					return agenttools.Result{Error: err.Error()}, nil
 				}
@@ -96,7 +102,7 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 				if v.Project != "" {
 					project = []string{v.Project}
 				}
-				release, err := a.oneAtATime(ctx.Done())
+				release, err := a.oneAtATime(ctx.Done(), v.Question)
 				if err != nil {
 					return agenttools.Result{Error: "secret: " + err.Error()}, nil
 				}

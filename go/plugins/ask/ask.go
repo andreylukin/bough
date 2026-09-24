@@ -28,7 +28,7 @@ import (
 // normalizes payloads reflectively (eventOf), so the field names are
 // contract.
 type Event struct {
-	Kind    string // always "ask"
+	Kind    string // "ask", or "ask/end" when it returned unanswered
 	Text    string // the question
 	ID      string
 	Options []string
@@ -153,9 +153,11 @@ func (a *Asker) putIn(done <-chan struct{}, park func() func(), question string,
 		a.mu.Lock()
 		delete(a.pending, id)
 		a.mu.Unlock()
+		a.ended(id, "Cancelled with no answer")
 		return "", fmt.Errorf("ask: cancelled with no answer")
 	case text, ok := <-ch:
 		if !ok {
+			a.ended(id, "Cancelled with no answer")
 			return "", fmt.Errorf("ask: cancelled with no answer")
 		}
 		return text, nil
@@ -163,8 +165,20 @@ func (a *Asker) putIn(done <-chan struct{}, park func() func(), question string,
 		a.mu.Lock()
 		delete(a.pending, id)
 		a.mu.Unlock()
+		a.ended(id, fmt.Sprintf("No answer after %s", a.timeout))
 		return "", fmt.Errorf("ask: no answer after %s", a.timeout)
 	}
+}
+
+// ended records that ask id returned with no answer, in history and to
+// the UI ("ask/end" {id}). serve, headless and the TUI let go of the ask
+// on it: a rule's approval ends as the bash call it gated, which names
+// no ask, and the page kept showing Run for a command nothing waited on.
+func (a *Asker) ended(id, text string) {
+	if a.hist != nil {
+		a.hist.Append("ask/end", map[string]any{"id": id, "text": text})
+	}
+	a.emit(Event{Kind: "ask/end", Text: text, ID: id})
 }
 
 // expireOn fires when timeout does or when file appears (consuming it),
@@ -190,6 +204,41 @@ func expireOn(file string, timeout <-chan time.Time, stop <-chan struct{}) <-cha
 		}
 	}()
 	return out
+}
+
+// testHold is the other half of the BOUGH_TEST_ASK_EXPIRE_DIR seam: an
+// ask whose question contains <key> waits while hold-<stage>-<key> is in
+// that dir, and fails without being put when the file says "skip". A
+// model test uses it to make each of several calls the engine starts at
+// once reach the person at a step it picks ("req", before the ask queues
+// for the one answer slot) and to pick which queued ask gets the slot
+// ("grant"). Test use only, like expireDir.
+func (a *Asker) testHold(done <-chan struct{}, stage, question string) error {
+	if a.expireDir == "" {
+		return nil
+	}
+	for {
+		held := false
+		ents, _ := os.ReadDir(a.expireDir)
+		for _, e := range ents {
+			key, ok := strings.CutPrefix(e.Name(), "hold-"+stage+"-")
+			if !ok || key == "" || !strings.Contains(question, key) {
+				continue
+			}
+			if b, _ := os.ReadFile(filepath.Join(a.expireDir, e.Name())); string(b) == "skip" {
+				return fmt.Errorf("ask: withdrawn before it was put")
+			}
+			held = true
+		}
+		if !held {
+			return nil
+		}
+		select {
+		case <-done:
+			return fmt.Errorf("ask: cancelled with no answer")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 // askSecret is tools.secret: ask the user for a credential, store it
@@ -252,6 +301,34 @@ func scrub(msg, value string) string {
 // to the user (a Codex rule that says "prompt" before a command).
 func (a *Asker) Ask(question string, options ...string) (string, error) {
 	return a.ask(question, options...)
+}
+
+// AskContext is Ask for a caller with a context of its own: a rule's
+// approval of a bash call, from a block or an engine's native call.
+// ctx's end (Stop) releases it, where Ask waits on the codemode run,
+// which is Background outside a run_js. And it takes the one answer
+// slot the native ask and secret share (oneAtATime): the engine runs a
+// reply's calls at once, and an approval put up beside an open ask
+// replaced it on screen, so the answer typed for the question shown
+// went to the other one.
+func (a *Asker) AskContext(ctx context.Context, question string, options ...string) (string, error) {
+	// From a block, the call holds the VM: let go of it for the whole
+	// wait, the queue included, as tools.ask does.
+	if c, ok := a.code.(interface {
+		Owned() bool
+		Park() func()
+	}); ok && c.Owned() {
+		defer c.Park()()
+	}
+	if err := a.testHold(ctx.Done(), "req", question); err != nil {
+		return "", err
+	}
+	release, err := a.oneAtATime(ctx.Done(), question)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	return a.putIn(ctx.Done(), nil, question, false, options...)
 }
 
 // Answer resolves the pending ask id with text: the history gets an
