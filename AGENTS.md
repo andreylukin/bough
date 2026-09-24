@@ -38,6 +38,10 @@ go test -race -parallel 4 ./...      # ~3 min; plugins/ui alone is most of it
 go test -race ./plugins/todo/        # one package, under a second
 ```
 
+`GORACE=atexit_sleep_ms=0` in front of a race run drops the second
+every race test binary sleeps before it exits; CI sets it. On sixteen
+small packages that is 7.7 s down to 4.6 s.
+
 `-parallel 4`, not the default one-per-CPU: the teatest and PTY suites
 are timing-sensitive and 16-way parallelism starves them. CI passes the
 same flag for the same reason.

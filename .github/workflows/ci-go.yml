@@ -102,9 +102,13 @@ jobs:
           scripts/test-shards_test.sh
       # Few vCPUs: wide parallelism only starves the timing-sensitive
       # TUI and PTY tests. No -count=1: an unchanged package's cached
-      # result is the point of the cache above.
+      # result is the point of the cache above. A race binary sleeps
+      # atexit_sleep_ms (1 s) before it exits, paid once per package and
+      # per re-exec'd child; races found are still reported and fail.
       - name: test (race, shard ${{ matrix.shard }}/4)
         if: matrix.shard != 'pty'
+        env:
+          GORACE: atexit_sleep_ms=0
         run: |
           set -euo pipefail
           pkgs=$(go list ./... | grep -v /internal/vtreal | scripts/test-shards.sh ${{ matrix.shard }} 4)
