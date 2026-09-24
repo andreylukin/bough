@@ -5117,9 +5117,14 @@ export default function App() {
   // changes, so the list poll slows down.
   const streaming = selected !== null;
   const mountedRefresh = useRef(false);
+  const lastRefresh = useRef(refresh);
   useEffect(() => {
     // The first read is the mount's; a later change (Archived) reads at once too.
-    if (!mountedRefresh.current || !streaming) void refresh();
+    // Only streaming flipping on skips it: opening Archived with a session
+    // open sat on "Loading archived…" until the 12 s poll.
+    const archivedChanged = lastRefresh.current !== refresh;
+    lastRefresh.current = refresh;
+    if (!mountedRefresh.current || !streaming || archivedChanged) void refresh();
     mountedRefresh.current = true;
     // A hidden tab does not poll; coming back reads at once.
     const t = setInterval(() => { if (!document.hidden) void refresh(true); }, streaming ? POLL_MS * 3 : POLL_MS);
