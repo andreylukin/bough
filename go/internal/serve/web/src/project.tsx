@@ -3,7 +3,7 @@ import type { OrbFile, OrbState, ProjectDetail, Row, Status } from "./types";
 import { api } from "./api";
 import { FileEditor, ORB_AS_STATUS, OrbSessions, confirmStopOrb, orbUp } from "./orb";
 import { MARKED, STATUS, StatusMark, UnseenDot, hasQuestion, isUnseen, orbWord, rowNote, shownStatus, statusWord } from "./status";
-import { ErrorNote, Pending, ago, humanError } from "./loading";
+import { EmptyState, ErrorNote, Pending, ago, humanError } from "./loading";
 import { hasOwnTitle, sessionTitle, titleKey } from "./render";
 import { idTail } from "./palette";
 import { ModeChip } from "./mode";
@@ -394,7 +394,7 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread, o
 }
 
 export function ProjectPage({
-  detail, files, error, filesError, conversation, mainRow, open, onOpen, onNewThread, onStartThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, onSeen, titles = {},
+  detail, files, error, missing, filesError, conversation, mainRow, open, onOpen, onNewThread, onStartThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, onSeen, titles = {},
 }: {
   /** Absent until the first read lands. */
   detail?: ProjectDetail;
@@ -402,6 +402,8 @@ export function ProjectPage({
   files?: Partial<Record<OrbFile, string>>;
   /** Why the project could not be read, when it could not. */
   error?: string;
+  /** The server said there is no such project (a 404): no Retry can bring it back. */
+  missing?: boolean;
   /** Why the definition files could not be read; the Files section says so and offers the retry. */
   filesError?: string;
   /** The open thread's conversation: the same <Thread> the sessions view builds. */
@@ -462,7 +464,11 @@ export function ProjectPage({
   if (!detail) {
     return (
       <div className="thread prj-loading">
-        {error
+        {missing
+          ? <EmptyState glyph="search" title="Project not found" primary={false} action={onBack && { label: "Show all sessions", onClick: onBack }}>
+              No project on this server has this name. It may have been deleted, or the link is mistyped.
+            </EmptyState>
+          : error
           ? <ErrorNote title="Couldn’t read this project" err={error} action={{ label: "Retry", onClick: onRetry }} />
           : <Pending what="Project" />}
       </div>
@@ -660,6 +666,7 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
   const [detail, setDetail] = useState<ProjectDetail>();
   const [files, setFiles] = useState<Partial<Record<OrbFile, string>>>();
   const [err, setErr] = useState("");
+  const [missing, setMissing] = useState(false);
   const [filesErr, setFilesErr] = useState("");
   // The session on screen, main included; "" is the home.
   const [open, setOpen] = useState("");
@@ -667,8 +674,13 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
   // When the detail on screen was read; a focus newer than it waits for the next read.
   const loadedAt = useRef(0);
   const load = useCallback(async (): Promise<ProjectDetail | undefined> => {
-    try { const d = await api.project(slug); loadedAt.current = Date.now(); setDetail(d); setErr(""); return d; }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); return undefined; }
+    try { const d = await api.project(slug); loadedAt.current = Date.now(); setDetail(d); setErr(""); setMissing(false); return d; }
+    catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      // Only an authoritative 404 says the project is gone; anything else can be retried.
+      setMissing((e as { status?: number }).status === 404);
+      return undefined;
+    }
   }, [slug]);
   const loadFiles = useCallback(async () => {
     // The files come from the orb detail, which is the endpoint that
@@ -679,7 +691,7 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
     catch (e) { setFilesErr(e instanceof Error ? e.message : String(e)); }
   }, [slug]);
 
-  useEffect(() => { setDetail(undefined); setFiles(undefined); setFilesErr(""); setOpen(""); }, [slug]);
+  useEffect(() => { setDetail(undefined); setFiles(undefined); setFilesErr(""); setMissing(false); setOpen(""); }, [slug]);
   useEffect(() => { if (focus) { setOpen(focus.id); void load(); } }, [focus, load]);
   useEffect(() => { void load(); void loadFiles(); }, [load, loadFiles]);
   useEffect(() => {
@@ -709,7 +721,7 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
 
   return (
     <ProjectPage
-      detail={detail} files={files} error={err} filesError={filesErr} conversation={conversation} mainRow={mainRow}
+      detail={detail} files={files} error={err} missing={missing} filesError={filesErr} conversation={conversation} mainRow={mainRow}
       open={open} onOpen={setOpen} onBack={onBack} onOpenSession={onOpenSession} titles={titles}
       onRetry={() => { void load(); void loadFiles(); }}
       onSeen={onSeen ? (id) => { void onSeen(id).then(() => load()); } : undefined}

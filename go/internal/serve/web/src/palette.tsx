@@ -493,7 +493,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   }, [q, rows, commands, onOpenSession, found, onStart, onStartIn, places, pages, onOpenWikiPage, current, startIn, mode, visited]);
 
   // Nothing picked yet: the first result that is not destructive, so Enter never archives by default.
-  const at = atId === null ? Math.max(0, hits.findIndex((c) => !c.destructive)) : Math.max(0, hits.findIndex((c) => c.id === atId));
+  // When every result is destructive nothing is highlighted (-1): Math.max(0, …) put Enter on the first one.
+  const at = atId === null ? hits.findIndex((c) => !c.destructive) : Math.max(0, hits.findIndex((c) => c.id === atId));
   const setAt = (f: (i: number) => number) => { const c = hits[f(at)]; if (c) setAtId(c.id); };
   useEffect(() => {
     list.current?.querySelector('[data-at="1"]')?.scrollIntoView({ block: "nearest" });

@@ -4975,6 +4975,10 @@ export default function App() {
   const STARTING_MS = 120_000;
   const [paused, setPaused] = useState<number | undefined>(undefined);
   const [loadTry, setLoadTry] = useState(0);
+  // The session whose last read failed (not found, or could not load).
+  // A failure is not an answer to keep: coming back to its link asks
+  // again, where the same selection alone would not re-read it.
+  const failedLookup = useRef<string | null>(null);
   const retryRef = useRef<() => void>(() => {});
   useEffect(() => { lastSeq.current = lines.length ? lines[lines.length - 1].seq : 0; }, [lines]);
   // Live fragments of the reply being written, newest last. Never
@@ -5112,6 +5116,7 @@ export default function App() {
     api.session(selected).then((r) => {
       if (!live) return;
       created.current.delete(selected);
+      failedLookup.current = null;
       setStarting(false);
       setLines(r.entries);
       setLoadedFor(selected);
@@ -5128,6 +5133,7 @@ export default function App() {
         return;
       }
       setStarting(false);
+      failedLookup.current = selected;
       setLoadFail(e instanceof Error ? e.message : String(e)); setMissing(gone);
     });
 
@@ -5306,14 +5312,17 @@ export default function App() {
         // A link minted when projects were labels names an id nothing
         // resolves; the project list is where it meant to go.
         setOrbOpen(OLD_PROJECT_ID.test(po[1]) ? undefined : po[1]);
-        if (OLD_PROJECT_ID.test(po[1])) window.location.hash = "#/projects";
+        // In place: assigning location.hash pushed, so Back landed on the
+        // old link and was redirected forward again.
+        if (OLD_PROJECT_ID.test(po[1])) window.history.replaceState(null, "", "#/projects");
         return;
       }
       const ps = /^projects\/([^/]+)(?:\/t\/([^/]+))?$/.exec(h);
       if (ps) {
         // A label id from before the re-key, or anything that is not a
         // slug, names no project: the list is where that link meant to go.
-        if (OLD_PROJECT_ID.test(ps[1]) || !SLUG.test(ps[1])) { window.location.hash = "#/projects"; return; }
+        // Replaced, not pushed (see the orb link above); replaceState fires no hashchange, so read again.
+        if (OLD_PROJECT_ID.test(ps[1]) || !SLUG.test(ps[1])) { window.history.replaceState(null, "", "#/projects"); read(); return; }
         // The page picks the session it shows (main, or a thread) once it
         // has read the project; whatever was open elsewhere is not it.
         setLost(null); setView("project"); setProjectSlug(ps[1]); setSelected(null); setSub(null); setPane("thread");
@@ -5324,6 +5333,7 @@ export default function App() {
       if (wr) { setLost(null); setView("wiki"); setWikiRoute(wr); setSub(null); setPane("thread"); return; }
       const m = /^s\/([^/]+)\/?(context|changes|portal)?(?:\?.*)?$/.exec(h);
       if (m) {
+        if (failedLookup.current === m[1]) setLoadTry((n) => n + 1);
         setView("sessions"); setSelected(m[1]); setSub((m[2] as "context" | "changes" | "portal" | undefined) ?? null); setPane("thread");
       } else if (h === "") {
         // No session named: on a phone that is the list. The thread pane
@@ -5651,10 +5661,10 @@ export default function App() {
         if (n) act(() => api.newProject(n));
       } },
     { id: "go:sessions", group: "Navigation", label: "Sessions", run: () => goList() },
-    { id: "go:projects", group: "Navigation", label: "Projects",
-      run: () => { setView("projects"); setPane("thread"); } },
-    { id: "go:hooks", group: "Navigation", label: "Hooks",
-      run: () => { setView("hooks"); setPane("thread"); } },
+    // The nav links' own move, so they push: setting the view alone let
+    // the write-back replace the entry, and Back skipped the page you left.
+    { id: "go:projects", group: "Navigation", label: "Projects", run: () => onView("projects") },
+    { id: "go:hooks", group: "Navigation", label: "Hooks", run: () => onView("hooks") },
     { id: "go:wiki", group: "Navigation", label: "Wiki", run: () => goWiki({ at: "index" }) },
     { id: "help:keys", group: "Navigation", label: "Keyboard shortcuts", hint: "?",
       run: () => showShortcuts(modKey()) },

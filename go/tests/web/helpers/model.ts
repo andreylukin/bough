@@ -61,6 +61,13 @@ export interface Flow<C> {
    *  every non-2xx fetch, and a flow may make serve fail). Only that step's
    *  own failure: anything else still fails the walk. */
   expectedError?(c: C, text: string): boolean;
+  /**
+   * Console errors the flow causes on purpose. Chromium logs every 4xx/5xx
+   * answer as "Failed to load resource", so a flow whose spec has a
+   * not-found or a failed read (a 404 lookup) names those lines here;
+   * anything else logged is still a failure.
+   */
+  expectedErrors?: RegExp[];
 }
 
 /** The role's fields out of a graph state, keyed by bare field name. */
@@ -98,8 +105,9 @@ export function modelTests<C>(flow: Flow<C>): void {
       const run = async (serve: Serve, page: Page, info: TestInfo) => {
         const errors: string[] = [];
         let c: C | undefined;
+        const expected = (t: string) => (flow.expectedErrors ?? []).some((re) => re.test(t));
         page.on('console', (m) => {
-          if (m.type() !== 'error' || flow.allowConsole?.test(m.text())) return;
+          if (m.type() !== 'error' || flow.allowConsole?.test(m.text()) || expected(m.text())) return;
           if (c && flow.expectedError?.(c, m.text())) return;
           errors.push(m.text());
         });
