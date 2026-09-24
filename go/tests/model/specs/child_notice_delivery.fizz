@@ -35,10 +35,11 @@ deadlock_detection: false
 #                           it is queued (deliverStoredNotices), on mount
 #                           and by the 1 s file poll (loop.go and
 #                           engine/notices.go pollStoredNotices).
-#   queued -> delivered     a wake turn records it as its input, or
-#                           landJobs lands it before the next model step
-#                           of a turn already running.
-#   -> lost | stranded      see the findings below.
+#   queued -> delivered     a wake turn records it as its input, or the
+#                           engine sends it to a turn already running (at
+#                           the end of the request in flight, or on one of
+#                           its own while a tool such as an ask runs).
+#   -> lost                 see the findings below.
 #
 # proc is the parent's process: none (no process), starting (serve's lease
 # reserved, stdin not there yet), live (serve's headless child), cli (the
@@ -54,8 +55,8 @@ deadlock_detection: false
 # resume in the CLI, one ask, one prompt.
 #
 # FINDINGS (the code as of main 5471918e; the invariants below are the
-# ones the code keeps, the promises it breaks are the lost/stranded
-# states, and LossOnlyThroughKnownWindows names every way in):
+# ones the code keeps, the promises it breaks are the lost states, and
+# LossOnlyThroughKnownWindows names every way in):
 #   crash_after_key   Reported is saved before notifyFrom runs: serve dying
 #                     between the two suppresses the report forever (the
 #                     restart's re-report finds key <= Reported).
@@ -69,13 +70,16 @@ deadlock_detection: false
 #                     would have recorded it never runs.
 #   secret_answer     a pending tools.secret takes the raw stdin line
 #                     before hlLineIn sniffs {"notice"}: the notice JSON
-#                     becomes the secret's value and the report is gone.
+#                     is taken as the secret's value (its store then fails
+#                     on the JSON's characters) and the report is gone.
 #                     (A plain ask is safe: the sniff runs first.)
-#   stranded          the 1 s poll runs while job-notices is missing:
-#                     deliverStoredNotices returns without marking, but the
-#                     poll has already advanced its size mark, so the notice
-#                     waits for the file's next write (a turn, a remount);
-#                     an idle parent sits on it indefinitely.
+#   stranded (fixed)  the engine's 1 s poll moved its size mark while
+#                     job-notices was missing, so a notice appended during
+#                     a tools-row reload waited for the file's next write.
+#                     The server walk found the wait ended at random (an
+#                     engine remount at the reload's end sometimes read the
+#                     file again); pollStoredNotices now keeps its mark
+#                     until job-notices is back, and Poll waits out the gap.
 #   A person's prompt or steer line written behind a waiting notice waits
 #   with it (up to 30 s) although hlSubmit itself does not need
 #   job-notices; SIGINT interrupts are not stdin lines and are not held.
@@ -84,7 +88,7 @@ MAX_KILLS = 1
 MAX_STARTS = 2
 MAX_RELOADS = 1
 
-SETTLED = ("delivered", "lost", "stranded")
+SETTLED = ("delivered", "lost")
 KNOWN_LOSSES = ("", "crash_after_key", "pipe", "killed_in_gap", "gap_timeout", "killed_before_wake", "secret_answer")
 
 role Flow:
@@ -231,13 +235,10 @@ role Flow:
             self.report = "queued"
 
     # system: the 1 s poll sees the file grew. With job-notices missing it
-    # advances its mark and delivers nothing (stranded).
+    # keeps its mark and reads again once the service is back.
     atomic fair action Poll:
-        require self.report == "stored" and self.proc in ("live", "cli")
-        if self.gap:
-            self.report = "stranded"
-        else:
-            self.report = "queued"
+        require self.report == "stored" and self.proc in ("live", "cli") and not self.gap
+        self.report = "queued"
 
     # system: an idle loop's wake runs a turn whose input is the notice.
     atomic fair action Wake:
@@ -246,9 +247,13 @@ role Flow:
         self.delivered += 1
         self.busy = True
 
-    # system: landJobs before the running turn's next model step.
+    # system: the engine sends the notice to the running turn at the end
+    # of the request in flight, or on a request of its own when none is:
+    # tools run asynchronously, so a pending ask or secret does not hold
+    # it back (the server walk found this; the ask == "none" this required
+    # was the loop's landJobs, not the engine's).
     atomic fair action Land:
-        require self.report == "queued" and self.busy and self.ask == "none"
+        require self.report == "queued" and self.busy
         self.report = "delivered"
         self.delivered += 1
 
@@ -306,19 +311,13 @@ always assertion LossOnlyThroughKnownWindows:
 always assertion NoticeNeverAnswersPlainAsk:
     return flow.answered_by_notice != "ask"
 
-# A stored notice never sits on a mounted parent that can take it: mount
-# reads the file and the poll follows every append (the TOCTOU is closed).
-# Only a parent without job-notices strands it.
-always assertion StrandedOnlyWithoutJobNotices:
-    return flow.report != "stranded" or flow.reloads > 0
-
 # A person's line is held only behind a notice waiting for job-notices,
 # and never while the parent's own services are up.
 always assertion PromptHeldOnlyInGap:
     return flow.prompt != "behind" or (flow.report == "waiting" and flow.gap)
 
-# Every report settles: delivered, lost through a named window, stranded
-# (finding), or parked durably in the file of a parent with no process,
+# Every report settles: delivered, lost through a named window,
+# or parked durably in the file of a parent with no process,
 # for its next mount.
 always eventually assertion ReportSettles:
     return flow.report in SETTLED or (flow.report == "stored" and flow.proc == "none")
