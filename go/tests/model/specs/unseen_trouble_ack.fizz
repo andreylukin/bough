@@ -1,0 +1,199 @@
+---
+# A session that has gone quiet (its turn over, the clock past the
+# window, nothing left to open) has no next step, and that is an end
+# state, not a deadlock. The liveness checks still see it: an end state
+# stutters forever, so a mark left on in one fails MarksExpire.
+deadlock_detection: false
+---
+# Unseen finishes, trouble marks and Mark seen (go/tests/model/README.md).
+#
+# One web session as serve's row reports it (GET /api/sessions: trouble,
+# unseen, testsFailed) and as the control room acks it
+# (POST /api/sessions/{id}/ack).
+#
+# The server side is internal/serve: Supervisor.Acknowledge stores the
+# last entry's seq as meta.Ack in meta.json; rowDigest.troubled and
+# rowDigest.unseen (digest.go) derive the two marks from that ack, the
+# transcript and the clock. The spec keeps what those two read, as
+# booleans, and derives the marks the same way in recompute:
+#
+#   newSinceAck  the last entry's seq > meta.Ack         (troubled)
+#   doneSinceAck the last "done" entry's seq > meta.Ack  (unseen)
+#   stale        the clock is past the window since the last entry
+#
+# Trouble compares the ack with the LAST entry, unseen with the last
+# DONE: a title or a notice written after the person looked (Note) never
+# brings the dot back, but it does bring an acked failure's trouble back.
+# That is the code (Troubled: "something recorded after the last time it
+# was marked seen"), not the flow's first map ("a later failure").
+#
+# Abstractions, each a place the code has more than the spec:
+# - One turn. "A later failure after an ack" is a TestFail that was
+#   marked seen mid-turn and then the turn's Fail; a second turn adds
+#   ~3x the states and no mechanism (Prompt writes an entry like any).
+# - "failed" is error and interrupted (a child that dies mid-turn reads
+#   interrupted); both mark trouble the same way.
+# - testsFailed is the last recorded test exit. TestFail is the only test
+#   step: a later passing run would clear it, which adds states and no
+#   claim.
+# - Expire is the clock passing the window with nothing new written.
+#   troubled ages from the last entry, unseen from the last done; they
+#   are one flag here because Note is not allowed once stale, and without
+#   that the two only differ for a note written a week after the finish.
+#   backgroundTroubleWindow (24h, trouble only) needs a background run,
+#   which the web session this spec follows is not.
+# - Note is written only after an ack; before one it moves nothing the
+#   spec can see. That also bounds it: a Note needs an ack first.
+#
+# screen is the page, client state the adapter tracks: "closed" (another
+# view or session is on screen), "hidden" (the session is selected but
+# its transcript is not on screen: a hidden tab, a sub view such as
+# Changes, a phone on the list pane) and "shown" (transcript on screen in
+# a visible tab). The page acks a shown unseen finish on the render after
+# the row says unseen (app.tsx viewingUnseen), so a finish while shown is
+# briefly unseen: AutoAck is its own step, strongly fair (a page that is
+# opened and closed forever still acks on one of the renders it is shown).
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.testsFailed = False
+        self.newSinceAck = False
+        self.doneSinceAck = False
+        self.stale = False
+        self.screen = "closed"
+        self.trouble = ""
+        self.unseen = False
+
+    # troubled then unseen, as rowOf calls them (api.go). An idle session
+    # has no entry yet and is never troubled (digest.empty).
+    atomic func recompute():
+        t = ""
+        if self.status != "idle" and self.newSinceAck and not self.stale:
+            if self.status == "failed":
+                t = "failed"
+            elif self.testsFailed:
+                t = "tests failed"
+        self.trouble = t
+        self.unseen = (self.status == "done" and t == "" and
+                       self.doneSinceAck and not self.stale)
+
+    # A new entry: the last seq moves past the ack, the clock restarts.
+    atomic func wrote():
+        self.newSinceAck = True
+        self.stale = False
+        self.recompute()
+
+    # Supervisor.Acknowledge: meta.Ack = the last entry's seq, saved.
+    atomic func ack():
+        self.newSinceAck = False
+        self.doneSinceAck = False
+        self.recompute()
+
+    atomic action Prompt:
+        require self.status == "idle"
+        self.status = "running"
+        self.wrote()
+
+    # A test command's non-zero exit, recorded mid-turn. It is the last
+    # test run until another one: trouble even while the turn runs.
+    atomic action TestFail:
+        require self.status == "running" and not self.testsFailed
+        self.testsFailed = True
+        self.wrote()
+
+    atomic action Finish:
+        require self.status == "running"
+        self.status = "done"
+        self.doneSinceAck = True
+        self.wrote()
+
+    atomic action Fail:
+        require self.status == "running"
+        self.status = "failed"
+        self.wrote()
+
+    # A title or a notice written after the turn closed and was acked.
+    atomic action Note:
+        require self.status in ("done", "failed") and not self.newSinceAck and not self.stale
+        self.wrote()
+
+    # The window passes with nothing new written; a hung turn too. Not
+    # while the finish is on screen and unseen: the page acks it on its
+    # next render, seconds against a week, so the clock is not what
+    # clears the dot there, and ShownUnseenIsAcked must not lean on it.
+    atomic fair action Expire:
+        require self.status != "idle" and not self.stale and not (self.screen == "shown" and self.unseen)
+        self.stale = True
+        self.recompute()
+
+    # Opening matters to this flow for a turn in flight (it may finish on
+    # screen) or an unseen finish; the spec opens only then, which keeps
+    # the page out of every other server state.
+    atomic action Open:
+        require self.screen == "closed" and (self.status == "running" or self.unseen)
+        self.screen = "hidden"
+
+    atomic action Show:
+        require self.screen == "hidden"
+        self.screen = "shown"
+
+    atomic action Close:
+        require self.screen != "closed"
+        self.screen = "closed"
+
+    # app.tsx: viewing && row.unseen && !document.hidden -> api.ack. A
+    # troubled row is not acked by being looked at; it has Mark seen.
+    atomic fair<strong> action AutoAck:
+        require self.screen == "shown" and self.unseen
+        self.ack()
+
+    # "Mark seen" in the thread header, "Seen" on the sidebar row, and the
+    # palette's "Mark every failure seen": each is offered only on a row
+    # with trouble.
+    atomic action MarkSeen:
+        require self.trouble != ""
+        self.ack()
+
+    # A project thread dropped on Done (project.tsx threadDrop: only an
+    # unseen finish moves) while another thread is on screen: one that is
+    # shown is AutoAck's, and a hidden tab takes no drag.
+    atomic action DragDone:
+        require self.unseen and self.screen == "closed"
+        self.ack()
+
+action Init:
+    session = Session()
+
+always assertion NeverTroubledAndUnseen:
+    return not (session.trouble != "" and session.unseen)
+
+always assertion NoTroubleWhenEmpty:
+    return session.status != "idle" or session.trouble == ""
+
+# A session that is open but not on screen keeps its unseen finish: the
+# ack (doneSinceAck cleared) happens only once its transcript is shown.
+transition assertion NoAckUntilOnScreen(before, after):
+    hidden = before.session.screen == "hidden" and after.session.screen == "hidden"
+    return not (hidden and before.session.unseen and not after.session.doneSinceAck)
+
+# The marks are a function of what is saved (meta.json's ack, the
+# transcript, the clock): a step that changes none of it, such as opening
+# or closing the page, never changes them. A serve restart is such a step
+# for the server: it rebuilds the rows from those alone.
+transition assertion MarksFollowSavedState(before, after):
+    b = before.session
+    a = after.session
+    same = (b.status == a.status and b.testsFailed == a.testsFailed and
+            b.newSinceAck == a.newSinceAck and
+            b.doneSinceAck == a.doneSinceAck and b.stale == a.stale)
+    return not same or (b.trouble == a.trouble and b.unseen == a.unseen)
+
+# The page acks a shown unseen finish on its next render: no run stays
+# shown and unseen.
+always eventually assertion ShownUnseenIsAcked:
+    return not (session.screen == "shown" and session.unseen)
+
+# Once the session goes quiet, both marks run out on the clock.
+eventually always assertion MarksExpire:
+    return session.trouble == "" and not session.unseen
