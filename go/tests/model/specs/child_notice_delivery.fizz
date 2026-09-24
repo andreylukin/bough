@@ -257,9 +257,12 @@ role Flow:
         self.report = "delivered"
         self.delivered += 1
 
-    # system: the parent's turn ends (not while an ask blocks it).
+    # system: the parent's turn ends (not while an ask blocks it, nor
+    # with a notice queued: the engine sends it at the end of the request
+    # in flight, so the turn goes on to answer it; the server walk found a
+    # turn released in a reload gap carrying the notice).
     atomic fair action TurnEnds:
-        require self.busy and self.ask == "none"
+        require self.busy and self.ask == "none" and self.report != "queued"
         self.busy = False
 
     # agent: tools.ask / tools.secret inside the parent's turn.
