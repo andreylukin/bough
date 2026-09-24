@@ -44,7 +44,8 @@ type rowDigest struct {
 	// turn ran from losing the chip.
 	cacheBase *Cache
 
-	// The last entry, which is all Troubled needs of the transcript.
+	// The last entry that is not the turn's trailing summary or title,
+	// which is all troubled needs of the transcript.
 	lastSeq     int64
 	lastEntryAt time.Time
 	empty       bool
@@ -73,8 +74,15 @@ func digestOf(entries []history.Entry, fallback time.Time) *rowDigest {
 		hasInput:    hasInput(entries),
 		empty:       len(entries) == 0,
 	}
-	if n := len(entries); n > 0 {
-		d.lastSeq, d.lastEntryAt = entries[n-1].Seq, entries[n-1].At
+	// The turn's summary and title are written after its done, a
+	// small-model call later: a Mark seen clicked on the failure in
+	// between was taken back when they landed. They are the turn already
+	// looked at, so trouble compares the ack with the entry before them.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if k := entries[i].Kind; k != "turn-summary" && k != "title" {
+			d.lastSeq, d.lastEntryAt = entries[i].Seq, entries[i].At
+			break
+		}
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind == "done" {
