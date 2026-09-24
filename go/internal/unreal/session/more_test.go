@@ -82,6 +82,78 @@ func TestProviderErrorKeepsRunAlive(t *testing.T) {
 	}
 }
 
+// A provider error while a Blocking call (the ask) is outstanding does
+// not adopt it as a job or close the turn: the error is noted, the ask
+// stays answerable, and once every call has ended the model gets their
+// results in the same turn. Adopting it closed the turn with the Asker
+// still blocking and nothing on screen to answer it, for ten minutes.
+// Found by tests/model/mbt/ask_beside_parallel_calls_test.go
+// (SendMessage while the ask is being put in, then ProviderFails).
+func TestProviderErrorKeepsABlockingCallsTurn(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRigWith(t, []rigOpt{settle(100 * time.Millisecond)},
+			fake.Step{Want: "decide", Output: []ullmItem{fake.Call("q1", "ask", `{"text":"which one?"}`), fake.Call("h1", "hold", `{"text":"build"}`)}},
+			fake.Step{Want: "also this", Err: errBoom},
+			fake.Step{Want: "the user answered: blue", Output: []ullmItem{fake.Text("blue it is")}},
+		)
+		r.rt.Submit("decide for me")
+		r.waitFor("both calls to start", func() bool {
+			r.kit.mu.Lock()
+			defer r.kit.mu.Unlock()
+			return slices.Contains(r.kit.calls, "hold")
+		})
+		if !r.rt.Steer("also this") {
+			t.Fatal("the steer was refused")
+		}
+		r.waitFor("the provider error", func() bool { return r.count("error") == 1 })
+		r.stays("the turn stays open on the ask", 600*time.Millisecond, func() bool {
+			return r.count("done") == 0 && r.count("job") == 0
+		})
+		close(r.kit.release)
+		r.kit.answer <- "blue"
+		r.waitDone(1)
+		if r.last("assistant").Data["text"] != "blue it is" || r.count("job") != 0 || r.count("done") != 1 {
+			t.Fatalf("history\n%s", r.dump())
+		}
+	})
+}
+
+// A steer queued behind the request that failed goes out at once, as it
+// does behind a request that answered: with the turn kept open for the
+// ask, it otherwise waited for some later response, and the model saw
+// it only after the next call ended.
+func TestProviderErrorSendsTheQueuedSteer(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		hold := make(chan struct{})
+		r := newRigWith(t, []rigOpt{settle(100 * time.Millisecond)},
+			fake.Step{Want: "decide", Output: []ullmItem{fake.Call("q1", "ask", `{"text":"which one?"}`), fake.Call("h1", "hold", `{"text":"build"}`)}},
+			fake.Step{Want: "first steer", Hold: hold, Err: errBoom},
+			fake.Step{Want: "second steer", Output: []ullmItem{fake.Text("noted")}},
+			fake.Step{Want: "the user answered: blue", Output: []ullmItem{fake.Text("blue it is")}},
+		)
+		r.rt.Submit("decide for me")
+		r.waitFor("both calls to start", func() bool {
+			r.kit.mu.Lock()
+			defer r.kit.mu.Unlock()
+			return slices.Contains(r.kit.calls, "hold")
+		})
+		r.rt.Steer("first steer")
+		r.waitRequests(2)
+		r.rt.Steer("second steer")
+		r.waitFor("the second steer in history", func() bool { return r.count("input") == 3 })
+		close(hold)
+		r.waitRequests(3)
+		close(r.kit.release)
+		r.kit.answer <- "blue"
+		r.waitDone(1)
+		if r.last("assistant").Data["text"] != "blue it is" || r.count("job") != 0 {
+			t.Fatalf("history\n%s", r.dump())
+		}
+	})
+}
+
 // An overflow is sticky for the model: the next turn fails at once
 // without a provider request.
 func TestOverflowIsSticky(t *testing.T) {
