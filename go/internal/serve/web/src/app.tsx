@@ -1,4 +1,4 @@
-import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } from "./api";
 import type { Event as LiveEvent, Line, Project, Row } from "./types";
@@ -2821,6 +2821,17 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
 export function ChangesChip({ row, scope, onScope }: { row: Row; scope: Scope; onScope: (s: Scope) => void }) {
   const data = useContext(SessionChanges) ?? { session: unread, tree: unread, turn: undefined, turnSeq: undefined, retry: () => {} };
   const phone = useMedia("(max-width:720px)");
+  return (
+    <ChangesChipView row={row} data={data} phone={phone}>
+      <ChangesBody row={row} data={data} scope={scope} onScope={onScope} />
+    </ChangesChipView>
+  );
+}
+
+/** The chip as a function of the reads and the window; children are the popover's body. */
+export function ChangesChipView({ row, data, phone, children }: {
+  row: Row; data: ReturnType<typeof useChanges>; phone: boolean; children: ReactNode;
+}) {
   // The chip is the one place that names a missing repository; the body's tabs show a dash.
   const noRepo = (r: typeof data.session) => (r.files !== null && !r.repo ? { text: "No Git repository", quiet: true } : null);
   const c: ReturnType<typeof countOf> = noRepo(data.session) ?? countOf(data.session);
@@ -2844,7 +2855,7 @@ export function ChangesChip({ row, scope, onScope }: { row: Row; scope: Scope; o
     <details className="rt rt-jobs">
       <summary aria-label={aria}>{body}</summary>
       <div className="rt-pop rt-diff">
-        <ChangesBody row={row} data={data} scope={scope} onScope={onScope} />
+        {children}
         <a className="link chg-full" href={href}>Open full view</a>
       </div>
     </details>
