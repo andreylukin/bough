@@ -74,7 +74,12 @@ type run struct {
 // start launches `bough --headless --set llm.plugin=llm-control` in a
 // fresh HOME and cwd with an open stdin; the default bough.yml is
 // copied in, so the row under test is the only change to it.
-func start(t *testing.T, args ...string) *run {
+func start(t *testing.T, args ...string) *run { return startWith(t, false, args...) }
+
+// startHeld is start with HoldStart in place before the process runs.
+func startHeld(t *testing.T) *run { return startWith(t, true) }
+
+func startWith(t *testing.T, hold bool, args ...string) *run {
 	t.Helper()
 	base := t.TempDir()
 	home, cwd := filepath.Join(base, "home"), filepath.Join(base, "cwd")
@@ -98,6 +103,9 @@ func start(t *testing.T, args ...string) *run {
 		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "BOUGH_ROOT=") {
 			cmd.Env = append(cmd.Env, kv)
 		}
+	}
+	if hold {
+		HoldStart(t, Dir(home))
 	}
 	r := &run{t: t, home: home, out: &buf{}, exited: make(chan error, 1)}
 	cmd.Stdout, cmd.Stderr = r.out, r.out
@@ -249,5 +257,52 @@ func TestControlBlock(t *testing.T) {
 	code, out := r.finish()
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// histFiles lists the session files the run's HOME holds.
+func (r *run) histFiles() []string {
+	files, _ := filepath.Glob(filepath.Join(r.home, ".bough", "history", "*.jsonl"))
+	return files
+}
+
+// A held start parks the process before the history row writes its
+// file, so a test can see a session that exists but has no history
+// yet; releasing it lets the session start as usual.
+func TestControlHoldStart(t *testing.T) {
+	t.Parallel()
+	r := startHeld(t)
+	if pid := WaitHeld(t, r.dir(), 30*time.Second); pid <= 0 {
+		t.Fatalf("held pid %d", pid)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if f := r.histFiles(); len(f) != 0 {
+		t.Fatalf("history written while the start was held: %v", f)
+	}
+	ReleaseStart(t, r.dir())
+	Queue(t, r.dir(), "001", Turn{Mode: "ok", Text: "started after the hold"})
+	r.send("hello")
+	r.waitFor("[assistant] started after the hold")
+	if code, out := r.finish(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if f := r.histFiles(); len(f) != 1 {
+		t.Fatalf("history files after the release: %v", f)
+	}
+}
+
+// ExitStart makes a held process exit instead: a session that dies
+// before it writes any history.
+func TestControlHoldExit(t *testing.T) {
+	t.Parallel()
+	r := startHeld(t)
+	WaitHeld(t, r.dir(), 30*time.Second)
+	ExitStart(t, r.dir())
+	code, out := r.finish()
+	if code == 0 {
+		t.Fatalf("exit 0 from a held start told to exit:\n%s", out)
+	}
+	if f := r.histFiles(); len(f) != 0 {
+		t.Fatalf("history written by a start told to exit: %v", f)
 	}
 }

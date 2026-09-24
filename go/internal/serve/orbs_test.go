@@ -368,10 +368,12 @@ func TestCreateProjectSession(t *testing.T) {
 func TestLocalChildDropsInheritedMode(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t, envNewID+"=sess-local", "BOUGH_MODE=project", "BOUGH_PROJECT=leak")
-	if code, body := f.do(t, "POST", "/api/sessions", `{"cwd":"`+f.home+`"}`); code != http.StatusCreated {
+	code, body := f.do(t, "POST", "/api/sessions", `{"cwd":"`+f.home+`"}`)
+	if code != http.StatusCreated {
 		t.Fatalf("create = %d %v", code, body)
 	}
-	es, _ := history.Read(filepath.Join(f.hist, "sess-local.jsonl"))
+	id, _ := rowOf(t, body)["id"].(string)
+	es, _ := history.Read(filepath.Join(f.hist, id+".jsonl"))
 	if len(es) == 0 || es[0].Data["mode"] != "" || es[0].Data["project"] != "" {
 		t.Fatalf("local child inherited mode: %+v", es)
 	}

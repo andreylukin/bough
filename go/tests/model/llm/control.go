@@ -10,6 +10,7 @@ package llm
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,6 +76,70 @@ func ReleaseWith(t testing.TB, dir, name string, turn Turn) {
 	if err := os.Rename(tmp, filepath.Join(dir, name+".release")); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// HoldStart parks every process that mounts the row from now on,
+// before the history row (mounted after llm) writes the session's file:
+// the way a test holds a session between its spawn and its history.
+func HoldStart(t testing.TB, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(dir, "start.exit"))
+	// A process killed while held (serve's create timeout) never removed
+	// its marker; nothing is held before the hold, so all are stale.
+	stale, _ := filepath.Glob(filepath.Join(dir, "start-*.held"))
+	for _, f := range stale {
+		os.Remove(f)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "start.hold"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ReleaseStart lets held processes go on starting.
+func ReleaseStart(t testing.TB, dir string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(dir, "start.hold")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+// ExitStart makes held processes exit (status 3) instead of starting.
+// HoldStart clears it for the next hold.
+func ExitStart(t testing.TB, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "start.exit"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Held returns the pid of a process parked by HoldStart, 0 when none
+// is: each announces itself as start-<pid>.held while it waits.
+func Held(dir string) int {
+	files, _ := filepath.Glob(filepath.Join(dir, "start-*.held"))
+	for _, f := range files {
+		var pid int
+		if _, err := fmt.Sscanf(filepath.Base(f), "start-%d.held", &pid); err == nil {
+			return pid
+		}
+	}
+	return 0
+}
+
+// WaitHeld waits for a process to park at the hold and returns its pid.
+func WaitHeld(t testing.TB, dir string, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if pid := Held(dir); pid != 0 {
+			return pid
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("llm-control: no process held at start after %s", timeout)
+	return 0
 }
 
 // WaitTaken waits until the row has picked up turn name (it renames

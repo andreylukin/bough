@@ -50,8 +50,34 @@ func (p *controlPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("llm-control: %w", err)
 	}
+	holdStart(dir)
 	ctx.Provide(serviceKey(cfg), &controlLLM{dir: dir})
 	return nil
+}
+
+// holdStart parks the process while <dir>/start.hold exists, announcing
+// itself as start-<pid>.held, and exits 3 if start.exit appears. The llm
+// row mounts before history, so a held session has no history file yet:
+// that is how a test puts serve's Create between spawn and discovery,
+// or makes the child die there.
+func holdStart(dir string) {
+	hold := filepath.Join(dir, "start.hold")
+	if _, err := os.Stat(hold); err != nil {
+		return
+	}
+	held := filepath.Join(dir, fmt.Sprintf("start-%d.held", os.Getpid()))
+	os.WriteFile(held, nil, 0o644)
+	defer os.Remove(held)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "start.exit")); err == nil {
+			os.Remove(held)
+			os.Exit(3)
+		}
+		if _, err := os.Stat(hold); err != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 type controlLLM struct {

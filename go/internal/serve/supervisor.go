@@ -359,7 +359,8 @@ func (s *Supervisor) List() ([]history.SessionInfo, error) {
 // Create spawns a fresh headless session in cwd and, once its history
 // id appears, writes prompt as its first line.
 //
-// The child picks its own id, so discovery is a diff of history.List
+// A local session starts under an id minted here (createWithID). A
+// project child picks its own, so discovery is a diff of history.List
 // before and after the spawn, bounded by createTimeout. createMu keeps
 // two Creates from racing over one new file.
 func (s *Supervisor) Create(opt CreateOptions) (string, error) {
@@ -367,6 +368,13 @@ func (s *Supervisor) Create(opt CreateOptions) (string, error) {
 	var extra []string
 	switch opt.Mode {
 	case "", "local":
+		// Minted, not discovered: a directory diff failed the create
+		// when another bough wrote a history file meanwhile, and claimed
+		// that unrelated session when its file landed first
+		// (tests/model/specs/session_create.fizz, OtherWrites).
+		if opt.ID == "" {
+			opt.ID = history.NewID()
+		}
 	case "project":
 		if err := projectdef.ValidSlug(opt.Slug); err != nil {
 			return "", fmt.Errorf("serve: supervisor: project session: %w", err)
