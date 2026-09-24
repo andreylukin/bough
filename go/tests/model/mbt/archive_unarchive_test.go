@@ -665,7 +665,7 @@ func TestArchiveUnarchiveCatchesWrongAdapter(t *testing.T) {
 func TestArchiveUnarchivePaths(t *testing.T) {
 	t.Parallel()
 	a := newArchiveUnarchiveAdapter(t)
-	if err := walkPaths(a); err != nil {
+	if err := walkArchivePaths(a); err != nil {
 		t.Fatal(err)
 	}
 	g, err := tracecheck.Load(filepath.Join("..", "testdata", "archive_unarchive"))
@@ -683,12 +683,12 @@ func TestArchiveUnarchivePathsCatchWrongAdapter(t *testing.T) {
 	t.Parallel()
 	a := newArchiveUnarchiveAdapter(t)
 	a.stopIsArchiveOnly = true
-	if err := walkPaths(a); err == nil {
+	if err := walkArchivePaths(a); err == nil {
 		t.Fatal("a paths walk whose Stop and archive leaves the agent running passed")
 	}
 }
 
-func walkPaths(a *archiveUnarchiveAdapter) error {
+func walkArchivePaths(a *archiveUnarchiveAdapter) error {
 	b, err := os.ReadFile(filepath.Join("..", "testdata", "archive_unarchive", "paths.json"))
 	if err != nil {
 		return err
