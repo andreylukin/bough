@@ -14,12 +14,15 @@ package llm
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,7 +60,7 @@ func (p *controlPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	}
-	ctx.Provide(serviceKey(cfg), &controlLLM{dir: dir})
+	ctx.Provide(serviceKey(cfg), &controlLLM{dir: dir, tag: newControlTag()})
 	return nil
 }
 
@@ -130,6 +133,12 @@ func holdBoot(ctx *kernel.Context, dir string) error {
 
 type controlLLM struct {
 	dir string
+	// tag makes this process's response ids its own. A provider's ids
+	// are unique; numbering from 1 in every process was not, and a
+	// respawned child's first call reused the id of the call its
+	// predecessor made, which the engine's projector already had as
+	// done: the new call ran with no call events at all.
+	tag string
 
 	mu    sync.Mutex // serialises taking a turn across session views
 	n     int
@@ -359,7 +368,7 @@ func (a *controlAdapter) reply(ctx context.Context, text string, delay time.Dura
 	n := a.c.n
 	a.c.mu.Unlock()
 	return ullm.Response{
-		ID:     fmt.Sprintf("control-%d", n),
+		ID:     fmt.Sprintf("control-%s-%d", a.c.tag, n),
 		Stop:   ullm.StopComplete,
 		Output: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleAssistant, Text: text}}},
 		Usage:  u,
@@ -414,7 +423,7 @@ func (a *controlAdapter) bash(ctx context.Context, name, cmd string) (ullm.Respo
 	n := a.c.n
 	a.c.mu.Unlock()
 	return ullm.Response{
-		ID:     fmt.Sprintf("control-%d", n),
+		ID:     fmt.Sprintf("control-%s-%d", a.c.tag, n),
 		Stop:   ullm.StopComplete,
 		Output: []ullm.Item{{Type: ullm.ItemToolCall, Data: call}},
 		Usage:  u,
@@ -445,7 +454,7 @@ func (a *controlAdapter) calls(ctx context.Context, name string, cs []controlCal
 	addAgentUsage(&a.c.usage, u)
 	n := a.c.n
 	a.c.mu.Unlock()
-	return ullm.Response{ID: fmt.Sprintf("control-%d", n), Stop: ullm.StopComplete, Output: out, Usage: u}, nil
+	return ullm.Response{ID: fmt.Sprintf("control-%s-%d", a.c.tag, n), Stop: ullm.StopComplete, Output: out, Usage: u}, nil
 }
 
 func controlWords(s string) []string {
@@ -459,4 +468,13 @@ func controlWords(s string) []string {
 		s = s[i+1:]
 	}
 	return out
+}
+
+// newControlTag is 8 random hex digits, fresh per process.
+func newControlTag() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.Itoa(os.Getpid())
+	}
+	return hex.EncodeToString(b[:])
 }
