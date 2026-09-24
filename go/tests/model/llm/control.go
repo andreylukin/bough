@@ -21,7 +21,9 @@ import (
 // Turn is one queued model response. Mode is "ok", "error", "slow",
 // "block" or "call" (one call of Tool with Args, e.g. tools.ask). Call,
 // on a release, answers with that tool call after Text, so the turn
-// goes on instead of ending.
+// goes on instead of ending. Calls, on an "ok" turn, are tool calls the
+// response makes instead of text: the engine runs them and asks again,
+// and the next queued turn answers that request.
 type Turn struct {
 	Mode    string         `json:"mode"`
 	Text    string         `json:"text,omitempty"`
@@ -31,7 +33,8 @@ type Turn struct {
 	Tool    string         `json:"tool,omitempty"`
 	Args    map[string]any `json:"args,omitempty"`
 	// Bash, on a release, answers with one bash tool call running it.
-	Bash string `json:"bash,omitempty"`
+	Bash  string `json:"bash,omitempty"`
+	Calls []Call `json:"calls,omitempty"`
 }
 
 // Call is a tool call the model makes: a native tool by name, with its

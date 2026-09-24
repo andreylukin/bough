@@ -8,6 +8,7 @@ package serve
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -428,6 +429,7 @@ func (s *Supervisor) Create(opt CreateOptions) (string, error) {
 					return id, err
 				}
 			}
+			s.waitMeta(ch, id, deadline)
 			return id, nil
 		}
 		select {
@@ -480,6 +482,7 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 					return id, err
 				}
 			}
+			s.waitMeta(ch, id, deadline)
 			return id, nil
 		}
 		select {
@@ -492,6 +495,27 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 			return "", fmt.Errorf("serve: supervisor: %s did not appear in %s", path, createTimeout)
 		}
 		time.Sleep(createPoll)
+	}
+}
+
+// waitMeta holds a new session's id back until its history file has
+// its first line, the "meta" with the cwd. The child creates the file
+// before it writes that line (after git has named the repo), and in
+// that gap the listing has no cwd for the id: GET changes and GET diff
+// ran git in serve's own directory, so a page opened straight after
+// Create read another tree, or none. Past the deadline, or once the
+// child is gone, the id is returned as before.
+func (s *Supervisor) waitMeta(ch *child, id string, deadline time.Time) {
+	path := filepath.Join(s.opt.HistDir, id+".jsonl")
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(path); err == nil && bytes.IndexByte(b, '\n') >= 0 {
+			return
+		}
+		select {
+		case <-ch.done:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

@@ -31,6 +31,9 @@ const (
 	envNoise  = "BOUGH_FAKE_NOISE"
 	envNoHist = "BOUGH_FAKE_NOHIST"
 	envMetaID = "BOUGH_FAKE_METAID" // volunteer the id on the meta line
+	// envSlowMeta creates the history file empty and writes its meta a
+	// moment later, the gap the real child has.
+	envSlowMeta = "BOUGH_FAKE_SLOWMETA"
 	// envTurns makes the fake record input/assistant/done in its history
 	// file like the real loop, so background-agent reports can read them.
 	envTurns = "BOUGH_FAKE_TURNS"
@@ -79,6 +82,12 @@ func fakeChild() {
 	}
 	dir := os.Getenv(envHist)
 	if dir != "" && id != "" && os.Getenv(envNoHist) == "" {
+		if os.Getenv(envSlowMeta) != "" {
+			// As history.Open does: the file exists before its meta,
+			// which waits on git (repoInfo).
+			appendEntryRaw(filepath.Join(dir, id+".jsonl"), nil)
+			time.Sleep(300 * time.Millisecond)
+		}
 		cwd, _ := os.Getwd()
 		appendEntry(filepath.Join(dir, id+".jsonl"), history.Entry{
 			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT"), "project_dir": os.Getenv("BOUGH_PROJECT_DIR"), "spawned_by": os.Getenv("BOUGH_SPAWNED_BY"), "project_main": os.Getenv("BOUGH_PROJECT_MAIN"), "args": strings.Join(os.Args[1:], " ")},
@@ -230,6 +239,16 @@ func say(obj map[string]any) {
 	os.Stdout.Write(append(b, '\n'))
 }
 
+func appendEntryRaw(path string, b []byte) {
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(b)
+}
+
 func appendEntry(path string, e history.Entry) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -376,6 +395,32 @@ func TestSupervisorCreateAndPrompt(t *testing.T) {
 			t.Fatalf("event %d has seq %d", i, e.Seq)
 		}
 	}
+}
+
+// Create's id is only handed out once the session's meta is on disk:
+// until then the listing has no cwd for it, and a read by id (GET
+// changes, GET diff) ran git in serve's own directory instead.
+func TestSupervisorCreateReturnsOnceCwdIsKnown(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envNewID+"=sess-slowmeta", envSlowMeta+"=1")
+	cwd := t.TempDir()
+	id, err := f.sup.Create(CreateOptions{Cwd: cwd})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	infos, err := f.sup.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range infos {
+		if in.ID == id {
+			if want, _ := filepath.EvalSymlinks(cwd); in.Cwd != want && in.Cwd != cwd {
+				t.Fatalf("listed cwd right after Create = %q, want %q", in.Cwd, cwd)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s not listed right after Create", id)
 }
 
 func TestSupervisorCreatePrefersMetaID(t *testing.T) {

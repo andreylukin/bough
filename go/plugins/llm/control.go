@@ -169,6 +169,10 @@ type controlTurn struct {
 	Args json.RawMessage `json:"args"`
 	// Bash, on a release, answers with one bash tool call running it.
 	Bash string `json:"bash"`
+	// Calls, on an "ok" turn, are tool calls the response makes instead
+	// of text, so a test can have the agent run a real tool (a shell edit
+	// the write tools never report).
+	Calls []controlCall `json:"calls"`
 }
 
 // controlCall is a tool call a release answers with, so a test can put
@@ -238,6 +242,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 	}
 	switch turn.Mode {
 	case "ok", "":
+		if len(turn.Calls) > 0 {
+			return a.calls(ctx, name, turn.Calls)
+		}
 		return a.reply(ctx, turn.Text, 0)
 	case "error":
 		return ullm.Response{}, errors.New(turn.Error)
@@ -412,6 +419,33 @@ func (a *controlAdapter) bash(ctx context.Context, name, cmd string) (ullm.Respo
 		Output: []ullm.Item{{Type: ullm.ItemToolCall, Data: call}},
 		Usage:  u,
 	}, nil
+}
+
+// calls answers with tool calls only; the engine runs them and makes the
+// next request, which takes the next queued turn.
+func (a *controlAdapter) calls(ctx context.Context, name string, cs []controlCall) (ullm.Response, error) {
+	seq := agentllm.SeqOf(ctx)
+	var out []ullm.Item
+	for i, c := range cs {
+		id := c.ID
+		if id == "" {
+			id = fmt.Sprintf("control_%s_%d", name, i+1)
+		}
+		args := string(c.Args)
+		if args == "" || args == "null" {
+			args = "{}"
+		}
+		if a.opts.Sink != nil {
+			a.opts.Sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaToolStart, CallID: id, Name: c.Name})
+		}
+		out = append(out, ullm.Item{Type: ullm.ItemToolCall, Data: ullm.ToolCall{CallID: id, Name: c.Name, Arguments: args}})
+	}
+	u := ullm.Usage{InputTokens: 1, OutputTokens: 1}
+	a.c.mu.Lock()
+	addAgentUsage(&a.c.usage, u)
+	n := a.c.n
+	a.c.mu.Unlock()
+	return ullm.Response{ID: fmt.Sprintf("control-%d", n), Stop: ullm.StopComplete, Output: out, Usage: u}, nil
 }
 
 func controlWords(s string) []string {

@@ -14,6 +14,7 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 | `{"mode":"ok","text":"done"}` | finishes with `text` |
 | `{"mode":"error","error":"boom"}` | fails; the turn errors and headless exits 1 |
 | `{"mode":"slow","text":"a b c","delay_ms":300}` | streams `text` a word per `delay_ms` |
+| `{"mode":"ok","calls":[{"name":"bash","args":{"command":"…"}}]}` | makes those tool calls; the engine runs them and its next request takes the next queued turn |
 | `{"mode":"call","tool":"ask","args":{"question":"why?"}}` | answers with one call of `tool`; its result goes out on the next request, which takes the next queued turn |
 | `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it, `{"call":{"name":"ask","args":{...}}}` answers with that tool call after its text, `{"mode":"call",…}` makes the call, `{"bash":"cmd"}` answers with one bash tool call running `cmd`, after which the engine asks again and takes the next queued turn) |
 

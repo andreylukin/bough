@@ -474,11 +474,15 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
           const c = countOf(read(s));
           // The page: a segmented control with a count; an empty scope has nothing to show.
           if (cards) {
-            const n = read(s).files?.length;
+            const rs = read(s);
+            const n = rs.files?.length;
+            // Only the shown tab says a read failed in words; another tab's
+            // count must not read as still loading ("…") or as fresh.
+            const why = !rs.failed ? undefined : n === undefined ? "Couldn’t read the changes" : "Stale: the last refresh failed";
             return (
               <button key={s} type="button" role="tab" aria-selected={scope === s} className="chg-scope seg-item" onClick={() => onScope(s)}
                       disabled={n === 0 && scope !== s}>
-                {scopeName(s)} <span className="num seg-count">{n ?? "…"}</span>
+                {scopeName(s)} <span className="num seg-count" title={why}>{n ?? (rs.failed ? "!" : "…")}</span>
               </button>
             );
           }

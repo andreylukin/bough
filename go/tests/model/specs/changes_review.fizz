@@ -1,0 +1,321 @@
+# The Changes page (#/s/<id>/changes): what a session's turns changed, what
+# one turn changed, and the working tree, with each file's diff.
+#
+# Checked against: go/internal/serve/changes.go (changes, edits, diff),
+# web/src/changes.tsx (useChanges, ChangesBody, FileCards, FileCard,
+# ChangesPage) and web/src/app.tsx (ChangesChip, TurnFiles, the router,
+# the Esc handler).
+#
+# Three sessions, one per case the page has to name. sid is the session
+# the thread shows, and so the one the page opens for:
+#   A  a checkout with checkpoints, and the only session whose world moves.
+#      Its agent edits file "a" through the shell, which no write call
+#      reports: what the agent claimed is none of it, the checkpoint diff
+#      has it. A person edits file "h" by hand, outside bough; "h" is dirty
+#      from the start, so a hand edit changes its content, never the list
+#      of files: behind is the page not showing the latest hand edit yet.
+#   N  a checkout whose session recorded file "n" with no checkpoint: its
+#      edits come back patch=false ("Diff unavailable"); the tree still
+#      diffs "n" against HEAD.
+#   R  no repository: both reads answer repo=false and no files.
+#
+# Reads. useChanges fires GET edits and GET edits?turn= together; here they
+# are one read, "edits". GET changes is "tree", which the page also polls
+# every 10 s. A read is none (page closed), loading (no answer yet), ok,
+# failed (no data: "Couldn't read the changes") or stale (data kept: "the
+# last refresh failed"). The opening reads answer in their own step, both
+# or neither (Answer, AnswerFails: git timing out fails both); a poll
+# answers in its step and may fail (PollFails), which leaves the tree
+# stale; the transcript tick and Retry re-read in their step and succeed
+# (a failed retry changes nothing).
+#
+# Cards. The page shows every file as a <details> card keyed scope+path. A
+# card that mounts while its list has exactly one file opens itself; one
+# that stays keeps its state. ca, ch, cn are the cards of a, h, n being
+# open (a person only opens one here; closing it is not modelled); diff is
+# the files whose patch is on screen (GET diff?path&scope&turn).
+#
+# Pruned, because every transition is a browser path: failures are only
+# walked on A's plain page; while a hand edit is unseen only the poll
+# moves; Close and a tick while open start from an answered page. Each
+# pruned step is one the page takes the same way from a walked state.
+
+# Pure helpers (a fizz func cannot be called inside an expression).
+
+# The files the page lists for scope s, or None while it has no data.
+def files(p, s):
+    st = p.edits
+    if s == "tree":
+        st = p.tree
+    if st in ["none", "loading", "failed"]:
+        return None
+    if p.sid == "N":
+        return ["n"]
+    if p.sid == "R":
+        return []
+    if s == "tree":
+        if p.tagent:
+            return ["h", "a"]
+        return ["h"]
+    if p.eseen:
+        return ["a"]
+    return []
+
+def shown(p):
+    if not p.open:
+        return []
+    fs = files(p, p.scope)
+    if fs == None:
+        return []
+    return fs
+
+def card(p, f):
+    if f == "a":
+        return p.ca
+    if f == "h":
+        return p.ch
+    return p.cn
+
+# A session or turn edit with no checkpoint has no patch (Edit.Patch
+# false): its card opens on nothing, and no diff is asked for.
+def patched(p, f):
+    return f != "n" or p.scope == "tree"
+
+# The cards once the list may have changed. remount is a scope switch or
+# a fresh page: every key is new.
+def settled(p, before, remount):
+    after = shown(p)
+    c = {}
+    for f in ["a", "h", "n"]:
+        if f not in after:
+            c[f] = False
+        elif f in before and not remount:
+            c[f] = card(p, f)
+        else:
+            c[f] = len(after) == 1
+    d = []
+    for f in after:
+        if c[f] and patched(p, f):
+            d.append(f)
+    return c, d
+
+def tabs(p):
+    if p.turn:
+        return ["turn", "session", "tree"]
+    return ["session", "tree"]
+
+# A tab whose list read empty is disabled, unless it is the one shown.
+# The page also lets a person switch before the first answer; the model
+# does not, so the scope while loading is the one the page opened on.
+def can_switch(p, s):
+    if not p.open or s == p.scope or s not in tabs(p) or p.edits == "loading" or p.behind:
+        return False
+    fs = files(p, s)
+    return fs == None or len(fs) > 0
+
+role Page:
+    action Init:
+        self.open = False
+        self.sid = "A"
+        self.turn = False
+        self.scope = "session"
+        self.edits = "none"
+        self.tree = "none"
+        self.eseen = False
+        self.tagent = False
+        self.behind = False
+        self.ca = False
+        self.ch = False
+        self.cn = False
+        self.diff = []
+        # A's world, not the page.
+        self.edited = False
+
+    atomic func settle(before, remount):
+        c, d = settled(self, before, remount)
+        self.ca = c["a"]
+        self.ch = c["h"]
+        self.cn = c["n"]
+        self.diff = d
+
+    # GET edits: the files the turns recorded (the write calls' tally
+    # UNION the checkpoint diff, so a shell edit is there), each diffed
+    # from the first checkpoint to now.
+    atomic func readEdits():
+        self.edits = "ok"
+        self.eseen = self.sid == "A" and self.edited
+
+    # GET changes: git diff HEAD plus untracked, read now.
+    atomic func readTree():
+        self.tree = "ok"
+        if self.sid == "A":
+            self.tagent = self.edited
+            self.behind = False
+
+    # Everything the page holds goes with it.
+    atomic func reset():
+        self.open = False
+        self.turn = False
+        self.scope = "session"
+        self.edits = "none"
+        self.tree = "none"
+        self.eseen = False
+        self.tagent = False
+        self.behind = False
+        self.ca = False
+        self.ch = False
+        self.cn = False
+        self.diff = []
+
+    # --- the person
+
+    # The thread moves to another session (sidebar, palette).
+    atomic action SelectNext:
+        require not self.open
+        if self.sid == "A":
+            self.sid = "N"
+        elif self.sid == "N":
+            self.sid = "R"
+        else:
+            self.sid = "A"
+
+    # The Changes chip's "Open full view" or the palette's "Review
+    # changes": #/s/<id>/changes, on this session's own edits.
+    atomic action Open:
+        require not self.open
+        self.open = True
+        self.scope = "session"
+        self.edits = "loading"
+        self.tree = "loading"
+
+    # A turn footer's "N files" link, #/s/<id>/changes?turn=<seq>: the
+    # page opens on that turn. Only a turn that changed files has one.
+    atomic action OpenTurn:
+        require not self.open and self.sid == "A" and self.edited
+        self.open = True
+        self.turn = True
+        self.scope = "turn"
+        self.edits = "loading"
+        self.tree = "loading"
+
+    # Esc outside a field, or Back: the router writes #/s/<id> back.
+    # (Walked from an answered page with no failure or hand edit pending:
+    # Esc resets the same page from any state, and each would be a path.)
+    atomic action Close:
+        require self.open and self.edits != "loading" and self.tree != "stale" and not self.behind
+        self.reset()
+
+    atomic action ToTurn:
+        require can_switch(self, "turn")
+        self.scope = "turn"
+        self.settle([], True)
+
+    atomic action ToSession:
+        require can_switch(self, "session")
+        self.scope = "session"
+        self.settle([], True)
+
+    atomic action ToTree:
+        require can_switch(self, "tree")
+        self.scope = "tree"
+        self.settle([], True)
+
+    atomic action ExpandA:
+        require "a" in shown(self) and not self.ca and not self.behind
+        self.ca = True
+        self.settle(shown(self), False)
+
+    # Retry under a failed or stale read re-fires every read.
+    atomic action Retry:
+        require self.open and self.edits != "loading" and not self.behind
+        require (self.scope == "tree" and self.tree in ["failed", "stale"]) or (self.scope != "tree" and self.edits == "failed")
+        before = shown(self)
+        self.readEdits()
+        self.readTree()
+        self.settle(before, False)
+
+    # --- the server and the timer
+
+    # The opening reads land.
+    atomic fair action Answer:
+        require self.edits == "loading"
+        self.readEdits()
+        self.readTree()
+        self.settle([], True)
+
+    # Failures are only injected on A's plain page: they read the same on
+    # every session, and each one multiplies the paths walked.
+    atomic action AnswerFails:
+        require self.edits == "loading" and self.sid == "A" and not self.turn and not self.edited
+        self.edits = "failed"
+        self.tree = "failed"
+
+    # The 10 s interval, which keeps firing after a failure. Weakly fair:
+    # it stays enabled until it has run. A poll that finds the tree as the
+    # page shows it changes nothing, and is left out.
+    atomic fair action Poll:
+        require self.open and self.edits != "loading"
+        require self.tree != "ok" or self.behind
+        before = shown(self)
+        self.readTree()
+        self.settle(before, False)
+
+    # A poll that fails keeps the list it had, marked stale.
+    atomic action PollFails:
+        require self.open and self.sid == "A" and not self.turn and self.scope == "tree" and self.tree == "ok" and self.edits == "ok" and not self.behind
+        self.tree = "stale"
+
+    # --- A's world
+
+    # A turn of A's that edits "a" through the shell. Its entries grow the
+    # transcript, and the page (open on A, answered) re-reads everything.
+    # (While the page is open it is only walked from a settled page; the
+    # tick is the same from any other.)
+    atomic action AgentEdit:
+        require not self.edited
+        require not self.open or (self.edits == "ok" and self.tree == "ok" and not self.behind)
+        self.edited = True
+        if self.open and self.sid == "A" and self.edits != "loading":
+            before = shown(self)
+            self.readEdits()
+            self.readTree()
+            self.settle(before, False)
+
+    # An edit to "h" made outside bough: no entry, no tick; only the poll
+    # sees it. Made while the page is closed, the opening read has it.
+    atomic action HandEdit:
+        require self.open and self.sid == "A" and self.scope == "tree" and self.tree == "ok" and not self.behind
+        self.behind = True
+
+action Init:
+    page = Page()
+
+# The tree scope is git's, not the agent's account: a tree read of A lists
+# "a" exactly when the file changed, though no call of the agent's said so.
+always assertion TreeIsReadFromGit:
+    return not (page.open and page.sid == "A" and page.tree == "ok") or page.tagent == page.edited
+
+# Session edits count an edit made through the shell (the checkpoint diff).
+always assertion SessionEditsIncludeShellEdits:
+    return not (page.open and page.sid == "A" and page.edits == "ok") or page.eseen == page.edited
+
+# The page opens on the session's own edits (or the linked turn's), never
+# on the tab another session's page was left on. (Loading is the page
+# before anyone could have switched a tab.)
+always assertion OpensOnOwnScope:
+    if not page.open or page.edits != "loading":
+        return True
+    if page.turn:
+        return page.scope == "turn"
+    return page.scope == "session"
+
+always assertion TurnScopeOnlyFromTurnLink:
+    return page.scope != "turn" or page.turn
+
+# No checkpoint, no session diff: "n" is only diffed against HEAD.
+always assertion NoDiffWithoutCheckpoint:
+    return "n" not in page.diff or page.scope == "tree"
+
+# A hand edit to A's tree shows while the page is open on A.
+always eventually assertion HandEditsShow:
+    return not page.open or page.sid != "A" or (page.tree == "ok" and not page.behind)
