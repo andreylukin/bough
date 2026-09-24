@@ -44,7 +44,11 @@ deadlock_detection: false
 #             -> spawned (process started; not in s.kids until claim)
 #             -> booted (the child read project.yml) | exited (it could
 #             not: Create fails "session exited before writing history")
-#             -> live (history exists, claimed) -> killed (by EndProject).
+#             -> live (history exists, claimed; the orb row, mounted
+#             after the history row, has not read project.yml yet)
+#             -> running (the orb row read it) | dead (it could not:
+#             a row failed at the first mount is fatal, and the child
+#             exits) ; live, running -> killed (by EndProject).
 #   msg       the answer to that POST /api/projects/alpha/message.
 #   mains, filed   mains[alpha] set; meta[main].Project == "alpha".
 #   dele      the one DELETE /api/projects/alpha: idle -> ended
@@ -70,8 +74,7 @@ deadlock_detection: false
 # agent writes only once the directory is gone (into a live project a
 # MEMORY.md is ordinary, and into the emptied one it is the save's
 # race again); no message is sent after the re-create (that is a new
-# project's first message, project_main_threads); the orb row's own project.yml read is folded
-# into the child's boot read; EndProject's container stop is folded into
+# project's first message, project_main_threads); EndProject's container stop is folded into
 # killing the child; Create's 10 s timeout is not modelled.
 
 role Project:
@@ -130,16 +133,27 @@ role Project:
             self.msg = "500"
 
     # The history file appears: claim puts the child in s.kids and
-    # messageProject sends the text.
+    # messageProject sends the text. The pipe takes it; the child reads
+    # stdin only once every row has mounted.
     atomic fair action MainHistoryAppears:
         require self.main == "booted"
         self.main = "live"
         self.msg = "ok"
 
+    # The orb row (it needs the history row) reads project.yml again. A
+    # definition gone since the boot fails the row, and a failed row at
+    # the first mount is fatal: the child exits, the message unread.
+    atomic fair action OrbReadsDef:
+        require self.main == "live"
+        if self.yml:
+            self.main = "running"
+        else:
+            self.main = "dead"
+
     # The orb row's EnsureImage: MkdirAll of the image dir, whether or
     # not the project still exists.
     atomic action ChildBuildsOrb:
-        require self.main in ("booted", "live") and not self.cache
+        require self.main == "running" and not self.cache
         self.cache = True
 
     # --- DeleteProject (no mainLock).
@@ -149,7 +163,7 @@ role Project:
     atomic action DeleteProject:
         require self.dele == "idle" and self.yml
         self.missed = self.main in ("checked", "persisted", "spawned", "booted")
-        if self.main == "live":
+        if self.main in ("live", "running"):
             self.main = "killed"
         self.dele = "ended"
 
@@ -239,11 +253,11 @@ action Init:
 # it was between Main's Project() check and claim.
 always assertion OnlyAnUnseenMainOutlivesDelete:
     p = project
-    return not (p.dele in ("removed", "done") and p.main in ("spawned", "booted", "live")) or p.missed
+    return not (p.dele in ("removed", "done") and p.main in ("spawned", "booted", "live", "running")) or p.missed
 
 # EndProject kills a main it can see.
 always assertion ClaimedMainIsKilled:
-    return project.dele == "idle" or project.main != "live" or project.missed
+    return project.dele == "idle" or project.main not in ("live", "running") or project.missed
 
 # After a finished delete, mains and meta name the slug only when a mint
 # in flight wrote them after the cleanup.
@@ -264,7 +278,7 @@ always assertion CreateRefusedByDirOnly:
 
 # The message is answered ok only when main's history exists.
 always assertion MessageOkMeansHistory:
-    return project.msg != "ok" or project.main in ("live", "killed")
+    return project.msg != "ok" or project.main in ("live", "running", "dead", "killed")
 
 # Every request in flight answers, and the list catches up.
 always eventually assertion RequestsAnswer:
@@ -277,7 +291,7 @@ always eventually assertion RequestsAnswer:
 # on this spec; kept as comments so the graph can be generated):
 #
 # After a delete, no child runs with BOUGH_PROJECT=alpha:
-#   return project.dele not in ("removed", "done") or project.main not in ("spawned", "booted", "live")
+#   return project.dele not in ("removed", "done") or project.main not in ("spawned", "booted", "live", "running")
 # After a delete, mains and meta have no entry for the slug:
 #   return project.dele != "done" or not (project.mains or project.filed)
 # A directory the list does not show never makes Create 409:
@@ -289,6 +303,6 @@ always eventually assertion RequestsAnswer:
 # A delete leaves no image or cache dir for the slug:
 #   return project.dele != "done" or project.create == "ok" or not project.cache
 # Liveness: a delete racing a boot eventually leaves nothing running:
-#   always eventually: not (project.dele == "done" and project.main in ("spawned", "booted", "live"))
+#   always eventually: not (project.dele == "done" and project.main in ("spawned", "booted", "live", "running"))
 # Liveness: a zombie directory is eventually listed or removable:
 #   always eventually: not (project.dir and not project.yml)
