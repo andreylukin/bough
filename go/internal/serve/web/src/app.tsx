@@ -3268,13 +3268,15 @@ export interface DeltaRun { kind: "assistant" | "thinking"; text: string }
  * The live reply after one delta event: a fragment extends the run of its
  * kind or starts the next; the engine's delta-reset (a retry, or a newer
  * request replacing the one that streamed) clears it, since what was shown
- * was never said.
+ * was never said. The first `sealed` runs belong to an entry already
+ * recorded and go when its refetch lands, so a fragment never extends
+ * one: it would go with them.
  */
-export function streamAfter(prev: DeltaRun[], ev: { kind: string; text: string }): DeltaRun[] {
+export function streamAfter(prev: DeltaRun[], ev: { kind: string; text: string }, sealed = 0): DeltaRun[] {
   if (ev.kind === "delta-reset") return prev.length ? [] : prev;
   const kind = ev.kind === "thinking-delta" ? "thinking" : "assistant";
   const n = prev.length;
-  if (n && prev[n - 1].kind === kind) {
+  if (n > sealed && prev[n - 1].kind === kind) {
     const next = prev.slice();
     next[n - 1] = { kind, text: next[n - 1].text + ev.text };
     return next;
@@ -5134,8 +5136,9 @@ export default function App() {
         if (ev.kind !== "delta-reset") setActivity(""); // the program it named is over; its label must not come back
         // A reset leaves nothing on screen for the next record to supersede.
         else superseded = 0;
+        const sealed = superseded;
         setStream((prev) => {
-          const next = streamAfter(prev, ev);
+          const next = streamAfter(prev, ev, sealed);
           runs = next.length;
           return next;
         });
