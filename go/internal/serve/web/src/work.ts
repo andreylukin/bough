@@ -62,17 +62,29 @@ function parseDuration(s: string): number | null {
  * or "job 7 [failed] make check (4s): exit status 1\noutput". A [failed] note
  * carries no exit code, so none is invented.
  */
-export function parseLegacyJob(text: string): { id?: number; life: WorkLife; exit?: number; cmd: string; ms?: number; output: string } | null {
+export function parseLegacyJob(text: string): { id?: number; life: WorkLife; exit?: number; cmd: string; ms?: number; output: string; reason?: string } | null {
   const nl = text.indexOf("\n");
   const head = nl < 0 ? text : text.slice(0, nl);
   const output = nl < 0 ? "" : text.slice(nl + 1).trim();
-  const m = /^job (\d+) \[([^\]]+)\] (.*?)(?: \(([^)]*)\))?(?:: .*)?$/.exec(head);
+  const m = /^job (\d+) \[([^\]]+)\] (.*?)(?: \(([^)]*)\))?(?:: (.*))?$/.exec(head);
   if (!m) return null;
   const status = m[2];
   const ex = /^exited (-?\d+)$/.exec(status);
   const life: WorkLife = ex ? (+ex[1] === 0 ? "finished" : "failed") : status === "failed" ? "failed" : status === "stopped with the orb" ? "stopped" : status === "running" ? "running" : "unknown";
   const ms = m[4] ? parseDuration(m[4]) : null;
-  return { id: +m[1], life, ...(ex ? { exit: +ex[1] } : {}), cmd: m[3], ...(ms != null && ms > 0 ? { ms } : {}), output };
+  return { id: +m[1], life, ...(ex ? { exit: +ex[1] } : {}), cmd: m[3], ...(ms != null && ms > 0 ? { ms } : {}), output, ...(m[5] ? { reason: m[5] } : {}) };
+}
+
+/**
+ * Why a job that did not end on its own ended, from its notice's reason:
+ * a Stop or job_kill ("signal: killed"), its time limit, or its session
+ * quitting. Without it all three read "Failed" with the job's last line of
+ * output, as if the command had crashed.
+ */
+export function killNote(reason?: string): string | undefined {
+  if (reason === "signal: killed") return "Killed";
+  if (reason && /^killed (after|when) /.test(reason)) return "K" + reason.slice(1);
+  return undefined;
 }
 
 /**
@@ -170,6 +182,8 @@ export function jobsFromLines(lines: Line[], session: string, live: boolean, run
       if (p.exit !== undefined) w.exit = p.exit;
       w.exitNote = undefined;
     }
+    const kill = killNote(p.reason);
+    if (kill) w.exitNote = kill;
   }
   for (const j of running ?? []) {
     const w = get(j.id, 0);

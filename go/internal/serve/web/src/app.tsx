@@ -3045,6 +3045,8 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
 export function wakeLabel(prompt: Line): string {
   const d = prompt.data ?? {};
   if (d.reason === "heartbeat") return "The agent checked on its running calls";
+  // An until match wakes the agent while the job runs on: "finished" said it had stopped.
+  if (d.reason === "notice" && /^job \d+ matched /m.test(prompt.text ?? "")) return "A background job's output matched while the agent was idle";
   if (d.reason === "notice") return "A background job finished while the agent was idle";
   const n = Array.isArray(d.calls) ? d.calls.length : typeof d.calls === "number" ? d.calls : 1;
   return n > 1 ? `${n} background calls finished` : "A background call finished";

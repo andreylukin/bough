@@ -209,3 +209,22 @@ test("ER: an engine's successful spawn call is told by its subagent card, not a 
   const bad = renderToStaticMarkup(<TurnView turn={groupTurns([input, call(2, 1, "spawn", "x", { error: "queue full" }), { seq: 5, at: at(4), kind: "done", text: "" }])[0]} />);
   expect(bad).toContain("Spawned");
 });
+
+test("a job notice wake says whether the job matched or finished", () => {
+  const wake = (text: string): Line => ({ seq: 1, at: at(0), kind: "input", text, data: { wake: true, reason: "notice" } });
+  expect(wakeLabel(wake('[background job]\n\njob 1 matched "ready" while running: make serve\nready'))).toBe("A background job's output matched while the agent was idle");
+  expect(wakeLabel(wake("[background job]\n\njob 1 [exited 0] make (1s)"))).toBe("A background job finished while the agent was idle");
+});
+
+test("a turn the step budget stopped reads Stopped, not Done", () => {
+  const lines: Line[] = [
+    { seq: 1, at: at(0), kind: "input", text: "go" },
+    { seq: 2, at: at(1), kind: "done", text: "", data: { stop: "step budget reached (max_steps 24)" } },
+    { seq: 3, at: at(2), kind: "input", text: "again" },
+    { seq: 4, at: at(3), kind: "done", text: "", data: { stop: "error" } },
+  ];
+  const [budget, failed] = groupTurns(lines);
+  expect(budget.stopped).toBe(true);
+  expect(renderToStaticMarkup(<TurnView turn={budget} />)).toContain("turn-stopped");
+  expect(failed.stopped).toBeFalsy();
+});
