@@ -88,6 +88,9 @@ type ssoAdapter struct {
 	// blindSave is the deliberate bug the wrong-adapter test injects: the
 	// editor's stale save carries no base, as a page that forgot it would.
 	blindSave bool
+	// wrongName is the random run's deliberate bug: the rename asks the
+	// server for a name the spec never has.
+	wrongName bool
 }
 
 func newSSOAdapter(t *testing.T) *ssoAdapter {
@@ -542,7 +545,11 @@ func (a *ssoAdapter) SetSecretB() error         { return a.setSecret(1) }
 
 func (a *ssoAdapter) RenameProject() error {
 	return a.act("RenameProject", func(v ssoView) bool { return v.disk == "ok" && v.name == "Alpha" }, func(ssoView) error {
-		if err := a.call(http.MethodPost, "/api/projects/"+a.slug+"/rename", map[string]string{"name": "Beta"}, nil); err != nil {
+		name := "Beta"
+		if a.wrongName {
+			name = "Gamma"
+		}
+		if err := a.call(http.MethodPost, "/api/projects/"+a.slug+"/rename", map[string]string{"name": name}, nil); err != nil {
 			return err
 		}
 		a.renamed = true
@@ -632,6 +639,18 @@ func (a *ssoAdapter) EditCancel() error {
 	})
 }
 
+// end is fizz's self-link on a state with nothing enabled: the project
+// deleted, the editor closed and neither child mid-call. The runner
+// offers it in every state as a role-less action; the library
+// dereferences a missing one (a nil-pointer panic that took the test
+// binary down), and a pick anywhere else is a disabled one.
+func (a *ssoAdapter) end() error {
+	quiet := func(k ssoKid) bool { return k.phase == "idle" || k.phase == "over" }
+	return a.act("end", func(v ssoView) bool {
+		return v.disk != "ok" && !a.editor && quiet(v.kid[0]) && quiet(v.kid[1])
+	}, func(ssoView) error { return nil })
+}
+
 func ssoAction(name string, f func(*ssoAdapter) error) fmbt.ActionFunc {
 	return func(m any, _ []fmbt.Arg) (any, error) {
 		a := m.(*ssoAdapter)
@@ -662,6 +681,8 @@ var ssoActions = map[string]map[string]fmbt.ActionFunc{"Project": {
 	"EditSave":           ssoAction("EditSave", (*ssoAdapter).EditSave),
 	"EditSaveStale":      ssoAction("EditSaveStale", (*ssoAdapter).EditSaveStale),
 	"EditCancel":         ssoAction("EditCancel", (*ssoAdapter).EditCancel),
+}, "": {
+	"end": ssoAction("end", (*ssoAdapter).end),
 }}
 
 // secretStoreOutcomesHistory reads one child's transcript: which child
@@ -722,7 +743,7 @@ func secretStoreOutcomesHistory(entries []history.Entry) []tracecheck.Step {
 func init() { historyProjections["secret_store_outcomes"] = secretStoreOutcomesHistory }
 
 func ssoOptions() map[string]any {
-	return map[string]any{"max-seq-runs": 200, "max-actions": 10, "max-parallel-runs": 0}
+	return map[string]any{"max-seq-runs": 1000, "max-actions": 10, "max-parallel-runs": 0}
 }
 
 func loadSSOGraph(t *testing.T) *tracecheck.Graph {
@@ -747,6 +768,19 @@ func TestSecretStoreOutcomes(t *testing.T) {
 	g := loadSSOGraph(t)
 	for _, id := range a.ids {
 		checkHistory(t, g, sessionHistory(t, a.s.Home, id), secretStoreOutcomesHistory)
+	}
+}
+
+// The random run proves nothing unless a wrongly wired adapter fails it:
+// a rename to a name the spec never has must be caught. RenameProject is
+// enabled at Init, so a few hundred walks pick it many times.
+func TestSecretStoreOutcomesCatchesWrongAdapter(t *testing.T) {
+	t.Parallel()
+	fizzTools(t)
+	a := newSSOAdapter(t)
+	a.wrongName = true
+	if err := runMBT(t, "secret_store_outcomes", a, ssoActions, ssoOptions()); err == nil {
+		t.Fatal("a run whose rename writes Gamma passed; the runner is not checking state")
 	}
 }
 
