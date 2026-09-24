@@ -32,8 +32,10 @@ deadlock_detection: false
 #   and rename lives in the thread header's popover (askText). Neither
 #   rename nor a menu is modelled here.
 # - The only per-row hover affordance is the hover card (after 300 ms,
-#   closed by any pointerdown, scroll, blur or route change); the Seen
-#   button is always shown on a troubled row, not only on hover.
+#   closed by any pointerdown, scroll, blur or route change). The Seen
+#   button is on every troubled row; a desktop reveals it while the
+#   pointer or focus is in the row, touch shows it always. seenBtn is
+#   the button being there, not its reveal.
 # - A failed session is pinned under Needs you and, when it is a local
 #   one, leaves its folder group (a group left empty is not drawn). It
 #   stays pinned after Seen: sessionSignal ranks a recorded failure from
@@ -198,10 +200,11 @@ role Sidebar:
         self.rows = "unavailable"
         self.recompute()
 
-    # "Sessions unavailable · Retry".
+    # "Sessions unavailable · Retry". A click, so focus leaves the field.
     atomic action Retry:
         require self.rows == "unavailable" and self.side == "full"
         self.rows = "loading"
+        self.inField = False
         self.recompute()
 
     # A later poll fails: "Updates delayed · synced … ago"; rows stay.
