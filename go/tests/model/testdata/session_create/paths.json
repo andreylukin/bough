@@ -1,0 +1,2230 @@
+{
+  "paths": [
+    {
+      "target": 49,
+      "links": [
+        0,
+        3,
+        13,
+        31,
+        39,
+        46,
+        49
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.WriteHistory",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Timeout",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        },
+        {
+          "action": "Create#0.Dismiss",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 50,
+      "links": [
+        0,
+        3,
+        13,
+        31,
+        40,
+        47,
+        50
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.WriteHistory",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Claim",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "live",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": true,
+            "Create#0.ui": "opened"
+          }
+        },
+        {
+          "action": "Create#0.Land",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "live",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": true,
+            "Create#0.sending": false,
+            "Create#0.ui": "opened"
+          }
+        },
+        {
+          "action": "Create#0.Close",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        0,
+        3,
+        13,
+        32,
+        42,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Timeout",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        },
+        {
+          "action": "Create#0.Dismiss",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 41,
+      "links": [
+        0,
+        3,
+        13,
+        32,
+        41
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.WriteHistory",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        }
+      ]
+    },
+    {
+      "target": 43,
+      "links": [
+        0,
+        3,
+        13,
+        32,
+        43
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.ChildExits",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        0,
+        3,
+        13,
+        33,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Timeout",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        },
+        {
+          "action": "Create#0.Dismiss",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        1,
+        7,
+        25,
+        36,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OverviewNew",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.WriteHistory",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": true,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": true,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Timeout",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "empty",
+            "Create#0.hist": true,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        },
+        {
+          "action": "Create#0.Dismiss",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        0,
+        3,
+        13,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.ChildExits",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        }
+      ]
+    },
+    {
+      "target": 35,
+      "links": [
+        0,
+        6,
+        24,
+        35
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.AskFolder",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "folder"
+          }
+        },
+        {
+          "action": "Create#0.FolderMissing",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        },
+        {
+          "action": "Create#0.Dismiss",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        1,
+        7,
+        26,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OverviewNew",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.WriteHistory",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": true,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Claim",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "live",
+            "Create#0.first": "empty",
+            "Create#0.hist": true,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "opened"
+          }
+        },
+        {
+          "action": "Create#0.Close",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        1,
+        8,
+        28,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OverviewNew",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Timeout",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        },
+        {
+          "action": "Create#0.Dismiss",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 11,
+      "links": [
+        0,
+        3,
+        11
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.Escape",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 12,
+      "links": [
+        0,
+        3,
+        12
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypePath",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "path",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        }
+      ]
+    },
+    {
+      "target": 14,
+      "links": [
+        0,
+        3,
+        14
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartEmpty",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        }
+      ]
+    },
+    {
+      "target": 15,
+      "links": [
+        0,
+        3,
+        15
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.AskFolder",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "folder"
+          }
+        }
+      ]
+    },
+    {
+      "target": 16,
+      "links": [
+        0,
+        4,
+        16
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypePath",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "path",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.Escape",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 17,
+      "links": [
+        0,
+        4,
+        17
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypePath",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "path",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypeText",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "text",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        }
+      ]
+    },
+    {
+      "target": 18,
+      "links": [
+        0,
+        4,
+        18
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypePath",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "path",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.PickFolder",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        }
+      ]
+    },
+    {
+      "target": 19,
+      "links": [
+        0,
+        4,
+        19
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypePath",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "path",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartTyped",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "text",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        }
+      ]
+    },
+    {
+      "target": 20,
+      "links": [
+        0,
+        4,
+        20
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypePath",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "path",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartEmpty",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        }
+      ]
+    },
+    {
+      "target": 21,
+      "links": [
+        0,
+        4,
+        21
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.TypePath",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "path",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.AskFolder",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "folder"
+          }
+        }
+      ]
+    },
+    {
+      "target": 22,
+      "links": [
+        0,
+        6,
+        22
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.AskFolder",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "folder"
+          }
+        },
+        {
+          "action": "Create#0.Escape",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 23,
+      "links": [
+        0,
+        6,
+        23
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.AskFolder",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "folder"
+          }
+        },
+        {
+          "action": "Create#0.FolderStart",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        }
+      ]
+    },
+    {
+      "target": 27,
+      "links": [
+        1,
+        8,
+        27
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OverviewNew",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.WriteHistory",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": true,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        }
+      ]
+    },
+    {
+      "target": 29,
+      "links": [
+        1,
+        8,
+        29
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OverviewNew",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.OtherWrites",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.ChildExits",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        1,
+        9,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OverviewNew",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.Timeout",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        },
+        {
+          "action": "Create#0.Dismiss",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 2,
+      "links": [
+        0,
+        2
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.Escape",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "target": 5,
+      "links": [
+        0,
+        5
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OpenPalette",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "palette"
+          }
+        },
+        {
+          "action": "Create#0.StartEmpty",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        1,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "none",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "idle"
+          }
+        },
+        {
+          "action": "Create#0.OverviewNew",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "spawned",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "creating"
+          }
+        },
+        {
+          "action": "Create#0.ChildExits",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "none",
+            "Create#0.first": "empty",
+            "Create#0.hist": false,
+            "Create#0.other": false,
+            "Create#0.query": "none",
+            "Create#0.recorded": false,
+            "Create#0.sending": false,
+            "Create#0.ui": "failed"
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 23,
+      "total": 23,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 51,
+      "total": 51,
+      "uncovered": []
+    }
+  }
+}
