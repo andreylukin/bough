@@ -9,9 +9,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -118,4 +120,29 @@ func removeServeAgent(home string) error {
 		return fmt.Errorf("serve: %w", rmErr)
 	}
 	return err
+}
+
+var wikiInterval = regexp.MustCompile(`<key>StartInterval</key><integer>(\d+)</integer>`)
+
+// refreshWikiAgent re-runs `bough wiki install` on bin when the wiki's
+// launchd agent is installed, keeping its interval. The agent names the
+// binary that installed it and launchd reads a plist only on load, so
+// an update left the ingest on whatever it was loaded with; on the work
+// laptop the job sat in "spawn failed" (EX_CONFIG) for hours after a
+// rebuild, sessions piling up unread. A failure warns: the update
+// itself succeeded.
+func refreshWikiAgent(out io.Writer, home, bin string, run func(string, ...string) error) {
+	b, err := os.ReadFile(filepath.Join(home, "Library", "LaunchAgents", "com.bough.wiki.plist"))
+	if err != nil {
+		return // not installed
+	}
+	args := []string{"wiki", "install"}
+	if m := wikiInterval.FindSubmatch(b); m != nil {
+		args = append(args, "--every", string(m[1])+"s")
+	}
+	if err := run(bin, args...); err != nil {
+		fmt.Fprintf(out, "bough: wiki agent: %v (rerun `bough wiki install`)\n", err)
+		return
+	}
+	fmt.Fprintf(out, "bough: reloaded wiki ingest agent on %s\n", bin)
 }

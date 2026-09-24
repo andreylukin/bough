@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,5 +52,39 @@ func TestServeManaged(t *testing.T) {
 	}
 	if !serveManaged(home) {
 		t.Fatal("not managed with the plist present")
+	}
+}
+
+func TestRefreshWikiAgent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	var calls []string
+	run := func(name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	var out bytes.Buffer
+	refreshWikiAgent(&out, home, "/opt/bough", run)
+	if len(calls) != 0 || out.Len() != 0 {
+		t.Fatalf("no agent installed: ran %q, said %q", calls, out.String())
+	}
+
+	plist := filepath.Join(home, "Library", "LaunchAgents", "com.bough.wiki.plist")
+	mkdirs(t, filepath.Dir(plist))
+	if err := os.WriteFile(plist, []byte("<key>StartInterval</key><integer>600</integer>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refreshWikiAgent(&out, home, "/opt/bough", run)
+	if want := []string{"/opt/bough wiki install --every 600s"}; strings.Join(calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("ran %q, want %q", calls, want)
+	}
+	if !strings.Contains(out.String(), "reloaded wiki ingest agent on /opt/bough") {
+		t.Errorf("said %q", out.String())
+	}
+
+	out.Reset()
+	refreshWikiAgent(&out, home, "/opt/bough", func(string, ...string) error { return errors.New("launchctl load: boom") })
+	if !strings.Contains(out.String(), "boom") || !strings.Contains(out.String(), "bough wiki install") {
+		t.Errorf("failure said %q, want the error and the fix", out.String())
 	}
 }

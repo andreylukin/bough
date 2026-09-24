@@ -72,6 +72,9 @@ func runUpdate(args []string) {
 	}
 	fmt.Printf("bough: installed %s\n", target)
 	ensureContainerRuntime(os.Stdout, runQuiet, exec.LookPath, runtime.GOOS)
+	if launchdServes() {
+		refreshWikiAgent(os.Stdout, home, target, runQuiet)
+	}
 
 	if err := restartWeb(home, target, os.Stdout); err != nil {
 		fatal(err)
