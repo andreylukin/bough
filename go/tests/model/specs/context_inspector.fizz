@@ -1,0 +1,162 @@
+# The Context page (#/s/<id>/context): what one session's prompt is
+# built from. ContextPage (web/src/context.tsx) fetches
+# GET /api/sessions/{id}/context once per mount; serve's sessionContext
+# (internal/serve/context.go) answers with the context files context-md
+# reads for the session's cwd and project, the rules, and the skills.
+#
+# page is what the person sees:
+#   closed   the transcript (no sub-page), or the page was never opened
+#   loading  "Loading context…", no data and no error yet
+#   loaded   ContextView with the snapshot below
+#   failed   "Context did not load: … Retry"
+# inflight is a GET still outstanding. A Retry does NOT go back to
+# loading on screen: refresh() keeps err set until a response lands, so
+# the page stays failed while the retry is in flight. Closing unmounts
+# the page, and a late answer lands on nothing.
+#
+# The snapshot is taken at load and never refreshed while the page is
+# open (refresh runs on mount and Retry only), so files and the length
+# flags are only claimed about the moment of the load. That is why
+# Assign — filing a local session under a project, or out of it, via
+# PUT /api/sessions/{id}/project — is only modelled while the page is
+# closed; see the flow notes for what the page shows if it happens
+# while open.
+#
+# files is the list context-md reads, in its order (contextmd.Paths):
+# the project's MEMORY.md first when the session is in a project, then
+# the cwd's AGENTS.md and CLAUDE.md, then ~/.claude/CLAUDE.md and
+# ~/.bough/BOUGH.md. The page lists every one of them, found or not
+# (not found ones fold under "N files not found"). The fixture puts a
+# long AGENTS.md and an over-long CLAUDE.md in the cwd.
+
+# Fixture line counts, one per flag band.
+AGENTS_LINES = 250
+CLAUDE_LINES = 450
+
+# longLines / tooLongLines in context.go, LONG / TOO_LONG in context.tsx.
+LONG = 200
+TOO_LONG = 400
+
+def flag(lines):
+    if lines > TOO_LONG:
+        return "max"
+    if lines > LONG:
+        return "long"
+    return ""
+
+def inject_paths(project):
+    out = []
+    if project:
+        out.append("MEMORY.md")
+    return out + ["AGENTS.md", "CLAUDE.md", "~/.claude/CLAUDE.md", "~/.bough/BOUGH.md"]
+
+role Context:
+    action Init:
+        self.page = "closed"
+        self.inflight = False
+        self.project = False
+        # skill_off is off.yml's "skill:<name>" entry: server state, so
+        # it survives closing the page.
+        self.skill_off = False
+        self.file_open = False
+        self.files = []
+        self.agents_flag = ""
+        self.claude_flag = ""
+
+    # The Context chip in the status strip, or the palette's "Inspect
+    # context": both setSub("context"), which mounts ContextPage.
+    atomic action Open:
+        require self.page == "closed"
+        self.page = "loading"
+        self.inflight = True
+
+    # GET /api/sessions/{id}/context answers 200. Fair: a request serve
+    # received is answered, so the page never stays pending.
+    atomic fair action Resolve:
+        require self.inflight
+        self.inflight = False
+        self.page = "loaded"
+        self.files = inject_paths(self.project)
+        self.agents_flag = flag(AGENTS_LINES)
+        self.claude_flag = flag(CLAUDE_LINES)
+
+    # The GET fails (a non-2xx, or the network). Only from the first
+    # load or a retry: there is no refresh once data is on screen.
+    atomic fair action Reject:
+        require self.inflight
+        self.inflight = False
+        self.page = "failed"
+
+    atomic action Retry:
+        require self.page == "failed" and not self.inflight
+        self.inflight = True
+
+    # POST /api/off {"id": "skill:<name>", "off": ...}, then useOffs
+    # marks the row; the button reads "Enable globally" while off.
+    atomic action ToggleSkill:
+        require self.page == "loaded"
+        self.skill_off = not self.skill_off
+
+    # A file row is a <details>: opening it shows the full path.
+    atomic action OpenFile:
+        require self.page == "loaded" and not self.file_open
+        self.file_open = True
+
+    atomic action CloseFile:
+        require self.file_open
+        self.file_open = False
+
+    # Esc (when nothing nearer owns it) or the Back button: setSub(null)
+    # unmounts the page and all of its client state.
+    atomic action Close:
+        require self.page != "closed"
+        self.page = "closed"
+        self.inflight = False
+        self.file_open = False
+        self.files = []
+        self.agents_flag = ""
+        self.claude_flag = ""
+
+    # PUT /api/sessions/{id}/project with a slug, or with "" to take it
+    # out: sessionSlug reads the supervisor's meta, which this changes.
+    atomic action Assign:
+        require self.page == "closed"
+        self.project = not self.project
+
+action Init:
+    ctx = Context()
+
+# The files listed are exactly the ones context-md reads for this
+# session's cwd and project, MEMORY.md included only in a project.
+# Spelled out, not read back through inject_paths, for the same reason
+# as flagged_right below.
+HOME_FILES = ["AGENTS.md", "CLAUDE.md", "~/.claude/CLAUDE.md", "~/.bough/BOUGH.md"]
+
+always assertion FilesAreInjected:
+    if ctx.page != "loaded":
+        return True
+    if ctx.project:
+        return ctx.files == ["MEMORY.md"] + HOME_FILES
+    return ctx.files == HOME_FILES
+
+# Every listed file over 200 lines is flagged long, over 400 harder.
+# The bands are spelled out here rather than read back through flag(),
+# so a wrong threshold in flag() is a violation, not a tautology.
+def flagged_right(f, lines):
+    if lines > 400:
+        return f == "max"
+    if lines > 200:
+        return f == "long"
+    return f == ""
+
+always assertion LongFilesFlagged:
+    return ctx.page != "loaded" or (flagged_right(ctx.agents_flag, AGENTS_LINES) and flagged_right(ctx.claude_flag, CLAUDE_LINES))
+
+# A file row can only be open on a loaded page.
+always assertion FileOpenOnlyLoaded:
+    return not ctx.file_open or ctx.page == "loaded"
+
+# The page never sits on a request: it resolves to loaded or failed
+# (or is closed). Holds only because Resolve/Reject are fair.
+always eventually assertion Settles:
+    return not ctx.inflight

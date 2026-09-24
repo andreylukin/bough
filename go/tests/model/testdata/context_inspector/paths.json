@@ -1,0 +1,4605 @@
+{
+  "paths": [
+    {
+      "target": 61,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        33,
+        46,
+        54,
+        59,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 62,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        33,
+        46,
+        54,
+        59,
+        62
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 63,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        33,
+        46,
+        54,
+        59,
+        63
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        32,
+        44,
+        51,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 57,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        32,
+        44,
+        51,
+        57
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        32,
+        44,
+        51,
+        58
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 60,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        33,
+        46,
+        54,
+        60
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 52,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        32,
+        44,
+        52
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        33,
+        46,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 55,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        33,
+        46,
+        55
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 43,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        32,
+        43
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        32,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 47,
+      "links": [
+        0,
+        2,
+        7,
+        17,
+        33,
+        47
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        1,
+        5,
+        12,
+        24,
+        35,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 49,
+      "links": [
+        1,
+        5,
+        12,
+        24,
+        35,
+        49
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.CloseFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 50,
+      "links": [
+        1,
+        5,
+        12,
+        24,
+        35,
+        50
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 29,
+      "links": [
+        0,
+        2,
+        7,
+        16,
+        29
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        0,
+        2,
+        7,
+        16,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.CloseFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 31,
+      "links": [
+        0,
+        2,
+        7,
+        16,
+        31
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        1,
+        5,
+        12,
+        24,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        1,
+        5,
+        12,
+        24,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        1,
+        5,
+        12,
+        25,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        1,
+        5,
+        12,
+        25,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.CloseFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 39,
+      "links": [
+        1,
+        5,
+        12,
+        25,
+        39
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 40,
+      "links": [
+        1,
+        5,
+        13,
+        27,
+        40
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 41,
+      "links": [
+        1,
+        5,
+        13,
+        27,
+        41
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 42,
+      "links": [
+        1,
+        5,
+        13,
+        27,
+        42
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 15,
+      "links": [
+        0,
+        2,
+        7,
+        15
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 18,
+      "links": [
+        0,
+        2,
+        8,
+        18
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.ToggleSkill",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 19,
+      "links": [
+        0,
+        2,
+        8,
+        19
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.CloseFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 20,
+      "links": [
+        0,
+        2,
+        8,
+        20
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.OpenFile",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": true,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 21,
+      "links": [
+        0,
+        3,
+        10,
+        21
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 22,
+      "links": [
+        0,
+        3,
+        10,
+        22
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 23,
+      "links": [
+        0,
+        3,
+        10,
+        23
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Retry",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 26,
+      "links": [
+        1,
+        5,
+        12,
+        26
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "MEMORY.md",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 28,
+      "links": [
+        1,
+        5,
+        13,
+        28
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 9,
+      "links": [
+        0,
+        2,
+        9
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Resolve",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "long",
+            "Context#0.claude_flag": "max",
+            "Context#0.file_open": false,
+            "Context#0.files": [
+              "AGENTS.md",
+              "CLAUDE.md",
+              "~/.claude/CLAUDE.md",
+              "~/.bough/BOUGH.md"
+            ],
+            "Context#0.inflight": false,
+            "Context#0.page": "loaded",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 11,
+      "links": [
+        0,
+        3,
+        11
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Reject",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "failed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 14,
+      "links": [
+        1,
+        5,
+        14
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 4,
+      "links": [
+        0,
+        4
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Open",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": true,
+            "Context#0.page": "loading",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Close",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 6,
+      "links": [
+        1,
+        6
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": true,
+            "Context#0.skill_off": false
+          }
+        },
+        {
+          "action": "Context#0.Assign",
+          "state": {
+            "ctx": "role Context#0",
+            "Context#0.agents_flag": "",
+            "Context#0.claude_flag": "",
+            "Context#0.file_open": false,
+            "Context#0.files": [],
+            "Context#0.inflight": false,
+            "Context#0.page": "closed",
+            "Context#0.project": false,
+            "Context#0.skill_off": false
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 24,
+      "total": 24,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 64,
+      "total": 64,
+      "uncovered": []
+    }
+  }
+}
