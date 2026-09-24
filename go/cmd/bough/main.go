@@ -426,8 +426,18 @@ func main() {
 	// the process on stdin EOF, which on a fast run can fire before main
 	// reaches the wait below — with no handler installed yet the default
 	// disposition would kill the process instead of unmounting cleanly.
+	caught := make(chan os.Signal, 1)
+	signal.Notify(caught, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	// Every one of them ends the process, so stdin stops being routed the
+	// moment one lands, not when main gets to it after the mount: serve's
+	// Stop can reach a child whose rows are still mounting, and the pump
+	// then started and ran the line it had just been stopped for.
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		s := <-caught
+		ui.StopInput()
+		sig <- s
+	}()
 	// SIGUSR1 asks a running session to start a fresh one. A detached
 	// `bough web` session otherwise keeps the same conversation
 	// forever: opening the browser again is not a new session the way

@@ -365,8 +365,22 @@ func askEnded(ev Event) bool {
 	return t == "ask" || t == "secret"
 }
 
+// hlStopped is set once the process has been interrupted (StopInput).
+var hlStopped atomic.Bool
+
+// StopInput stops routing stdin: the launcher calls it the moment a
+// SIGINT/SIGTERM arrives, which always ends the process. serve writes a
+// first prompt while the child is still mounting its rows, and a Stop in
+// that gap reaches a child whose pump has not started yet; the launcher
+// finished the mount anyway, so the pump read the "/" or "!" line and
+// ran it (a shell command the person had just stopped) before the exit.
+func StopInput() { hlStopped.Store(true) }
+
 // hlLineIn routes one stdin line.
 func hlLineIn(line string) {
+	if hlStopped.Load() {
+		return
+	}
 	// A pending secret takes the raw line: no JSON sniffing, so a value
 	// that happens to start with "{" is still the answer.
 	hlMu.Lock()
