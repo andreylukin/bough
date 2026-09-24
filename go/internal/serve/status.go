@@ -41,6 +41,28 @@ type Ask struct {
 	Options []string `json:"options"`
 	Seq     int64    `json:"seq"`
 	Secret  bool     `json:"secret,omitempty"` // tools.secret: the answer is a credential
+	// Call is the engine call a native ask or secret blocks; "" for a
+	// code-mode ask. Not on the wire: it only says which end is its own.
+	Call string `json:"-"`
+}
+
+// endsAsk says whether a recorded or live event of kind with data ends
+// ask: for a code-mode ask its block's result (tools.ask blocks its
+// block), for the engine's native ask or secret the end of its own call.
+// On the engine the calls of one reply run at once, so a sibling run_js's
+// result, or another call's end, lands while the ask still waits.
+func endsAsk(ask *Ask, kind string, data map[string]any) bool {
+	switch kind {
+	case "result":
+		return ask.Call == ""
+	case "call":
+		if data["phase"] == "start" {
+			return false
+		}
+		t := str(data["tool"])
+		return (t == "ask" || t == "secret") && (ask.Call == "" || str(data["id"]) == ask.Call)
+	}
+	return false
 }
 
 // Line is one transcript row on the wire: a history entry with its
@@ -91,20 +113,12 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 			if pending != nil && pending.ID == str(e.Data["id"]) {
 				pending = nil
 			}
-		case "result":
-			// tools.ask blocks the block that called it, so that block's
-			// result is only recorded once the ask has returned —
-			// answered, timed out or cancelled. A timeout records no
-			// answer, and without this the session said "Waiting for
-			// you" with live buttons for a question nobody was waiting on.
-			pending = nil
-		case "call":
-			// The engine's native ask is a call, not a block: its end is
-			// the same signal a result is above (answered, timed out or
-			// cancelled), and a timeout records no ask/answer. The native
-			// secret asks the same way, and a timed-out one kept the page
-			// on needs-you for a question nothing waited on.
-			if t := str(e.Data["tool"]); t == "ask" || t == "secret" {
+		case "result", "call":
+			// The ask returned — answered, timed out or cancelled — and a
+			// timeout records no answer: without this the session said
+			// "Waiting for you" with live buttons for a question nobody
+			// was waiting on. Which entry is its end: endsAsk.
+			if pending != nil && endsAsk(pending, e.Kind, e.Data) {
 				pending = nil
 			}
 		case "done", "cancelled":
@@ -157,6 +171,7 @@ func askOf(e history.Entry) *Ask {
 		Seq:  e.Seq,
 	}
 	a.Secret, _ = e.Data["secret"].(bool)
+	a.Call = str(e.Data["call"])
 	if a.Text == "" {
 		a.Text = history.EntryText(e)
 	}

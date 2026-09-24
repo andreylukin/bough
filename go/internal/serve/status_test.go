@@ -316,6 +316,34 @@ func TestLastActivity(t *testing.T) {
 	}
 }
 
+// A native ask names its call: a sibling run_js's result, another
+// call's end or an error note in the same turn leaves it on screen;
+// only its own call's end resolves it. A code-mode ask (no call) still
+// ends with its block's result.
+func TestStatusOfNativeAskOutlivesItsSiblings(t *testing.T) {
+	t.Parallel()
+	ask := ent(2, "ask", map[string]any{"question": "which?", "id": "ask-1", "call": "c1"})
+	for _, e := range []history.Entry{
+		ent(3, "result", map[string]any{"code": "1", "error": "boom"}),
+		ent(3, "error", text("a hook blocked the steer")),
+		ent(3, "call", map[string]any{"tool": "bash", "id": "c2"}),
+		ent(3, "call", map[string]any{"tool": "ask", "id": "c3"}),
+	} {
+		st, a := StatusOf(entries(ent(1, "input", text("x")), ask, e), true)
+		if st != StatusNeedsYou || a == nil || a.ID != "ask-1" {
+			t.Fatalf("after a %s %v: status %s ask %+v, want needs-you", e.Kind, e.Data, st, a)
+		}
+	}
+	st, _ := StatusOf(entries(ent(1, "input", text("x")), ask, ent(3, "call", map[string]any{"tool": "ask", "id": "c1"})), true)
+	if st != StatusRunning {
+		t.Fatalf("after its own call's end: %s, want running", st)
+	}
+	st, _ = StatusOf(entries(ent(1, "input", text("x")), ent(2, "ask", map[string]any{"question": "q", "id": "ask-1"}), ent(3, "result", nil)), true)
+	if st != StatusRunning {
+		t.Fatalf("a code-mode ask after its block's result: %s, want running", st)
+	}
+}
+
 func TestStatusOfSecretAsk(t *testing.T) {
 	t.Parallel()
 	es := entries(ent(1, "input", text("x")), ent(2, "ask", map[string]any{"question": "Secret X for demo: y", "id": "ask-1", "secret": true}))

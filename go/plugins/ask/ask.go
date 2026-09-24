@@ -33,6 +33,11 @@ type Event struct {
 	ID      string
 	Options []string
 	Secret  bool // the answer is a credential: never echoed or recorded
+	// Data is {"call": id} for a native ask or secret: the engine call
+	// it blocks. Its siblings in the same reply end while it is open, so
+	// only that call's end is the ask's; a code-mode ask (nil) ends with
+	// its block's result.
+	Data map[string]any
 }
 
 // codemode is the slice of the "codemode" service we need: register
@@ -106,13 +111,13 @@ func (a *Asker) put(question string, secret bool, options ...string) (string, er
 	if p, ok := a.code.(interface{ Park() func() }); ok {
 		park = p.Park
 	}
-	return a.putIn(done, park, question, secret, options...)
+	return a.putIn(done, park, "", question, secret, options...)
 }
 
 // putIn asks one question and blocks until the answer, the timeout, or
 // done. park (nil for a native call, which holds no VM) is released for
-// the wait.
-func (a *Asker) putIn(done <-chan struct{}, park func() func(), question string, secret bool, options ...string) (string, error) {
+// the wait. call is the native call's id, "" from a code block.
+func (a *Asker) putIn(done <-chan struct{}, park func() func(), call, question string, secret bool, options ...string) (string, error) {
 	if strings.TrimSpace(question) == "" {
 		return "", fmt.Errorf("ask: question is empty")
 	}
@@ -135,9 +140,16 @@ func (a *Asker) putIn(done <-chan struct{}, park func() func(), question string,
 		if secret {
 			data["secret"] = true
 		}
+		if call != "" {
+			data["call"] = call
+		}
 		a.hist.Append("ask", data)
 	}
-	a.emit(Event{Kind: "ask", Text: question, ID: id, Options: options, Secret: secret})
+	ev := Event{Kind: "ask", Text: question, ID: id, Options: options, Secret: secret}
+	if call != "" {
+		ev.Data = map[string]any{"call": call}
+	}
+	a.emit(ev)
 
 	if park != nil {
 		defer park()()

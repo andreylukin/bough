@@ -90,7 +90,7 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 					return agenttools.Result{Error: err.Error()}, nil
 				}
 				defer release()
-				out, err := a.putIn(ctx.Done(), nil, v.Question, false, v.Options...)
+				out, err := a.putIn(ctx.Done(), nil, c.ID, v.Question, false, v.Options...)
 				if err != nil {
 					return agenttools.Result{Error: err.Error()}, nil
 				}
@@ -133,7 +133,7 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 				// inside secretVia; only "stored NAME as REF" comes back,
 				// so it never reaches the op state, the store or the model.
 				out, err := a.secretVia(func(q string) (string, error) {
-					return a.putIn(ctx.Done(), nil, q, true)
+					return a.putIn(ctx.Done(), nil, c.ID, q, true)
 				}, v.Name, v.Question, project...)
 				if err != nil {
 					return agenttools.Result{Error: err.Error()}, nil

@@ -904,16 +904,18 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 	switch kind {
 	case "ask":
 		s.asks[id] = askFrom(ev)
-	case "done", "cancelled", "error", "exit":
+	case "done", "cancelled", "exit":
 		// The turn (or the process) ended: stop routing stdin to an
-		// ask nobody is waiting on any more.
+		// ask nobody is waiting on any more. Not "error": a stderr line,
+		// a refusal note or a sibling call's failure lands while a native
+		// ask still waits, and disarming on it made the page's answer 409
+		// while the question stayed on screen.
 		delete(s.asks, id)
 	case "result", "call":
-		// The ask returned with no answer (a timeout): a code block's
-		// result, or the native ask or secret call's end. StatusOf stops
-		// showing it on the same entry, and an arm kept past it refused
-		// every /prompt with 409 while the row offered to steer.
-		if kind == "result" || (extra["phase"] != "start" && (extra["tool"] == "ask" || extra["tool"] == "secret")) {
+		// The ask returned with no answer (a timeout). StatusOf stops
+		// showing it on the same entry (endsAsk), and an arm kept past it
+		// refused every /prompt with 409 while the row offered to steer.
+		if a := s.asks[id]; a != nil && endsAsk(a, kind, extra) {
 			delete(s.asks, id)
 		}
 	}
@@ -943,6 +945,7 @@ func askFrom(ev Event) *Ask {
 		a.ID = id
 	}
 	a.Secret, _ = ev.Extra["secret"].(bool)
+	a.Call, _ = ev.Extra["call"].(string)
 	if opts, ok := ev.Extra["options"].([]any); ok {
 		for _, o := range opts {
 			if s, ok := o.(string); ok {
