@@ -14,7 +14,7 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 | `{"mode":"ok","text":"done"}` | finishes with `text` |
 | `{"mode":"error","error":"boom"}` | fails; the turn errors and headless exits 1 |
 | `{"mode":"slow","text":"a b c","delay_ms":300}` | streams `text` a word per `delay_ms` |
-| `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it) |
+| `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it, `{"bash":"cmd"}` answers with one bash tool call running `cmd`, after which the engine asks again and takes the next queued turn) |
 
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of

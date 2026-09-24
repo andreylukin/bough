@@ -89,6 +89,7 @@ type controlTurn struct {
 	Text    string `json:"text"`
 	Error   string `json:"error"`
 	DelayMS int    `json:"delay_ms"`
+	Bash    string `json:"bash"`
 }
 
 // take claims the next queued turn. A name the test is still writing
@@ -168,6 +169,12 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				if len(b) > 0 && json.Unmarshal(b, &then) == nil && then.Mode == "error" {
 					return ullm.Response{}, errors.New(then.Error)
 				}
+				// A release with a command answers with a bash call: the
+				// engine records it with its exit and asks again, so a
+				// test can put a tool call inside a turn it still holds.
+				if then.Bash != "" {
+					return a.bash(ctx, name, then.Bash)
+				}
 				if then.Text != "" {
 					return a.reply(ctx, then.Text, 0)
 				}
@@ -208,6 +215,29 @@ func (a *controlAdapter) reply(ctx context.Context, text string, delay time.Dura
 		ID:     fmt.Sprintf("control-%d", n),
 		Stop:   ullm.StopComplete,
 		Output: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleAssistant, Text: text}}},
+		Usage:  u,
+	}, nil
+}
+
+// bash answers with one bash tool call running cmd.
+func (a *controlAdapter) bash(ctx context.Context, name, cmd string) (ullm.Response, error) {
+	args, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		return ullm.Response{}, err
+	}
+	call := ullm.ToolCall{CallID: "control_" + name, Name: "bash", Arguments: string(args)}
+	if a.opts.Sink != nil {
+		a.opts.Sink(agentllm.Delta{Seq: agentllm.SeqOf(ctx), Attempt: 1, Kind: agentllm.DeltaToolStart, CallID: call.CallID, Name: call.Name})
+	}
+	u := ullm.Usage{InputTokens: 1, OutputTokens: 1}
+	a.c.mu.Lock()
+	addAgentUsage(&a.c.usage, u)
+	n := a.c.n
+	a.c.mu.Unlock()
+	return ullm.Response{
+		ID:     fmt.Sprintf("control-%d", n),
+		Stop:   ullm.StopComplete,
+		Output: []ullm.Item{{Type: ullm.ItemToolCall, Data: call}},
 		Usage:  u,
 	}, nil
 }

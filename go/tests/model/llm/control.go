@@ -23,6 +23,8 @@ type Turn struct {
 	Text    string `json:"text,omitempty"`
 	Error   string `json:"error,omitempty"`
 	DelayMS int    `json:"delay_ms,omitempty"`
+	// Bash, on a release, answers with one bash tool call running it.
+	Bash string `json:"bash,omitempty"`
 }
 
 // Dir is the control dir the row reads when its config names none.
