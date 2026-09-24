@@ -184,8 +184,8 @@ function Chevron() {
 }
 
 /** A group's rarer actions behind one button; destructive ones never sit inline. */
-function GroupMenu({ name, items }: { name: string; items: { label: string; danger?: boolean; run: () => void }[] }) {
-  const [open, setOpen] = useState(false);
+function GroupMenu({ name, items, defaultOpen = false }: { name: string; items: { label: string; danger?: boolean; run: () => void }[]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -237,7 +237,7 @@ export function suggestName(repos: string[]): string {
   return useful.length > 0 ? useful.join("-") : "";
 }
 
-export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {}, onNewSession }: {
+export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {}, onNewSession, openMenu }: {
   projects: Project[]; rows: Row[];
   /** The project whose orb section is expanded (#/projects/<slug>/orb). */
   orbOpen?: string;
@@ -254,6 +254,8 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   onDelete: (id: string) => void;
   /** Starts a session in the project's orb (the palette's "New session in <project>"). */
   onNewSession?: (project: Project) => void;
+  /** The project whose ⋯ menu starts open: a static render of that state. */
+  openMenu?: string;
 }) {
   const [filter, setFilter] = useState("");
   // The page's one selection, whichever list or repo it was ticked from.
@@ -480,7 +482,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                 <a className="btn btn-sm" href={`#/projects/${p.slug}`}>Open</a>
                 {onNewSession && <button className="btn btn-sm" onClick={() => onNewSession(p)}>New session</button>}
                 <button className="btn btn-sm proj-orb-btn" aria-expanded={orbId === p.slug} onClick={() => toggleOrb(p.slug)}>Orb</button>
-                <GroupMenu name={p.name} items={[
+                <GroupMenu name={p.name} defaultOpen={openMenu === p.slug} items={[
                   { label: "Rename…", run: () => { void askText("Rename project", { initial: p.name, action: "Rename", onSubmit: (name) => onRename(p.slug, name) }); } },
                   // Typed, not clicked: this deletes hand-written files
                   // (the scripts, MEMORY.md) that are committed nowhere.

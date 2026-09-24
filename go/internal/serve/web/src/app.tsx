@@ -26,7 +26,7 @@ import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, nativeEdits, outputParts, useChanges } from "./changes";
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
-import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
+import { Elapsed, EmptyState, ErrorNote, ErrorToast, InlineFail, Pending, RawDetails, Spinner, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
 
 export type View = "sessions" | "me" | "projects" | "project" | "hooks" | "wiki";
@@ -5853,22 +5853,8 @@ export default function App() {
           </button>
         </div>
       )}
-      {toast ? (
-        // Stays until dismissed or a later action succeeds; Esc is the turn's, not the toast's.
-        <div className="toast" data-leaving={toast.leaving || undefined}>
-          <StateIcon kind="alert" />
-          <div className="toast-text" role="alert">
-            <p className="toast-title">Couldn’t {toast.label}</p>
-            <p className="toast-msg">{humanError(toast.msg)}</p>
-          </div>
-          <button className="toast-x" aria-label="Dismiss" onClick={() => setErr(null)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
-          <button className="toast-retry" disabled={busy || toast.leaving} aria-busy={busy || undefined} onClick={toast.retry}>
-            {busy ? <><Spinner /> Retrying…</> : "Retry"}
-          </button>
-        </div>
-      ) : null}
+      {/* Stays until dismissed or a later action succeeds; Esc is the turn's, not the toast's. */}
+      {toast ? <ErrorToast toast={toast} busy={busy} onDismiss={() => setErr(null)} /> : null}
     </div>
   );
 }

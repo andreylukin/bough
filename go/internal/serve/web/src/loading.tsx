@@ -302,3 +302,24 @@ export function CopyButton({ text, label = "Copy", className = "btn btn-sm" }: {
     <button className={className} onClick={() => copy(text)} aria-live="polite">{copied ? "Copied" : label}</button>
   );
 }
+
+/** An action that failed, named, with its Retry: the app's toast, a component so a test renders any state of it. */
+export function ErrorToast({ toast, busy, onDismiss }: {
+  toast: { label: string; msg: string; retry: () => void; leaving?: boolean }; busy: boolean; onDismiss: () => void;
+}) {
+  return (
+    <div className="toast" data-leaving={toast.leaving || undefined}>
+      <StateIcon kind="alert" />
+      <div className="toast-text" role="alert">
+        <p className="toast-title">Couldn’t {toast.label}</p>
+        <p className="toast-msg">{humanError(toast.msg)}</p>
+      </div>
+      <button className="toast-x" aria-label="Dismiss" onClick={onDismiss}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+      <button className="toast-retry" disabled={busy || toast.leaving} aria-busy={busy || undefined} onClick={toast.retry}>
+        {busy ? <><Spinner /> Retrying…</> : "Retry"}
+      </button>
+    </div>
+  );
+}
