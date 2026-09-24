@@ -406,6 +406,17 @@ func (s *Server) Interrupt(ctx context.Context, id string) error {
 	return s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/interrupt", nil, nil)
 }
 
+// Effort is POST /api/sessions/{id}/effort. It reaches the child as a
+// "/think" line, so it also spawns one for a session with no child
+// without starting a turn.
+func (s *Server) Effort(ctx context.Context, id, level string) error {
+	return s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/effort", map[string]string{"effort": level}, nil)
+}
+
+// PID is the serve process's pid; its session children are its own
+// children, which a test that pauses one finds through it.
+func (s *Server) PID() int { return s.cmd.Process.Pid }
+
 // Stop is POST /api/sessions/{id}/stop, the Work panel's stop. It
 // answers what the session was: "running", "queued" or "idle".
 func (s *Server) Stop(ctx context.Context, id string) (string, error) {
