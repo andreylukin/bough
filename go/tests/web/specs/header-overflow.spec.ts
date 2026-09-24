@@ -92,7 +92,7 @@ for (const [width, height] of [[1382, 900], [1024, 800]] as const) {
     if (width === 1382) {
       // Folded chips are one click away.
       await page.locator('.rt-more>summary').click();
-      await expect(page.locator('.rt-more .rt-pop')).toContainText('Cache TTL');
+      await expect(page.locator('.rt-more .rt-pop .rt-cache-hot .rt-label')).toHaveText('Cache');
       await page.keyboard.press('Escape');
     }
 
