@@ -273,7 +273,17 @@ func streamPtyTmux(t *testing.T, cols, rows int, yml string) (*tmuxApp, *app) {
 // repaint (a height change away and back) unchanged.
 func streamPtyRedraw(tm *tmuxApp, cols, rows int, where string) {
 	tm.t.Helper()
-	before := tm.settled()
+	// The frame to compare against must be the diff renderer's last,
+	// not one caught before a late final render: two captures 80ms apart
+	// matched mid-render in a loaded run and the huge reply "differed"
+	// by one scrolled row. Hold out for 400ms of stillness.
+	before := tm.screen()
+	for still, deadline := time.Now(), time.Now().Add(5*time.Second); time.Since(still) < 400*time.Millisecond && time.Now().Before(deadline); {
+		time.Sleep(80 * time.Millisecond)
+		if cur := tm.screen(); cur != before {
+			before, still = cur, time.Now()
+		}
+	}
 	tm.resize(cols, rows-1)
 	tm.settled()
 	tm.resize(cols, rows)
