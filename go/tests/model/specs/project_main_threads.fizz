@@ -25,8 +25,8 @@
 #
 # One thread is modelled: none, starting (created; 404 until its history
 # exists, a pending row in the list), empty (prompt-less: launch writes
-# no prompt, so no turn is open), running, done (turn over, the report
-# on its way to main), reported (the notice is in main). Archiving it or
+# no prompt, so no turn is open), running, reported (turn over and its
+# notice in main: one step, see ThreadFinish). Archiving it or
 # moving it out of the project is back to none. Start thread's thread
 # is created with its task and is modelled straight into running: main
 # stays on screen for it, so nothing reads its starting step.
@@ -117,6 +117,18 @@ role Project:
         # The child's history file appears; Create returns.
         require self.main == "starting"
         self.main = "live"
+        if self.a == "thread-held":
+            # createProjectSession goes on from Main() to CreateChild in
+            # the same handler, with nothing between them another client
+            # could see: the thread exists the moment main does. (Found
+            # by the server adapter, which saw the thread listed right
+            # after MainReady while this step still said "held".)
+            self.lock = ""
+            self.thread = "starting"
+            self.parented = True
+            self.full = True
+            self.view = "thread"
+            self.a = "idle"
 
     atomic fair<strong> action DoneA:
         require self.a in ("msg-held", "thread-held") and self.main == "live"
@@ -163,13 +175,14 @@ role Project:
 
     atomic action ThreadFinish:
         # The turn ends (done/cancelled/exit): childEventLocked hands the
-        # report to a goroutine.
+        # report to a goroutine and notifyFrom puts the notice in main.
+        # One step: nothing holds the report between the turn's end and
+        # the notice, so no client ever sees a finished thread whose
+        # report is still on its way (the server adapter found the
+        # notice already in main every time). A report that never lands
+        # is a finished thread that never reads "reported", which the
+        # adapter fails on.
         require self.thread == "running"
-        self.thread = "done"
-
-    atomic fair action Report:
-        # notifyFrom(parent, ...): the notice lands in main.
-        require self.thread == "done"
         self.thread = "reported"
 
     atomic action ArchiveThread:
@@ -258,7 +271,3 @@ always eventually assertion OtherTabComplete:
 # A started thread boots: it is openable past its 404.
 always eventually assertion ThreadBoots:
     return project.thread != "starting"
-
-# Each thread's finish shows as a notice in main.
-always eventually assertion ReportLands:
-    return project.thread != "done"
