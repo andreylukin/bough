@@ -3,6 +3,8 @@ package serve
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -191,5 +193,39 @@ func TestSetupChecksKey(t *testing.T) {
 	}
 	if code, _ := f.do(t, "GET", "/api/setup/check?provider=nope", ""); code != 400 {
 		t.Errorf("unknown provider = %d, want 400", code)
+	}
+}
+
+// BOUGH_SETUP_CHECK_URL points every provider's key check at one
+// endpoint, so a test of a real serve process can have a key accepted,
+// rejected or unanswerable without asking a real provider.
+func TestSetupCheckURLOverride(t *testing.T) {
+	t.Parallel()
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("x-api-key")
+		if key == "" {
+			key = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		got = append(got, key)
+		if key == "good" {
+			w.WriteHeader(200)
+			return
+		}
+		w.WriteHeader(401)
+	}))
+	defer srv.Close()
+	check := keyChecker(srv.URL)
+	for _, c := range []struct {
+		provider, key string
+		want          int
+	}{{"anthropic", "good", 200}, {"anthropic", "bad", 401}, {"openai", "good", 200}} {
+		code, err := check(context.Background(), c.provider, c.key)
+		if err != nil || code != c.want {
+			t.Errorf("check %s %s = %d, %v; want %d", c.provider, c.key, code, err, c.want)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("the override saw keys %v, want all three checks", got)
 	}
 }

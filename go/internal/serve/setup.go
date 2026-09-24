@@ -138,11 +138,28 @@ var checkURL = map[string]string{
 	"cerebras":   "https://api.cerebras.ai/v1/models",
 }
 
+// keyChecker is how serve asks providers about keys. A non-empty base
+// (BOUGH_SETUP_CHECK_URL) is asked instead of every provider's own
+// endpoint: a test driving a real serve process has no other way to
+// have a key accepted, rejected or unanswered without the network.
+func keyChecker(base string) func(context.Context, string, string) (int, error) {
+	if base == "" {
+		return checkProviderKey
+	}
+	return func(ctx context.Context, provider, key string) (int, error) {
+		return askProvider(ctx, base, provider, key)
+	}
+}
+
 func checkProviderKey(ctx context.Context, provider, key string) (int, error) {
 	u, ok := checkURL[provider]
 	if !ok {
 		return 0, fmt.Errorf("no check for %s", provider)
 	}
+	return askProvider(ctx, u, provider, key)
+}
+
+func askProvider(ctx context.Context, u, provider, key string) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return 0, err
