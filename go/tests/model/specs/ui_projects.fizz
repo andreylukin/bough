@@ -179,10 +179,14 @@ role Page:
 
     # Another tab or an agent writes ~/.bough/projects/alpha. Into an open
     # dialog it is walked only before anything is typed: what the race
-    # does to the dialog does not depend on the draft.
+    # does to the dialog does not depend on the draft. It writes the name
+    # the list still shows, if any: a rename dialog opens on the shown
+    # name and saves the other one, so a project recreated as "Alpha"
+    # under a list still reading "Beta" would make a rename to "Alpha" a
+    # no-op the toggle below does not model (the dialog refuses "Beta").
     atomic action ElsewhereCreate:
         require self.disk == "none" and not self.toast and untouched(self, "create")
-        self.disk = "Alpha"
+        self.disk = "Alpha" if self.shown == "none" else self.shown
 
     atomic action ElsewhereDelete:
         require self.disk != "none" and (untouched(self, "rename") or untouched(self, "delete"))
