@@ -359,3 +359,107 @@ func TestRestartCoalescesNewerRequest(t *testing.T) {
 		t.Fatalf("stops %d image %s want %s notices %v", n, e.fake.LastRun.Image, want, e.n.all())
 	}
 }
+
+// failingStop fails Stop while fail is set.
+type failingStop struct {
+	*container.Fake
+	mu   sync.Mutex
+	fail error
+}
+
+func (r *failingStop) Stop(ctx context.Context, name string) error {
+	r.mu.Lock()
+	fail := r.fail
+	r.mu.Unlock()
+	if fail != nil {
+		return fail
+	}
+	return r.Fake.Stop(ctx, name)
+}
+
+// A swap whose stop failed stopped nothing: the old jobs still run, and
+// one that later fails on its own must not read as stopped by the orb.
+func TestRestartStopFailureKeepsJobsFailing(t *testing.T) {
+	t.Parallel()
+	var fs *failingStop
+	e := newRestartEnv(t, "nostop", func(f *container.Fake) container.Runtime {
+		fs = &failingStop{Fake: f}
+		return fs
+	}, false)
+	old := e.h.Orb()
+	before := time.Now()
+	fs.mu.Lock()
+	fs.fail = errors.New("engine wedged")
+	fs.mu.Unlock()
+	e.h.Restart(false, "person")
+	waitFor(t, "the failure notice", func() bool { return e.n.last() != "" })
+	if n := e.n.last(); !strings.Contains(n, "engine wedged") || !strings.Contains(n, "old orb keeps running") {
+		t.Fatalf("notice = %q", n)
+	}
+	if e.h.Orb() != old {
+		t.Fatal("a failed stop swapped the orb")
+	}
+	if e.h.StoppedSince(before) {
+		t.Fatal("a job from before a swap that stopped nothing reads as stopped with the orb")
+	}
+}
+
+// A turn that has written its "input" but emitted nothing live yet (the
+// person sent a message during the build) holds the swap until "done".
+func TestRestartWaitsForTurnThatHasNotEmitted(t *testing.T) {
+	t.Parallel()
+	e := newRestartEnv(t, "quiet", nil, false)
+	old := e.h.Orb()
+	hist := filepath.Join(t.TempDir(), "s1.jsonl")
+	os.WriteFile(hist, []byte(`{"seq":1,"at":"2020-01-01T00:00:00Z","kind":"input","data":{"text":"old session"}}`+"\n"), 0o644)
+	e.h.rs.mu.Lock()
+	e.h.rs.histPath = hist
+	e.h.rs.mu.Unlock()
+	// An input from before the handle (a resumed session) is no turn:
+	// that request swaps.
+	e.h.Restart(false, "person")
+	waitFor(t, "the first swap", func() bool { return e.h.Orb() != old && e.n.last() != "" })
+	old = e.h.Orb()
+	notices := len(e.n.all())
+
+	f, _ := os.OpenFile(hist, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString(`{"seq":2,"at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `","kind":"input","data":{"text":"hi"}}` + "\n")
+	f.Close()
+	e.h.Restart(false, "person")
+	waitFor(t, "the build", func() bool {
+		st, _ := iorb.ReadState(e.home, "s1")
+		return st.Restart == iorb.RestartPending
+	})
+	time.Sleep(150 * time.Millisecond)
+	if e.h.Orb() != old {
+		t.Fatal("swapped while a turn was open by its input")
+	}
+	e.h.rs.observe("done")
+	waitFor(t, "the swap at turn end", func() bool { return e.h.Orb() != old && len(e.n.all()) > notices })
+}
+
+// A headless run exits with its turn: a restart asked in it builds and
+// swaps nothing, says so, and a fresh one removes the container at exit
+// so the next start creates a new one.
+func TestRestartHeadlessDefersToNextStart(t *testing.T) {
+	t.Parallel()
+	e := newRestartEnv(t, "hl", nil, false)
+	old := e.h.Orb()
+	e.h.rs.mu.Lock()
+	e.h.rs.headless = true
+	e.h.rs.mu.Unlock()
+	before := len(e.calls())
+	out := e.h.Restart(true, "agent")
+	if !strings.Contains(out, "not applied in this run") || !strings.Contains(out, "creates a new container") {
+		t.Fatalf("restart = %q", out)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if e.h.Orb() != old || len(e.calls()) != before {
+		t.Fatalf("headless restart did something: %v", e.calls()[before:])
+	}
+	e.h.close()
+	calls := e.calls()[before:]
+	if count(calls, "stop ") != 1 || count(calls, "remove "+container.OrbName("s1")) != 1 {
+		t.Fatalf("exit calls %v, want a stop then the fresh remove", calls)
+	}
+}

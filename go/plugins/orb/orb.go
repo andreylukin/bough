@@ -159,7 +159,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// Open can build an image; bound it so a wedged engine fails the
 	// start instead of hanging forever. The context lives as long as the
 	// handle: the start runs past this Apply.
-	octx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	octx, cancel := context.WithTimeout(context.Background(), startTimeout)
 	if err := rt.Available(octx); err != nil {
 		cancel()
 		return fmt.Errorf("orb: open %s: runtime %s: %w (run `bough update` or `container system start`)", slug, rt.Name(), err)
@@ -178,6 +178,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	} else {
 		h = newHandle(home, session, slug, rt, pad.Dir(), cancel)
 		h.rs = newRestarter(h, ctx)
+		// Set before start: the goroutines read them from then on.
+		h.rs.histPath, h.rs.headless = hist.Path(), headlessRun(ctx)
 		h.rs.start()
 		// The host half now: repos synced, worktrees added, the process
 		// moved into the primary worktree. Seconds of local git, and
@@ -442,6 +444,10 @@ func stopOrb(o *iorb.Orb) {
 		fmt.Fprintf(os.Stderr, "bough: orb: stop: %v\n", err)
 	}
 }
+
+// startTimeout bounds a start: the image build, the container, and
+// resume.sh. A restart's build and its swap each get the same.
+const startTimeout = 30 * time.Minute
 
 // headlessRun is a person or script running one turn; serve's children
 // (origin web) are headless too but stay up to show the failure.

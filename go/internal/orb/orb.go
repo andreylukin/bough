@@ -569,13 +569,15 @@ type guestKiller interface {
 	KillFunc(name string, cmd *exec.Cmd) func() error
 }
 
-// errReplaced is what a retired orb's exec fails with: the container
-// under its name now belongs to the orb that replaced it.
-var errReplaced = errors.New("orb replaced")
+// ErrReplaced is what a retired orb's exec fails with: the container
+// under its name now belongs to the orb that replaced it. A caller that
+// resolves the orb per call (the row's handle) retries through the orb
+// now behind it.
+var ErrReplaced = errors.New("orb replaced")
 
 func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 	if o.retired {
-		return errReplaced
+		return ErrReplaced
 	}
 	st, err := o.rt.Inspect(ctx, o.spec.Name)
 	if err != nil {
@@ -612,6 +614,12 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 func (o *Orb) Stop(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	return o.stopLocked(ctx)
+}
+
+// stopLocked is Stop with o.mu held: Replace retires the orb in the same
+// critical section, so no exec can restart the container in between.
+func (o *Orb) stopLocked(ctx context.Context) error {
 	// Mark stopped first: jobs killed by the stop check StoppedSince as
 	// they exit, before the runtime says the container is down.
 	prev := o.state.Status

@@ -279,3 +279,30 @@ func TestProjectRestart(t *testing.T) {
 		t.Fatal("request written for an invalid definition")
 	}
 }
+
+// --fresh for a session nobody runs cannot wait for a swap: the container
+// is removed now (worktrees stay), so the next start creates a new one.
+func TestProjectRestartFreshNotRunning(t *testing.T) {
+	home, rt, run := orbFixture(t)
+	t.Setenv("BOUGH_SESSION", "")
+	t.Setenv("BOUGH_RELAYED", "")
+	if _, err := run("", "create", "web", "~/repos/web"); err != nil {
+		t.Fatal(err)
+	}
+	putState(t, home, orb.State{Session: "s2", Project: "web", Status: orb.StatusStopped, Container: container.OrbName("s2")})
+	wt := filepath.Join(orb.Dir(home, "s2"), "web")
+	os.MkdirAll(wt, 0o755)
+	out, err := run("", "restart", "s2", "--fresh")
+	if err != nil || !strings.Contains(out, "removed its container") {
+		t.Fatalf("restart --fresh = %q, %v", out, err)
+	}
+	if calls := rt.CallList(); len(calls) != 1 || calls[0] != "remove "+container.OrbName("s2") {
+		t.Fatalf("runtime calls %v", calls)
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("worktree gone: %v", err)
+	}
+	if _, ok := orb.TakeRestart(home, "s2"); ok {
+		t.Fatal("request written for a session nobody runs")
+	}
+}

@@ -2,6 +2,7 @@ package orb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -25,7 +26,9 @@ import (
 // keeps serving the session; a build that fails changes nothing but a
 // notice. The swap waits until no turn is open, because the call that
 // asked is usually the agent's bash running IN the old container, and
-// swapping under it would kill the request that asked for the swap. The
+// swapping under it would kill the request that asked for the swap. A
+// turn is open from its "input" history entry (written before the turn
+// emits anything live) until its "done" event. The
 // result reaches the agent as a job notice (which wakes an idle one),
 // and the changed facts (address, ports) as the orb prompt section,
 // which the engine sends as a <context-update>: the frozen system prompt
@@ -44,9 +47,18 @@ type restarter struct {
 	prep func(ctx context.Context, rt container.Runtime, home, session string, p projectdef.Project, scratch string) (*iorb.Orb, error)
 	load func() (projectdef.Project, error)
 
-	mu        sync.Mutex
+	mu sync.Mutex
+	// histPath is the session's history file, whose last "input" entry
+	// says a turn opened before its first live event ("" in tests that
+	// drive observe by hand).
+	histPath string
+	// headless is a one-turn run that exits when the turn ends: nothing
+	// is built or swapped in it; a request is left to the next start.
+	headless  bool
 	busy      bool      // a turn is open
 	lastEvent time.Time // the last turn event, busy or done
+	lastDone  time.Time // the last "done": an input after it is an open turn
+	inputs    inputTail
 	pending   *iorb.RestartRequest
 	gen       int // bumps on each request: a build for an older one is dropped
 	notify    func(string)
@@ -79,10 +91,16 @@ func (r *restarter) start() {
 	go func() { defer r.wg.Done(); r.watch() }()
 }
 
-// stop ends both goroutines, a build in flight included, and waits.
-func (r *restarter) stop() {
+// stop ends both goroutines, a build in flight included, and waits. It
+// reports whether a request that asked for a fresh container was left
+// unapplied: the caller removes the container once it is stopped, so the
+// next start creates it anew as that request asked.
+func (r *restarter) stop() (freshPending bool) {
 	r.cancel()
 	r.wg.Wait()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pending != nil && r.pending.Fresh
 }
 
 func (r *restarter) setNotify(f func(string)) {
@@ -120,17 +138,101 @@ var turnKinds = map[string]bool{
 	"code": true, "call": true, "result": true, "steer": true,
 }
 
+// TurnEvent is how the restarter reads a loop event's kind: busy opens
+// (or keeps open) a turn, done ends it, neither is ignored. Exported for
+// e2e, which pins both engines' live streams to it: an engine renaming
+// its call event would otherwise let a swap kill the call that asked.
+func TurnEvent(kind string) (busy, done bool) { return turnKinds[kind], kind == "done" }
+
 // observe tracks whether a turn is open from the loop's events. Both
 // engines end every turn, a cancelled one included, with "done".
 func (r *restarter) observe(kind string) {
-	busy, done := turnKinds[kind], kind == "done"
+	busy, done := TurnEvent(kind)
 	if !busy && !done {
 		return
 	}
 	r.mu.Lock()
 	r.busy = busy
 	r.lastEvent = time.Now()
+	if done {
+		r.lastDone = r.lastEvent
+	}
 	r.mu.Unlock()
+}
+
+// turnOpen is whether a turn is open that has not emitted yet: the
+// history's last "input" entry is newer than the last "done" seen (and
+// than this restarter, so a resumed session's old inputs do not count).
+// Both engines write it at the start of the turn, before the model
+// streams anything; without it a message sent during a long build would
+// get its turn's first seconds swapped out from under it.
+func (r *restarter) turnOpen() bool {
+	r.mu.Lock()
+	path := r.histPath
+	since := r.created
+	if r.lastDone.After(since) {
+		since = r.lastDone
+	}
+	r.mu.Unlock()
+	if path == "" {
+		return false
+	}
+	return r.inputs.last(path).After(since)
+}
+
+// inputTail finds the time of a history file's last "input" entry,
+// reading only the file's tail and only when the file changed: waitIdle
+// asks every tick. The orb row reads the file, not the history service,
+// whose Entries copies the whole session each call.
+type inputTail struct {
+	mu    sync.Mutex
+	size  int64
+	mtime time.Time
+	at    time.Time
+}
+
+// tailWindow is how much of the file is read: far more than a turn's
+// last entries, and an input line longer than this (a huge paste) is
+// the one case that reads as no open turn, as before this check.
+const tailWindow = 1 << 20
+
+func (t *inputTail) last(path string) time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	if fi.Size() == t.size && fi.ModTime().Equal(t.mtime) {
+		return t.at
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return time.Time{}
+	}
+	defer f.Close()
+	off := max(fi.Size()-tailWindow, 0)
+	buf := make([]byte, fi.Size()-off)
+	n, _ := f.ReadAt(buf, off)
+	lines := strings.Split(string(buf[:n]), "\n")
+	if off > 0 && len(lines) > 0 {
+		lines = lines[1:] // the first is cut mid-line
+	}
+	t.size, t.mtime, t.at = fi.Size(), fi.ModTime(), time.Time{}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !strings.Contains(lines[i], `"kind":"input"`) {
+			continue
+		}
+		var e struct {
+			At   time.Time `json:"at"`
+			Kind string    `json:"kind"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &e) == nil && e.Kind == "input" {
+			t.at = e.At
+			break
+		}
+	}
+	return t.at
 }
 
 // request queues a restart and says what will happen. It never blocks
@@ -145,8 +247,18 @@ func (r *restarter) request(req iorb.RestartRequest) string {
 		r.pending.By = req.By
 	}
 	r.gen++
-	busy := r.busy
+	busy, headless, fresh := r.busy, r.headless, r.pending.Fresh
 	r.mu.Unlock()
+	if headless {
+		// The run ends with this turn and the row with it: a swap
+		// would never come. The next start applies the definition;
+		// a fresh request has its container removed at the exit.
+		msg := fmt.Sprintf("Restart of orb %s not applied in this run: a headless run ends with its turn, and the session's next start builds from the project's current definition", r.h.slug)
+		if fresh {
+			return msg + " and creates a new container (the old one is removed when this run exits)."
+		}
+		return msg + " and recreates the container when the image or spec changed."
+	}
 	if o := r.h.Orb(); o != nil {
 		o.SetRestart(iorb.RestartPending)
 	}
@@ -177,7 +289,11 @@ func (r *restarter) watch() {
 		case <-t.C:
 		}
 		if req, ok := iorb.TakeRestart(r.h.home, r.h.session); ok && !req.At.Before(r.created) {
-			r.request(req)
+			if msg := r.request(req); r.isHeadless() {
+				// The CLI that wrote the file said "scheduled"; say
+				// what this run does with it instead.
+				r.say(msg)
+			}
 		}
 	}
 }
@@ -205,6 +321,12 @@ func (r *restarter) run() {
 	}
 }
 
+func (r *restarter) isHeadless() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.headless
+}
+
 // stale reports a newer request since gen g; its Fresh is kept.
 func (r *restarter) stale(g int, fresh bool) bool {
 	r.mu.Lock()
@@ -230,7 +352,7 @@ func (r *restarter) once(req iorb.RestartRequest, g int) {
 		r.say(failureNotice(h.slug, iorb.PhaseStart, fmt.Errorf("orb: restart %s: %w", h.session, err), old != nil))
 		return
 	}
-	bctx, cancel := context.WithTimeout(r.ctx, 30*time.Minute)
+	bctx, cancel := context.WithTimeout(r.ctx, startTimeout)
 	defer cancel()
 	if old == nil {
 		// The first start failed: there is no container to protect, so
@@ -249,7 +371,7 @@ func (r *restarter) once(req iorb.RestartRequest, g int) {
 			r.say(failureNotice(h.slug, iorb.FailedAt(st), err, false))
 			return
 		}
-		h.beginSwap()(o)
+		h.beginSwap()(o, false)
 		h.doRefresh()
 		st := o.State()
 		r.say(noticeText(h.slug, iorb.Replaced{Image: st.Image, Recreated: true, State: st}, nil, iorb.ResumeTail(h.home, h.session, 20)))
@@ -278,17 +400,21 @@ func (r *restarter) once(req iorb.RestartRequest, g int) {
 	}
 	stopped := r.jobs()
 	end := h.beginSwap()
-	sctx, scancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// The swap creates and starts the container and reruns resume.sh,
+	// which after a recreate is often a full dependency install: the
+	// same budget as a first start, or a definition that starts fine in
+	// a new session fails its restart.
+	sctx, scancel := context.WithTimeout(context.Background(), startTimeout)
 	res, err := old.Replace(sctx, next, req.Fresh)
 	scancel()
 	if err != nil {
-		end(nil)
+		end(nil, res.Stopped)
 		old.SetRestart("")
 		h.doRefresh()
 		r.say(failureNotice(h.slug, iorb.PhaseStart, err, true))
 		return
 	}
-	end(next)
+	end(next, true)
 	h.doRefresh()
 	r.say(noticeText(h.slug, res, stopped, iorb.ResumeTail(h.home, h.session, 20)))
 }
@@ -300,7 +426,7 @@ func (r *restarter) waitIdle(ctx context.Context) error {
 		r.mu.Lock()
 		ok := !r.busy && time.Since(r.lastEvent) >= r.settle
 		r.mu.Unlock()
-		if ok {
+		if ok && !r.turnOpen() {
 			return nil
 		}
 		select {

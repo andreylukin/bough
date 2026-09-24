@@ -130,16 +130,27 @@ type Replaced struct {
 	Recreated        bool
 	Why              []string // what differed (specDiff), or "fresh"
 	State            State    // the new orb's state after resume.sh
+	// Stopped is whether the old container was stopped, set on the
+	// error path too: a Replace that failed at the stop left every job
+	// running, one that failed later (and rolled back) killed them.
+	Stopped bool
 }
+
+// rollbackTimeout bounds bringing the old container back. It is its own
+// budget, never the caller's: the usual reason to roll back is that the
+// caller's deadline ran out mid-create, and a rollback on that same
+// context would fail at once and leave the half-made container behind.
+const rollbackTimeout = 2 * time.Minute
 
 // Replace swaps o's container for next's (from o.Successor): stop o
 // (state.json says stopped first, as Stop does, so its jobs know why they
 // died), remove the container only when the image, the spec or fresh says
 // so, then start next, and resume.sh reruns. If next fails to start, o's
 // container is brought back from o.spec and the error says both.
-// Worktrees, scratch and caches are never touched. o is retired either
-// way it succeeds: its Command fails rather than restart a container that
-// is no longer its own.
+// Worktrees, scratch and caches are never touched. o is retired in the
+// same critical section that stops it, so an exec waiting on o.mu gets
+// ErrReplaced instead of starting the old container again under the
+// new one; it stays retired unless the rollback brings it back.
 func (o *Orb) Replace(ctx context.Context, next *Orb, fresh bool) (Replaced, error) {
 	o.mu.Lock()
 	prev := o.state
@@ -160,24 +171,31 @@ func (o *Orb) Replace(ctx context.Context, next *Orb, fresh bool) (Replaced, err
 	if disk, err := ReadState(o.home, o.session); err == nil {
 		next.state.Portals = disk.Portals
 	}
-	if err := o.Stop(ctx); err != nil {
+	o.mu.Lock()
+	if err := o.stopLocked(ctx); err != nil {
+		o.mu.Unlock()
 		return Replaced{}, fmt.Errorf("orb: restart %s: %w", o.session, err)
 	}
-	o.mu.Lock()
 	o.retired = true
 	o.mu.Unlock()
 	back := func(cause error) (Replaced, error) {
+		rctx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
+		defer cancel()
 		o.mu.Lock()
 		defer o.mu.Unlock()
-		o.retired = false
 		if res.Recreated {
-			// A half-made new container must not be restarted as ours.
-			o.rt.Remove(ctx, name)
+			// A half-made new container must not be restarted as ours:
+			// if it cannot be removed, o stays retired and fails its
+			// execs rather than adopt it.
+			if err := o.rt.Remove(rctx, name); err != nil {
+				return Replaced{Stopped: true}, fmt.Errorf("orb: restart %s: %w; the old container did not come back either: remove the new one: %v", o.session, cause, err)
+			}
 		}
-		if err := o.ensureRunningLocked(ctx); err != nil {
-			return Replaced{}, fmt.Errorf("orb: restart %s: %w; the old container did not come back either: %v", o.session, cause, err)
+		o.retired = false
+		if err := o.ensureRunningLocked(rctx); err != nil {
+			return Replaced{Stopped: true}, fmt.Errorf("orb: restart %s: %w; the old container did not come back either: %v", o.session, cause, err)
 		}
-		return Replaced{}, fmt.Errorf("orb: restart %s: %w (the old container runs again)", o.session, cause)
+		return Replaced{Stopped: true}, fmt.Errorf("orb: restart %s: %w (the old container runs again)", o.session, cause)
 	}
 	if res.Recreated {
 		if err := o.rt.Remove(ctx, name); err != nil {
@@ -190,13 +208,16 @@ func (o *Orb) Replace(ctx context.Context, next *Orb, fresh bool) (Replaced, err
 	}
 	st := next.State()
 	RetargetPortals(o.session, st.IP)
-	res.Image, res.State = st.Image, st
+	res.Image, res.State, res.Stopped = st.Image, st, true
 	return res, nil
 }
 
 // SetRestart records a requested restart's phase in state.json
 // (RestartPending, RestartBuilding, or "" when it is over), where the
-// bar, serve and `bough project status` read it.
+// bar, serve and `bough project status` read it. Only that field is
+// written: a build takes minutes, and in that time serve's stop or the
+// quiet-orb reaper may have marked the container stopped on disk, which
+// writing this orb's whole in-memory state back would undo.
 func (o *Orb) SetRestart(phase string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -204,10 +225,13 @@ func (o *Orb) SetRestart(phase string) {
 		return
 	}
 	o.state.Restart = phase
-	if disk, err := ReadState(o.home, o.session); err == nil && disk.Session == o.session {
-		o.state.Portals = disk.Portals
+	disk, err := ReadState(o.home, o.session)
+	if err != nil || disk.Session != o.session {
+		writeState(o.home, o.state)
+		return
 	}
-	writeState(o.home, o.state)
+	disk.Restart = phase
+	writeState(o.home, disk)
 }
 
 // RestartRequest is ~/.bough/orbs/<session>/restart.json: a restart asked

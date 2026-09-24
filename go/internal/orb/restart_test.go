@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,5 +351,175 @@ func TestRetargetPortals(t *testing.T) {
 	buf := make([]byte, 2)
 	if _, err := c.Read(buf); err != nil || string(buf) != "hi" {
 		t.Fatalf("through the retargeted portal: %q %v", buf, err)
+	}
+}
+
+// holdStop holds the next Stop until release is closed, telling the test
+// when it got there; failStop fails every Stop while set.
+type holdStop struct {
+	*container.Fake
+	mu       sync.Mutex
+	entered  chan struct{}
+	release  chan struct{}
+	failStop error
+}
+
+func (r *holdStop) Stop(ctx context.Context, name string) error {
+	r.mu.Lock()
+	entered, release, fail := r.entered, r.release, r.failStop
+	r.entered, r.release = nil, nil
+	r.mu.Unlock()
+	if fail != nil {
+		return fail
+	}
+	if entered != nil {
+		close(entered)
+		<-release
+	}
+	return r.Fake.Stop(ctx, name)
+}
+
+// An exec on the old orb that was waiting for its lock while Replace
+// stopped the container fails with ErrReplaced; it never starts the old
+// container again (which next.run would then adopt as its own).
+func TestReplaceRetiresInsideTheStop(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	newProject(t, home, "race", "  - path: "+newRepo(t)+"\n")
+	p, _ := projectdef.Load(home, "race")
+	rt := &holdStop{Fake: container.NewFake()}
+	o, err := Open(ctx, rt, home, "s1", p, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := o.Successor(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	rt.mu.Lock()
+	rt.entered, rt.release = entered, release
+	rt.mu.Unlock()
+	type out struct {
+		res Replaced
+		err error
+	}
+	done := make(chan out, 1)
+	go func() {
+		res, err := o.Replace(ctx, next, false)
+		done <- out{res, err}
+	}()
+	<-entered
+	execErr := make(chan error, 1)
+	go func() { execErr <- o.Command(ctx, "true").Err }()
+	time.Sleep(50 * time.Millisecond) // let the exec queue on o.mu
+	close(release)
+	r := <-done
+	if r.err != nil || !r.res.Stopped {
+		t.Fatalf("replace = %+v, %v", r.res, r.err)
+	}
+	if err := <-execErr; !errors.Is(err, ErrReplaced) {
+		t.Fatalf("old exec during the stop: %v, want ErrReplaced", err)
+	}
+	if n := count(rt.CallList(), "start "); n != 2 {
+		t.Fatalf("%d starts, want the first and next's: %v", n, rt.CallList())
+	}
+}
+
+// A Stop that fails leaves the old container and its jobs running, and
+// says so: Replaced.Stopped is false.
+func TestReplaceStopFailureStopsNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	newProject(t, home, "nostop", "  - path: "+newRepo(t)+"\n")
+	p, _ := projectdef.Load(home, "nostop")
+	rt := &holdStop{Fake: container.NewFake()}
+	o, err := Open(ctx, rt, home, "s1", p, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := o.Successor(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.mu.Lock()
+	rt.failStop = errors.New("engine wedged")
+	rt.mu.Unlock()
+	res, err := o.Replace(ctx, next, false)
+	if err == nil || res.Stopped {
+		t.Fatalf("replace = %+v, %v", res, err)
+	}
+	if err := o.Command(ctx, "true").Run(); err != nil {
+		t.Fatalf("old orb after a failed stop: %v", err)
+	}
+}
+
+// slowNewStart holds Start for one image until ctx ends: a create that
+// outlives the swap's deadline.
+type slowNewStart struct {
+	*container.Fake
+	bad string
+}
+
+func (r *slowNewStart) Start(ctx context.Context, spec container.RunSpec) error {
+	if spec.Image == r.bad {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return r.Fake.Start(ctx, spec)
+}
+
+// The rollback runs on its own context: a swap whose deadline expired
+// mid-create still removes the half-made container and brings the old
+// one back, instead of failing both on the dead context.
+func TestReplaceRollbackOutlivesCallerDeadline(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	newProject(t, home, "slow", "  - path: "+newRepo(t)+"\n")
+	p, _ := projectdef.Load(home, "slow")
+	rt := &slowNewStart{Fake: container.NewFake()}
+	o, err := Open(context.Background(), rt, home, "s1", p, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTag := o.State().Image
+	projectdef.WriteFile(home, "slow", projectdef.FileSetup, "#!/bin/sh\necho v2\n")
+	p, _ = projectdef.Load(home, "slow")
+	next, err := o.Successor(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.bad = next.spec.Image
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err = o.Replace(ctx, next, false)
+	if err == nil || !strings.Contains(err.Error(), "old container runs again") {
+		t.Fatalf("replace err = %v", err)
+	}
+	if rt.LastRun.Image != oldTag {
+		t.Fatalf("container runs %s, want the old %s", rt.LastRun.Image, oldTag)
+	}
+	if err := o.Command(context.Background(), "true").Run(); err != nil {
+		t.Fatalf("old orb after the rollback: %v", err)
+	}
+}
+
+// SetRestart writes only its field: a stop serve recorded on disk while
+// a build ran stays recorded.
+func TestSetRestartKeepsStopOnDisk(t *testing.T) {
+	t.Parallel()
+	home, _, _, o := restartFixture(t, "keep")
+	if _, err := MarkStopped(home, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	o.SetRestart(RestartBuilding)
+	st, err := ReadState(home, "s1")
+	if err != nil || st.Status != StatusStopped || st.Restart != RestartBuilding {
+		t.Fatalf("state.json = %+v, %v", st, err)
+	}
+	if o.State().Restart != RestartBuilding {
+		t.Fatalf("in memory = %+v", o.State())
 	}
 }

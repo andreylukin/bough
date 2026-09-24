@@ -297,7 +297,23 @@ func projectRestart(out io.Writer, home string, args []string, self string, rela
 		return err
 	}
 	if !ownerAlive(s) {
-		fmt.Fprintf(out, "Session %s is not running; its next start builds the new image and recreates the container when the image or spec changed.\n", s.Session)
+		if !fresh {
+			fmt.Fprintf(out, "Session %s is not running; its next start builds the new image and recreates the container when the image or spec changed.\n", s.Session)
+			return nil
+		}
+		// Nobody is there to swap it, so --fresh is done now: only the
+		// container goes (worktrees, scratch and caches stay), and the
+		// next start creates a new one.
+		name := s.Container
+		if name == "" {
+			name = container.OrbName(s.Session)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := projectRuntime().Remove(ctx, name); err != nil {
+			return fmt.Errorf("remove the container of session %s: %w", s.Session, err)
+		}
+		fmt.Fprintf(out, "Session %s is not running; removed its container, so its next start builds the new image and creates a new container.\n", s.Session)
 		return nil
 	}
 	by := "cli"

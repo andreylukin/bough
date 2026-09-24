@@ -414,11 +414,15 @@ func Remove(ctx context.Context, rt container.Runtime, home, session string) err
 // says stopped first, as Stop does), removes the container only when the
 // image, the spec key or fresh says so, starts next (resume.sh reruns) and
 // re-points open portals at the new IP (RetargetPortals, same host ports).
-// If next fails to start, o's container is brought back from o.spec and
-// the error says both. o is retired: its Command fails "orb replaced".
+// If next fails to start, o's container is brought back from o.spec (on
+// its own 2-minute context, never the caller's, whose deadline is the
+// usual cause) and the error says both. o is retired in the critical
+// section that stops it: its Command fails with ErrReplaced, and the
+// row's handle retries once through the orb now behind it. Replaced.Stopped
+// says whether the old container was stopped (set on errors too).
 func (o *Orb) Successor(ctx context.Context, p projectdef.Project) (*Orb, error)
 func (o *Orb) Replace(ctx context.Context, next *Orb, fresh bool) (Replaced, error)
-func (o *Orb) SetRestart(phase string) // RestartPending, RestartBuilding, ""
+func (o *Orb) SetRestart(phase string) // RestartPending, RestartBuilding, ""; writes only that field
 // restart.json in Dir: written by `bough project restart` and serve,
 // polled (1 s) and removed by the owning session process.
 func RequestRestart(home, session string, r RestartRequest) error
@@ -646,21 +650,32 @@ type orbExec interface {
   open: the turn is tracked from `loop/event` — assistant, thinking,
   code, call, result and steer open it, `done` closes it (both engines
   emit `done` at every turn end, cancelled ones included), and 300 ms of
-  quiet must follow. Other kinds (title, todo, activity, `sub:*`) do not
+  quiet must follow. A turn that has not emitted yet is caught by the
+  history file: both engines write its "input" entry at turn start, so
+  an input newer than the last `done` (and than the handle) holds the
+  swap too. `e2e/orb_restart_test.go` pins both engines' event streams
+  to these kinds. Other kinds (title, todo, activity, `sub:*`) do not
   count: they arrive after `done` too, and a background subagent is not
   this session's turn — its in-flight calls stop with the container like
   any job. A request from the guest therefore always waits for its own
-  turn to end, and the bash call that asked returns "scheduled" at once:
+  turn to end (a headless run by a person or script exits with its turn,
+  so it builds and swaps nothing and says so; a `--fresh` request left
+  that way removes the container at exit, and `bough project restart
+  --fresh` for a session nobody runs removes it at once, so the next start
+  creates a new one), and the bash call that asked returns "scheduled" at once:
   there is deliberately no "now", since killing the call that asked is
   what this avoids. An idle session swaps as soon as the build is done. A
   newer request during a build drops the older build (nothing was
   created yet). The handle KEEPS ITS IDENTITY: `orb` and `orb-state` are
   not re-Provided, because a Provide reloads every row that reads the
   key (the ui among them), and tools and the engine resolve `orb` per
-  call anyway. The swap closes an exec gate (Command waits on it), swaps
-  the `*Orb` under the handle's mutex and records `lastSwap`, so a
-  background job started before it reports "stopped with the orb" and
-  queues no failure wake. The row's settled work reruns quietly for the
+  call anyway. The swap closes an exec gate (Command reads the gate and
+  the orb under one lock and waits on it), swaps the `*Orb` under the
+  handle's mutex and records `lastSwap`, so a background job started
+  before it reports "stopped with the orb" and queues no failure wake; a
+  swap whose stop failed puts `lastSwap` back, since its jobs still run.
+  The swap gets the same 30-minute budget as a first start (resume.sh
+  after a recreate is often a full install). The row's settled work reruns quietly for the
   new orb (definition re-read; the `orb` prompt section changes, which
   the engine sends as a `<context-update>` — the frozen system prompt is
   never edited), and the result goes out as a `job-notices` notice (so

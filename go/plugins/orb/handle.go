@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -40,8 +41,9 @@ type handle struct {
 	// gate is non-nil while a restart swaps containers; closed when it is
 	// done. An exec waits on it rather than reach a container mid-swap.
 	gate chan struct{}
-	// lastSwap is when the last swap began: a job started before it died
-	// with the old container, not of its own failure.
+	// lastSwap is when the last swap that stopped a container began: a
+	// job started before it died with the old container, not of its own
+	// failure.
 	lastSwap time.Time
 	// refresh redoes the row's per-orb work (prompt section, address
 	// updates) for the orb now behind the handle; set by each Apply.
@@ -56,16 +58,26 @@ func newHandle(home, session, slug string, rt container.Runtime, scratch string,
 }
 
 // beginSwap closes the exec gate for a swap. The returned end puts o
-// behind the handle (nil keeps the orb it has) and opens the gate.
-func (h *handle) beginSwap() func(o *iorb.Orb) {
+// behind the handle (nil keeps the orb it has) and opens the gate;
+// stopped says whether the old container was actually stopped.
+//
+// lastSwap moves now, before the stop, because the jobs the stop kills
+// exit while it runs and ask StoppedSince as they do. A swap that never
+// got to stop anything puts it back: those jobs are still running, and
+// one that later fails on its own must still report it.
+func (h *handle) beginSwap() func(o *iorb.Orb, stopped bool) {
 	h.mu.Lock()
 	gate := make(chan struct{})
+	prev := h.lastSwap
 	h.gate, h.lastSwap = gate, time.Now()
 	h.mu.Unlock()
-	return func(o *iorb.Orb) {
+	return func(o *iorb.Orb, stopped bool) {
 		h.mu.Lock()
 		if o != nil {
 			h.o, h.err = o, nil
+		}
+		if !stopped {
+			h.lastSwap = prev
 		}
 		h.gate = nil
 		h.mu.Unlock()
@@ -82,19 +94,22 @@ func (h *handle) failed(err error) {
 	h.mu.Unlock()
 }
 
-// waitSwap blocks while a swap is under way, bounded by ctx.
-func (h *handle) waitSwap(ctx context.Context) error {
-	h.mu.Lock()
-	gate := h.gate
-	h.mu.Unlock()
-	if gate == nil {
-		return nil
-	}
-	select {
-	case <-gate:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("orb: waiting for the orb restart: %w", ctx.Err())
+// current is the orb behind the handle once no swap is under way,
+// bounded by ctx. The gate and the orb are read under one lock: read
+// apart, a swap beginning in between hands out the orb being replaced.
+func (h *handle) current(ctx context.Context) (*iorb.Orb, error) {
+	for {
+		h.mu.Lock()
+		gate, o := h.gate, h.o
+		h.mu.Unlock()
+		if gate == nil {
+			return o, nil
+		}
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("orb: waiting for the orb restart: %w", ctx.Err())
+		}
 	}
 }
 
@@ -163,27 +178,38 @@ func (h *handle) Starting() bool {
 // Command is the exec seam tools.bash runs through: it waits for the
 // container first, bounded by ctx. A start that failed yields a command
 // that fails with the reason, never one that runs on the host.
+//
+// A swap can still begin after current returned and retire the orb it
+// handed out before o.Command takes its lock; that exec fails with
+// ErrReplaced, and one retry through the handle waits for the swap and
+// runs in whichever container it left behind.
 func (h *handle) Command(ctx context.Context, argv ...string) *exec.Cmd {
+	failed := func(err error) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "false")
+		cmd.Err = err
+		return cmd
+	}
 	if err := h.Ready(ctx); err != nil {
-		cmd := exec.CommandContext(ctx, "false")
-		cmd.Err = err
-		return cmd
+		return failed(err)
 	}
-	if err := h.waitSwap(ctx); err != nil {
-		cmd := exec.CommandContext(ctx, "false")
-		cmd.Err = err
-		return cmd
-	}
-	o := h.Orb()
-	if o == nil {
-		// A restart of a failed start may have run meanwhile and failed.
-		cmd := exec.CommandContext(ctx, "false")
-		if cmd.Err = h.Ready(ctx); cmd.Err == nil {
-			cmd.Err = errors.New("orb: not open")
+	for try := 0; ; try++ {
+		o, err := h.current(ctx)
+		if err != nil {
+			return failed(err)
+		}
+		if o == nil {
+			// A restart of a failed start may have run meanwhile and failed.
+			if err = h.Ready(ctx); err == nil {
+				err = errors.New("orb: not open")
+			}
+			return failed(err)
+		}
+		cmd := o.Command(ctx, argv...)
+		if try == 0 && errors.Is(cmd.Err, iorb.ErrReplaced) {
+			continue
 		}
 		return cmd
 	}
-	return o.Command(ctx, argv...)
 }
 
 // Root is ~/.bough/orbs/<session>, known before anything is open.
@@ -260,9 +286,15 @@ func (h *handle) Stop(ctx context.Context) error {
 // close is the row's unmount: cancel a start in flight and wait for it
 // to let go (it is still writing state.json and worktrees under the
 // session's directory), then stop an open orb.
+//
+// A restart asked for with --fresh that never got to swap (a headless
+// run ends with its turn) removes the stopped container, so the next
+// start creates a new one as asked; without fresh, the next start
+// already applies the definition. Worktrees stay either way.
 func (h *handle) close() {
+	fresh := false
 	if h.rs != nil {
-		h.rs.stop()
+		fresh = h.rs.stop()
 	}
 	h.cancel()
 	select {
@@ -271,5 +303,16 @@ func (h *handle) close() {
 	}
 	if o := h.Orb(); o != nil {
 		stopOrb(o)
+		if fresh {
+			name := o.State().Container
+			if name == "" {
+				name = container.OrbName(h.session)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := h.rt.Remove(ctx, name); err != nil {
+				fmt.Fprintf(os.Stderr, "bough: orb: remove %s for the fresh restart: %v\n", name, err)
+			}
+		}
 	}
 }
