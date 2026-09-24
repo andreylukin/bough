@@ -11,6 +11,7 @@
 // AndFeedsMain covers the creation itself.
 import * as fs from 'fs';
 import * as path from 'path';
+import type { Route } from '@playwright/test';
 import { test, expect } from '../helpers/serve';
 
 const MAIN = '2026-09-19T08-00-00-00001';
@@ -213,4 +214,40 @@ test('a thread just started reads as starting, not as not found, until its trans
   await expect(page.getByText('Starting the session…')).toHaveCount(0);
   await expect(page.locator('.prj-conv .thread')).toBeVisible();
   await expect(page.locator('.prj-crumb')).toContainText('‹ All threads');
+});
+
+// A project page's reads outlive the page when nothing cancels them. The
+// orb detail probes the container runtime and takes seconds on a CI
+// runner; the browser queued those reads behind the connections the
+// page's event streams hold, and one sent after the project was deleted
+// was a 404 in the console of a page that had long moved on (the
+// session_filing walks, CI 2026-09-24). Leaving the page cancels them.
+test('leaving a project page cancels its reads; a project deleted after is not asked for', async ({ serve, page }) => {
+  const errors: string[] = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const res = await serve.api.post('/api/projects', { data: { name: 'Short lived' } });
+  expect(res.status()).toBe(200);
+  // The orb read is held until the project is gone: the slow runner, as a condition.
+  const held: Route[] = [];
+  await page.route('**/api/projects/short-lived/orb', (route) => { held.push(route); });
+  const settled = new Set<unknown>();
+  const statuses: number[] = [];
+  page.on('requestfailed', (r) => { if (r.url().endsWith('/short-lived/orb')) settled.add(r); });
+  page.on('requestfinished', async (r) => {
+    if (!r.url().endsWith('/short-lived/orb')) return;
+    statuses.push((await r.response())?.status() ?? 0);
+    settled.add(r);
+  });
+
+  await page.goto(serve.url + '/#/projects/short-lived');
+  await expect(page.locator('h1.prj-name')).toHaveText('Short lived');
+  await expect.poll(() => held.length).toBeGreaterThan(0);
+  await page.evaluate(() => { location.hash = '#/projects'; });
+  await expect(page.locator('.proj-body')).toBeVisible();
+  expect((await serve.api.delete('/api/projects/short-lived')).status()).toBe(200);
+
+  for (const r of held) await r.continue().catch(() => { /* the page cancelled it */ });
+  await expect.poll(() => settled.size).toBe(held.length);
+  expect(statuses.filter((s) => s >= 400), 'reads sent after the page was left').toEqual([]);
+  expect(errors).toEqual([]);
 });
