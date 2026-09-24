@@ -150,6 +150,9 @@ var (
 	ErrBadAnswer      = errors.New("serve: supervisor: a secret answer cannot contain a newline")
 	ErrUnknownSession = errors.New("serve: supervisor: unknown session")
 	ErrArchived       = errors.New("serve: supervisor: session is archived")
+	// ErrElsewhere is a session another process has open (a terminal
+	// `bough -r` holds its lease): a child here would be a second writer.
+	ErrElsewhere = errors.New("serve: supervisor: session is open in another process")
 )
 
 const (
@@ -620,6 +623,10 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 	if s.meta[id].Archived {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("serve: supervisor: %s: %w", id, ErrArchived)
+	}
+	if pid := history.LeaseHolder(filepath.Join(s.opt.HistDir, id+".jsonl")); pid != 0 {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("serve: supervisor: %s (pid %d): %w", id, pid, ErrElsewhere)
 	}
 	// Reserve the lease before releasing the mutex, so a concurrent
 	// ensure waits for this spawn rather than starting a second one.

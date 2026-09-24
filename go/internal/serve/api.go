@@ -617,6 +617,9 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	var jobs []Job
 	if live {
 		st, ask, jobs = d.statusLive, d.askLive, d.jobsLive
+	} else if st == StatusInterrupted && history.LeaseHolder(in.Path) != 0 {
+		// Its writer is alive, just not ours: a terminal's turn.
+		st = StatusElsewhere
 	}
 	title := meta.Title
 	if title == "" {
@@ -824,7 +827,8 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrBadAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived), errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession):
+	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived), errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession),
+		errors.Is(err, ErrElsewhere):
 		return http.StatusConflict
 	case errors.Is(err, ErrUnknownProject):
 		return http.StatusNotFound

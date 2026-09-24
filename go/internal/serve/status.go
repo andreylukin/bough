@@ -31,6 +31,11 @@ const (
 	StatusError       Status = "error"       // last closed turn contained an error entry
 	StatusStopped     Status = "stopped"     // last turn closed with "cancelled"
 	StatusDone        Status = "done"        // last turn closed with "done", no error in it
+
+	// StatusElsewhere is an open turn in a process serve did not start
+	// (a terminal `bough -r`), which holds the session's lease. Not
+	// derived from entries: rowOf asks the lease (history.LeaseHolder).
+	StatusElsewhere Status = "elsewhere"
 )
 
 // Ask is a tools.ask waiting on the user (plugins/ask records kind

@@ -776,6 +776,14 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	}
+	// The session's lease, for this process's life (see TakeLease): it
+	// is how serve tells a terminal's session from one whose writer
+	// died, and never starts a child beside it. Advisory here: a second
+	// terminal on a held session still opens it, and the append's
+	// ConcurrentWriter notice tells its user.
+	if release, err := TakeLease(s.Path()); err == nil {
+		ctx.Effect(release)
+	}
 	// "origin" is who is running this process (main provides it:
 	// $BOUGH_ORIGIN, else the ui mode). It is bookkeeping for listings;
 	// the loop's projection never reads meta or origin entries.
