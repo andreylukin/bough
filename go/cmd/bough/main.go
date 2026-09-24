@@ -2,8 +2,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -588,7 +590,7 @@ func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless 
 	if err != nil {
 		return nil, fmt.Errorf("watch config: %w", err)
 	}
-	if err := w.Add(filepath.Dir(abs)); err != nil {
+	if err := watchDir(w, filepath.Dir(abs)); err != nil {
 		return nil, fmt.Errorf("watch config: %w", err)
 	}
 	// The init-js row reads ~/.bough/init.js and ./.bough/init.js at
@@ -603,7 +605,7 @@ func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless 
 		initDirs = append(initDirs, d)
 	}
 	for _, d := range initDirs {
-		if d == filepath.Dir(abs) || w.Add(d) == nil {
+		if d == filepath.Dir(abs) || watchDir(w, d) == nil {
 			initFiles[filepath.Join(d, "init.js")] = true
 		}
 	}
@@ -822,4 +824,24 @@ func usage() {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "bough:", err)
 	os.Exit(1)
+}
+
+// watchDir is w.Add(dir), again when an entry vanished under it. On
+// kqueue (macOS, BSD) watching a directory opens every entry in it, and
+// one removed between the listing and the open fails the whole Add:
+// sessions serve starts side by side each probe ~/.bough with a temp
+// file (scratch's creatable), and a sibling's probe exited the session
+// before it read its first prompt. The directory itself missing is
+// still an error.
+func watchDir(w *fsnotify.Watcher, dir string) error {
+	var err error
+	for range 20 {
+		if err = w.Add(dir); err == nil || !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if _, serr := os.Stat(dir); serr != nil {
+			return err
+		}
+	}
+	return err
 }
