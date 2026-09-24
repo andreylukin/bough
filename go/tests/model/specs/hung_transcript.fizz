@@ -1,0 +1,165 @@
+---
+deadlock_detection: false
+---
+
+# hung_transcript: the open thread's first transcript read and its
+# catch-ups when they are slow or never answer (go/tests/model/README.md).
+# The twin of hung_requests (list poll, send, Stop), split from it because
+# the two together were 7920 states and share no field.
+# live_transcript_sync models these reads failing; this models them
+# hanging. api.ts req() has no timeout, so a read the server accepts and
+# never answers stays pending for as long as the tab lives.
+#
+# Page (app.tsx, the `selected` effect): opening a session GETs the whole
+# transcript; while it is out the thread says "Loading transcript…", and
+# only a failed read shows "Couldn't load this session" with Retry. A
+# recorded event arms a 120 ms catch-up (GET ?since=), which does not
+# wait for an earlier one still out; a failed catch-up sets `paused`
+# ("Updates paused · last synced … · Retry") and re-arms on a 4 s..30 s
+# backoff. `paused` is set only in the catch-up's .catch. Leaving the
+# thread ends the effect: `live` goes false and answers to it are ignored.
+#
+# Fields (Thread role):
+#   open      the session's thread is on screen
+#   first     its first transcript read: none | out | hung | loaded | failed
+#   catchup   the newest catch-up read: none | out | hung
+#   timer     a catch-up timer is armed (an event's 120 ms, or the backoff)
+#   behind    an event was recorded that no landed read has brought in
+#   paused    "Updates paused · Retry" is on screen
+#
+# Abstractions: one event at a time (an event arrives only with no timer
+# armed); the first read's answer does not clear `behind` (the event's own
+# catch-up does, as in the product); a newer catch-up takes the slot of a
+# hung one, which never answers anyway. Answer/Fail/Hang are the server's
+# choice per request; a request that is out and not hung answers (fair)
+# or fails.
+#
+# Fairness: the page's own steps (timers firing, answers to requests that
+# are out) are strongly fair. The person (Open, Leave, Retry), the session
+# (Event) and the network (Hang, Fail) are not.
+#
+# Corrections to the mapped model, from the code:
+# - a hung catch-up is not the end: the next recorded event arms a new
+#   catch-up that does not wait for the hung one. A hung LAST catch-up
+#   (the turn's final event) is the one that stays silent.
+# - a hung first read is left by leaving the thread; coming back (Open)
+#   reads again. On the thread itself there is no Retry.
+#
+# The product does not meet the mapped claims; they are left out so the
+# check stays green, each with the counterexample fizz gave when it was
+# added (findings, not fixed here):
+#
+#   CatchUpStaleShown  not (catchup == "hung" and behind and not timer and not paused)
+#     Open, Event, CatchUpFire, CatchUpHangs: the turn's last entry never
+#     shows and the header does not say paused.
+#   (liveness) LoadingEnds  always eventually not (open and first == "hung")
+#     fizz's lasso ends with first == "hung" on the open thread (it
+#     reached it through FirstFails, RetryFirst, FirstHangs):
+#     "Loading transcript…" with no Retry for as long as the person stays.
+#   (liveness) CaughtUp  always eventually not (open and behind and not paused)
+#     fizz's lasso is events arriving forever (each catch-up answers
+#     after the next event), which a live turn does; the silent one is
+#     CatchUpStaleShown's path, behind forever and never paused.
+
+role Thread:
+    action Init:
+        self.open = False
+        self.first = "none"
+        self.catchup = "none"
+        self.timer = False
+        self.behind = False
+        self.paused = False
+
+    atomic action Open:
+        require not self.open
+        self.open = True
+        self.first = "out"
+
+    atomic action Leave:
+        require self.open
+        self.open = False
+        self.first = "none"
+        self.catchup = "none"
+        self.timer = False
+        self.behind = False
+        self.paused = False
+
+    atomic fair<strong> action FirstAnswers:
+        require self.first == "out"
+        self.first = "loaded"
+
+    atomic action FirstFails:
+        require self.first == "out"
+        self.first = "failed"
+
+    atomic action FirstHangs:
+        require self.first == "out"
+        self.first = "hung"
+
+    # "Couldn't load this session · Retry" (setLoadTry).
+    atomic action RetryFirst:
+        require self.first == "failed"
+        self.first = "out"
+
+    # A recorded event on the open session's stream arms the catch-up.
+    atomic action Event:
+        require self.open and not self.timer
+        self.timer = True
+        self.behind = True
+
+    atomic fair<strong> action CatchUpFire:
+        require self.timer
+        self.timer = False
+        self.catchup = "out"
+
+    atomic fair<strong> action CatchUpAnswers:
+        require self.catchup == "out"
+        self.catchup = "none"
+        self.paused = False
+        # An event after this read was sent is still to come.
+        self.behind = self.timer
+
+    # .catch: paused, and a backoff re-arms the catch-up.
+    atomic action CatchUpFails:
+        require self.catchup == "out"
+        self.catchup = "none"
+        self.paused = True
+        self.timer = True
+
+    atomic action CatchUpHangs:
+        require self.catchup == "out"
+        self.catchup = "hung"
+
+    # "Updates paused · Retry": clearTimeout, then a catch-up now.
+    atomic action RetryCatchUp:
+        require self.paused
+        self.timer = False
+        self.catchup = "out"
+
+action Init:
+    thread = Thread()
+
+# "Updates paused" always has a way on: a catch-up armed or out, or the
+# hung one its Retry replaces.
+always assertion PausedHasAWayOn:
+    return not thread.paused or thread.timer or thread.catchup != "none"
+
+# A thread left behind holds nothing: its reads are ignored (`live`) and
+# its timer cleared, so nothing of it can pause or load later.
+always assertion ClosedThreadHoldsNothing:
+    return thread.open or (thread.first == "none" and thread.catchup == "none" and not thread.timer and not thread.paused and not thread.behind)
+
+# Paused means behind: a failed catch-up left something unread.
+always assertion PausedOnlyWhenBehind:
+    return not thread.paused or thread.behind
+
+# A read that is out and not hung is answered or reported.
+always eventually assertion FirstReadSettles:
+    return thread.first != "out"
+
+always eventually assertion CatchUpSettles:
+    return thread.catchup != "out"
+
+# A failed catch-up (paused, timer armed) is retried without the person.
+always eventually assertion BackoffFires:
+    return not thread.timer
