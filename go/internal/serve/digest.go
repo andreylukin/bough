@@ -31,6 +31,8 @@ type rowDigest struct {
 	askLive     *Ask
 	jobsLive    []Job
 	model       string
+	ownModel    string // ownModel's answer
+	switched    bool
 	mode        string
 	project     string
 	lastAt      time.Time
@@ -73,6 +75,7 @@ func digestOf(entries []history.Entry, fallback time.Time) *rowDigest {
 		hasInput:    hasInput(entries),
 		empty:       len(entries) == 0,
 	}
+	d.ownModel, d.switched = ownModel(entries)
 	if n := len(entries); n > 0 {
 		d.lastSeq, d.lastEntryAt = entries[n-1].Seq, entries[n-1].At
 	}

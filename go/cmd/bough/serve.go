@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -338,7 +339,7 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 		return fmt.Errorf("serve: listen %s: %w", addr, err)
 	}
 	api := serve.NewAPI(sup)
-	api.SetDefaults(configuredModel)
+	api.SetDefaults(configuredIn)
 	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure, host)}
 	// Shutdown waits for in-flight requests, and an event stream is in
 	// flight for as long as a tab is open: every restart used to sit out
@@ -394,13 +395,41 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	return nil
 }
 
-// configuredModel is the llm row as a session would mount it now: the
-// same resolution a child does (./bough.yml, else ~/.bough/bough.yml,
-// else the embedded default routed to whichever provider has a key).
-// Empty when the config does not load; the picker then says nothing
-// rather than something wrong.
-func configuredModel() serve.ModelDefault {
-	rows, err := resolveConfig(false, "").load()
+// configuredIn is the llm row a child started in dir would mount now:
+// the same resolution the child does (dir/bough.yml, else
+// ~/.bough/bough.yml, else the embedded default routed to whichever
+// provider has a key). Empty when the config does not load; the picker
+// then says nothing rather than something wrong.
+//
+// Every session row asks, and a load parses the embedded config too
+// (~0.2 ms), so answers are kept per version of the file that decided
+// it and per set of provider keys present (pickProvider reads them).
+func configuredIn(dir string) serve.ModelDefault {
+	var src configSource
+	key := ""
+	paths := []string{filepath.Join(dir, "bough.yml")}
+	if home, err := os.UserHomeDir(); err == nil {
+		paths = append(paths, filepath.Join(home, ".bough", "bough.yml"))
+	}
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil {
+			src.path = p
+			key = fmt.Sprintf("%s|%d|%d", p, st.ModTime().UnixNano(), st.Size())
+			break
+		}
+	}
+	for _, c := range providerChoices {
+		if os.Getenv(c.env) != "" {
+			key += "|" + c.env
+		}
+	}
+	configuredMu.Lock()
+	d, ok := configuredMemo[key]
+	configuredMu.Unlock()
+	if ok {
+		return d
+	}
+	rows, err := src.load()
 	if err != nil {
 		return serve.ModelDefault{}
 	}
@@ -410,7 +439,16 @@ func configuredModel() serve.ModelDefault {
 		}
 		model, _ := r.Config["model"].(string)
 		effort, _ := r.Config["effort"].(string)
-		return serve.ModelDefault{Plugin: r.Plugin, Model: model, Effort: effort}
+		d = serve.ModelDefault{Plugin: r.Plugin, Model: model, Effort: effort}
+		break
 	}
-	return serve.ModelDefault{}
+	configuredMu.Lock()
+	configuredMemo[key] = d
+	configuredMu.Unlock()
+	return d
 }
+
+var (
+	configuredMu   sync.Mutex
+	configuredMemo = map[string]serve.ModelDefault{}
+)

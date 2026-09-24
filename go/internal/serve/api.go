@@ -37,8 +37,9 @@ type API struct {
 	// ingest starts a wiki ingest (spawnIngest). A field so a test can
 	// see the call without running a model.
 	ingest func(only string) error
-	// defaults names the configured model and effort (SetDefaults); nil = unknown.
-	defaults func() ModelDefault
+	// defaults names the llm row a child started in dir mounts
+	// (SetDefaults); nil = unknown.
+	defaults func(dir string) ModelDefault
 	// brief writes today's brief now (spawnBrief); a field for the same reason.
 	brief func() error
 	// running is the runtime's running containers as of runningAt, the
@@ -81,6 +82,11 @@ type Row struct {
 	// from the child, so do not present them as ground truth.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+	// Configured is the session's own llm row while it still runs it:
+	// what its bough.yml says (not serve's), with the model it answered
+	// as when the config names none. nil once a model was set, from here
+	// or by /model in the session: nothing switches back to it.
+	Configured *ModelDefault `json:"configured,omitempty"`
 	// Project is the project this conversation belongs to, by slug. For a
 	// project session it is the slug its history recorded, which nothing
 	// can re-file; for a local one it is where a person filed it.
@@ -609,6 +615,21 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	if model == "" {
 		model = d.model
 	}
+	var configured *ModelDefault
+	if meta.Model == "" && !d.switched {
+		var c ModelDefault
+		// A project session's child reads its config inside the orb,
+		// which serve cannot resolve from here.
+		if d.mode != "project" && a.defaults != nil {
+			c = a.defaults(in.Cwd)
+		}
+		if c.Model == "" {
+			c.Model = d.ownModel
+		}
+		if c.Plugin != "" || c.Model != "" {
+			configured = &c
+		}
+	}
 	// A project session's project is the one its history names: it is
 	// where its orb and its worktrees came from, so the membership serve
 	// stores cannot contradict it.
@@ -638,26 +659,27 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	now := time.Now()
 	trouble := d.troubled(st, meta.Ack, now, in.Background)
 	return Row{
-		ID:       in.ID,
-		Title:    title,
-		Summary:  in.Summary,
-		Cwd:      in.Cwd,
-		Repo:     in.Repo,
-		Branch:   in.Branch,
-		Status:   st,
-		Live:     live,
-		Archived: meta.Archived,
-		Entries:  in.Entries,
-		Modified: in.ModTime,
-		LastAt:   d.lastAt,
-		Ask:      ask,
-		Model:    model,
-		Effort:   meta.Effort,
-		Project:  project,
-		Jobs:     jobs,
-		Cache:    d.cacheFor(model),
-		Trouble:  trouble,
-		Unseen:   d.unseen(st, trouble, meta.Ack, now, in.Origin),
+		ID:         in.ID,
+		Title:      title,
+		Summary:    in.Summary,
+		Cwd:        in.Cwd,
+		Repo:       in.Repo,
+		Branch:     in.Branch,
+		Status:     st,
+		Live:       live,
+		Archived:   meta.Archived,
+		Entries:    in.Entries,
+		Modified:   in.ModTime,
+		LastAt:     d.lastAt,
+		Ask:        ask,
+		Model:      model,
+		Effort:     meta.Effort,
+		Configured: configured,
+		Project:    project,
+		Jobs:       jobs,
+		Cache:      d.cacheFor(model),
+		Trouble:    trouble,
+		Unseen:     d.unseen(st, trouble, meta.Ack, now, in.Origin),
 
 		TestsFailed: d.testsFailed,
 		TestsAt:     d.testsAt,
@@ -709,6 +731,24 @@ func lastModel(entries []history.Entry) string {
 		}
 	}
 	return ""
+}
+
+// ownModel is what the session's own llm row answered as before any
+// /model swap, and whether one happened. The swap's "model" entry is
+// what a resumed child replays over bough.yml, so after one the session
+// never runs its configured row again.
+func ownModel(entries []history.Entry) (model string, switched bool) {
+	for _, e := range entries {
+		switch e.Kind {
+		case "model":
+			return model, true
+		case "engine", "assistant":
+			if m, _ := e.Data["model"].(string); model == "" {
+				model = m
+			}
+		}
+	}
+	return model, false
 }
 
 // writeRow re-reads the session so the reply reflects the state after

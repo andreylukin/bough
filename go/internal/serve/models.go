@@ -75,17 +75,19 @@ func (a *API) models(w http.ResponseWriter, r *http.Request) {
 	// whether it has it.
 	resp := map[string]any{"providers": out, "efforts": llm.Levels()}
 	if a.defaults != nil {
-		if d := a.defaults(); d.Model != "" {
+		if d := a.defaults(a.start); d.Model != "" {
 			resp["default"] = d
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// SetDefaults wires the configured model and effort into /api/models.
-// A func, read per request: the launcher re-reads bough.yml, so an
-// edit shows on the next load without restarting serve.
-func (a *API) SetDefaults(f func() ModelDefault) { a.defaults = f }
+// SetDefaults wires in how a child started in dir resolves its llm row:
+// /api/models names serve's own (dir = where serve started), and each
+// local session's row names its own, since a repo's bough.yml can run
+// something else. A func, read per request: the launcher re-reads
+// bough.yml, so an edit shows on the next load without restarting serve.
+func (a *API) SetDefaults(f func(dir string) ModelDefault) { a.defaults = f }
 
 func (a *API) setModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
