@@ -5147,7 +5147,13 @@ export default function App() {
       created.current.delete(selected);
       failedLookup.current = null;
       setStarting(false);
-      setLines(r.entries);
+      // A catch-up can land first (the ring's replay arms one at once) and
+      // bring entries recorded after this read was sent; replacing the
+      // lines dropped them, and with no later event nothing re-read them.
+      setLines((cur) => {
+        const seen = new Set(r.entries.map((e) => e.seq));
+        return [...r.entries, ...cur.filter((l) => !seen.has(l.seq))];
+      });
       setLoadedFor(selected);
       setLooked(r.session);
       setRows((prev) => prev.map((x) => (x.id === r.session.id ? r.session : x)));

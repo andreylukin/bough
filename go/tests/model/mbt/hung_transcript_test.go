@@ -222,8 +222,18 @@ func (a *hungTranscriptAdapter) FirstAnswers() error {
 	if !a.gate.pass(a.first == "out") {
 		return nil
 	}
-	a.lines = a.firstOf // setLines(r.entries)
-	a.first = "loaded"
+	// setLines: the read's entries, then any a catch-up brought after them.
+	seen := map[int64]bool{}
+	for _, e := range a.firstOf {
+		seen[e.Seq] = true
+	}
+	lines := append([]serve.Line(nil), a.firstOf...)
+	for _, l := range a.lines {
+		if !seen[l.Seq] {
+			lines = append(lines, l)
+		}
+	}
+	a.lines, a.first = lines, "loaded"
 	return nil
 }
 
@@ -430,5 +440,38 @@ func TestHungTranscript(t *testing.T) {
 	opts := map[string]any{"max-seq-runs": 300, "max-actions": 10, "max-parallel-runs": 0}
 	if err := runMBT(t, "hung_transcript", a, hungTranscriptActions, opts); err != nil {
 		t.Fatalf("model-based run: %v", err)
+	}
+}
+
+// The graph folds "the first read was sent before an event that a
+// catch-up has since brought in" into the same state as a first read
+// sent after it, so the generated walks may take FirstAnswers from that
+// state along the harmless route only. This is the other route: a first
+// read that replaced the lines would drop the event's entries, and the
+// spec says they stay (behind is still false).
+func TestHungTranscriptStaleFirstRead(t *testing.T) {
+	t.Parallel()
+	g, err := tracecheck.Load(testdataDir("hung_transcript"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := func(first, catchup string, timer, behind bool) map[string]any {
+		return map[string]any{"Thread#0.open": true, "Thread#0.first": first, "Thread#0.catchup": catchup,
+			"Thread#0.timer": timer, "Thread#0.behind": behind, "Thread#0.paused": false, "Thread#0.recorded": true}
+	}
+	trace := []tracecheck.Step{
+		{Action: "Init", State: map[string]any{"Thread#0.open": false, "Thread#0.recorded": false}},
+		{Action: "Thread#0.Open", State: map[string]any{"Thread#0.first": "out", "Thread#0.timer": false, "Thread#0.behind": false}},
+		{Action: "Thread#0.Event", State: state("out", "none", true, true)},
+		{Action: "Thread#0.CatchUpFire", State: state("out", "out", false, true)},
+		{Action: "Thread#0.CatchUpAnswers", State: state("out", "none", false, false)},
+		{Action: "Thread#0.FirstAnswers", State: state("loaded", "none", false, false)},
+	}
+	if v := g.Check(trace); v != nil {
+		t.Fatalf("the trace is not a path in the model: %v", v)
+	}
+	a := newHungTranscriptAdapter(t)
+	if err := walkRole(a, "Thread", hungTranscriptActions, &a.gate, tracecheck.Walk{Trace: trace}); err != nil {
+		t.Fatal(err)
 	}
 }
