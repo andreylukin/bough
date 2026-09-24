@@ -1,0 +1,512 @@
+---
+# The bounds (one queued message, one failure row, one chip) end every
+# behaviour in a quiet composer: that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# The web composer as the person sees it (web/src/app.tsx Thread: the
+# draft, send/enqueue/deliver, attach/take/expand, the failure rows and
+# the queue, the key hints; mention.tsx Mentions and triggerAt;
+# skills.tsx SkillPicker; select.tsx Select for the model and effort
+# pickers in the composer toolbar).
+#
+# Two sessions. A is the one this flow drives: its turns run, fail,
+# queue and get archived. B is a quiet idle session that is here to show
+# the draft is per session (localStorage bough:draft:<id>): the person
+# only types in it, clears it and switches back.
+#
+# Fields (all on the Composer role; see go/tests/model/README.md):
+#   session   the thread on screen (#/s/<id>): a | b
+#   status    A's row status: idle | running | archived (B stays idle)
+#   pending   A has a sent, unlanded prompt: the optimistic row and the
+#             "Sending" status from deliver()
+#   queued    A's queued messages (sessionStorage), 0..1
+#   failed    A has a "Not sent" row with Retry, Edit and Discard
+#   draft_a   A's draft: "" | typed | multi (a Shift+Enter newline) |
+#             pasted (a "[Pasted text #1 +N lines]" or uploaded
+#             "[Image #1]" tag) | uploading ("Attaching image…") |
+#             lost (a tag whose file never arrived: "not attached")
+#   draft_b   B's draft: "" | typed
+#   popover   the one open popover: none | slash (the / picker at the
+#             caret) | mention (the @ picker) | skills (the Skills
+#             button's dialog) | model | effort (the toolbar Selects)
+#   listing   what the open popover shows: loading | list | error.
+#             A caret picker or Skills: "Couldn't load … Retry". A
+#             Select: a pick the server refused, said in the Select,
+#             which stays open.
+#   focus     composer | popover (the Skills filter, a Select) |
+#             elsewhere (a toolbar button, the page)
+#   placeholder_sent
+#             the last message sent, steered or queued carried a tag
+#             whose file never arrived, as its literal "[Image #1]"
+#
+# Derived in view(), read straight off the page:
+#   shown         the draft in the textarea (a's or b's)
+#   composer_on   the textarea is enabled (A archived: "Read-only")
+#   send_label    Send | Steer, the primary button's name
+#   send_enabled  the primary button is enabled
+#   queue_shown   the Queue button is there
+#   stop_shown    the Stop button is there (A's turn is live)
+#   edit_enabled  the failure row's Edit button is enabled
+#   status_word   the composer foot's word, by phase: "" | sending
+#                 ("Sending", then "Waiting" once taken) | running
+#                 ("Waiting" until output, then "Working")
+#   hint          the key hints: send | live | steer, or hidden while a
+#                 caret picker owns the keys
+#
+# Where this departs from the code, and why:
+# - Steering and the queue's order are steer_queue.fizz; the stop
+#   handshake is stop_interrupt.fizz; the catalogue load behind the
+#   model picker is model_effort_controls.fizz. Here a steer is the
+#   draft clearing while the turn runs, and Stop ends the turn and may
+#   put its prompt back.
+# - One extra at a time: a popover, a chip, a multi-line draft, a
+#   failure row, a queued message, an archive or a visit to B each
+#   start only from a calm composer (A on screen, a plain draft, none of
+#   the others), and cross the core (A's status, a send in flight) only
+#   where that changes the screen: a caret picker while running (Esc
+#   shuts it, not the turn), a chip while running (Queue waits for the
+#   upload), the Skills and model pickers while archived. Crossing
+#   everything made 3845 paths, one browser test each.
+# - A click away from a popover is Escape here: it shuts the same way.
+# - The picker's 200 ms "slow" (a fast load shows nothing) is not a
+#   state: loading is the panel blank or saying "Loading…".
+# - An upload never spans a switch (Switch waits for it): the Thread
+#   that started it is unmounted and nothing on screen shows it.
+# - The viewport is wide: on a phone the pickers move under Settings.
+# - Enqueue refuses a draft whose tag lost its file, as send() does.
+#   The code's enqueue() does not check that today and queues the
+#   literal "[Image #1]": this spec says what the page must do.
+
+role Composer:
+    action Init:
+        self.session = "a"
+        self.status = "idle"
+        self.pending = False
+        self.queued = 0
+        self.failed = False
+        self.draft_a = ""
+        self.draft_b = ""
+        self.popover = "none"
+        self.listing = "list"
+        self.focus = "composer"
+        self.placeholder_sent = False
+        self.view()
+
+    # What the page renders from the fields above. atomic: a plain func
+    # is a yield point, and the assertions would see new fields beside
+    # the old view.
+    atomic func view():
+        on_a = self.session == "a"
+        running = on_a and self.status == "running"
+        self.shown = self.draft_a if on_a else self.draft_b
+        self.composer_on = not (on_a and self.status == "archived")
+        self.send_label = "Steer" if running else "Send"
+        blank = self.shown == ""
+        self.send_enabled = self.composer_on and not blank and self.shown != "uploading"
+        self.queue_shown = running and not blank
+        self.stop_shown = running or (on_a and self.pending)
+        # The failure row's Edit: disabled while a draft is there.
+        self.edit_enabled = on_a and self.failed and blank
+        if running:
+            self.status_word = "running"
+        elif self.stop_shown:
+            self.status_word = "sending"
+        else:
+            self.status_word = ""
+        if self.popover == "slash" or self.popover == "mention":
+            self.hint = "hidden"
+        elif running:
+            self.hint = "steer"
+        elif self.stop_shown:
+            self.hint = "live"
+        else:
+            self.hint = "send"
+
+    atomic func set_draft(d):
+        if self.session == "a":
+            self.draft_a = d
+        else:
+            self.draft_b = d
+
+    atomic func live():
+        return self.session == "a" and (self.status == "running" or self.pending)
+
+    # Nothing extra on screen: A open, no popover, no chip, no failure
+    # row, no queued message. See "One extra at a time" above.
+    atomic func calm():
+        return (self.session == "a" and self.popover == "none" and not self.failed
+                and self.queued == 0 and self.draft_a in ["", "typed"])
+
+    # A toolbar popover opens over an empty draft with no turn live: its
+    # crossing with a running turn or a draft shows nothing new.
+    atomic func toolbar_ok():
+        return self.status != "running" and not self.pending and self.draft_a == ""
+
+    # ---- typing ----
+
+    # A word at the caret. A space ends any / or @ token, so an open
+    # caret picker shuts.
+    atomic action Type:
+        require self.composer_on and self.focus == "composer"
+        require (self.shown == "" and self.popover == "none") or self.popover in ["slash", "mention"]
+        if self.shown == "":
+            self.set_draft("typed")
+        self.popover = "none"
+        self.listing = "list"
+        self.view()
+
+    # Shift+Enter: a newline in the draft. (With a caret picker open it
+    # is a newline too, and shuts the picker as Type does.) A multi-line
+    # draft is a leaf here: it is sent or cleared, and nothing else opens
+    # over it.
+    atomic action Newline:
+        c = self.calm()
+        require c and self.composer_on and self.focus == "composer"
+        require self.draft_a == "typed" and self.status == "idle" and not self.pending
+        self.draft_a = "multi"
+        self.view()
+
+    # "/" or "@" starting a word opens the caret picker over it. The
+    # sigil is text: the draft is no longer blank.
+    atomic action TypeTrigger:
+        c = self.calm()
+        require c and not self.pending and self.composer_on and self.focus == "composer"
+        kind = oneof ["slash", "mention"]
+        self.draft_a = "typed"
+        self.popover = kind
+        self.listing = "loading"
+        self.view()
+
+    # ---- a popover's list ----
+
+    atomic fair<strong> action ListLoads:
+        require self.popover in ["slash", "mention", "skills"] and self.listing == "loading"
+        self.listing = "list"
+
+    atomic action ListFails:
+        require self.popover in ["slash", "mention", "skills"] and self.listing == "loading"
+        self.listing = "error"
+
+    # "Couldn't load … Retry". The caret picker's Retry keeps the
+    # composer focused (its mousedown is prevented).
+    atomic action RetryList:
+        require self.popover in ["slash", "mention", "skills"] and self.listing == "error"
+        self.listing = "loading"
+
+    # Enter/Tab or a click on a row. A caret pick replaces the token; a
+    # Skills pick writes "/name " at the lead. Both hand the keys back to
+    # the composer. On an archived session a Skills pick still writes the
+    # draft, but the disabled textarea cannot take focus.
+    atomic action PickItem:
+        require self.popover in ["slash", "mention", "skills"] and self.listing == "list"
+        self.draft_a = "typed"
+        self.popover = "none"
+        self.focus = "composer" if self.composer_on else "elsewhere"
+        self.view()
+
+    # Escape in a popover closes that popover only: never the turn, never
+    # the thread. A caret picker leaves focus in the composer; the Skills
+    # dialog and a Select give it back to their button.
+    atomic action Escape:
+        require self.popover != "none"
+        self.focus = "composer" if self.popover in ["slash", "mention"] else "elsewhere"
+        self.popover = "none"
+        self.listing = "list"
+        self.view()
+
+    # ---- the toolbar ----
+
+    # The Skills button: opening moves focus into its filter, a second
+    # click closes it onto the button. It is offered on an archived
+    # session too (see the notes on this flow's report).
+    atomic action ClickSkills:
+        if self.popover == "skills":
+            self.popover = "none"
+            self.listing = "list"
+            self.focus = "elsewhere"
+        else:
+            c = self.calm()
+            t = self.toolbar_ok()
+            require c and t
+            self.popover = "skills"
+            self.listing = "loading"
+            self.focus = "popover"
+        self.view()
+
+    # The model or effort Select: a click opens it with focus inside, a
+    # second closes it onto its button.
+    atomic action ClickSetting:
+        which = oneof ["model", "effort"]
+        if self.popover == which:
+            self.popover = "none"
+            self.focus = "elsewhere"
+        else:
+            c = self.calm()
+            t = self.toolbar_ok()
+            require c and t
+            self.popover = which
+            self.focus = "popover"
+        self.listing = "list"
+        self.view()
+
+    # A pick the server takes closes the Select onto its button. On an
+    # archived session the server refuses it (409) and the Select stays
+    # open saying so.
+    atomic action PickSetting:
+        require self.popover in ["model", "effort"] and self.listing == "list"
+        if self.status == "archived":
+            self.listing = "error"
+        else:
+            self.popover = "none"
+            self.focus = "elsewhere"
+
+    # ---- focus ----
+
+    # Alt+I, the skip link, or a click in the textarea, with no popover
+    # open (a click there shuts one as Escape does).
+    atomic action FocusComposer:
+        require self.composer_on and self.focus != "composer" and self.popover == "none"
+        self.focus = "composer"
+        self.view()
+
+    # ---- attachments ----
+
+    # A long paste becomes "[Pasted text #1 +N lines]" at once; an image
+    # becomes "[Image #1]" and uploads. A paste never opens a picker over
+    # text nobody typed.
+    atomic action Paste:
+        c = self.calm()
+        require c and not self.pending and self.composer_on and self.focus == "composer"
+        kind = oneof ["pasted", "uploading"]
+        self.draft_a = kind
+        self.view()
+
+    atomic fair<strong> action UploadDone:
+        require self.draft_a == "uploading"
+        self.draft_a = "pasted"
+        self.view()
+
+    atomic action UploadFails:
+        require self.draft_a == "uploading"
+        self.draft_a = "lost"
+        self.view()
+
+    # Select all and delete (a tag deleted on its own drops its
+    # attachment the same way).
+    atomic action ClearDraft:
+        require self.composer_on and self.focus == "composer" and self.popover == "none"
+        require self.shown not in ["", "uploading"]
+        self.set_draft("")
+        self.view()
+
+    # ---- sending ----
+
+    # Enter in the composer (a caret picker owns Enter, even empty or
+    # loading, so none is open) or a click on Send / Steer. While A is
+    # live it steers; otherwise it sends and the
+    # optimistic row says "Sending". A tag whose file is gone is never
+    # sent as its placeholder: the draft stays and the page names it.
+    atomic action Send:
+        require self.session == "a" and self.send_enabled and self.popover == "none"
+        if self.draft_a != "lost":
+            self.placeholder_sent = self.draft_a == "lost"
+            live = self.live()
+            if not live:
+                self.pending = True
+            self.draft_a = ""
+            self.view()
+
+    # Cmd/Ctrl+Enter or the Queue button while A runs: the message waits
+    # for the turn to end. Refused like Send for a tag that lost its file.
+    atomic action Enqueue:
+        require self.session == "a" and self.queue_shown and self.draft_a != "uploading"
+        require self.popover == "none" and self.queued == 0 and not self.failed
+        if self.draft_a != "lost":
+            self.placeholder_sent = self.draft_a == "lost"
+            self.queued = 1
+            self.draft_a = ""
+            self.view()
+
+    # The flush effect hands the queue's head to deliver() once A is idle
+    # with nothing unlanded. It runs in A's mounted Thread only.
+    atomic fair<strong> action Flush:
+        require self.session == "a" and self.status == "idle"
+        require not self.pending and self.queued > 0
+        self.queued = 0
+        self.pending = True
+        self.view()
+
+    # ---- the server ----
+
+    # The prompt is recorded and its turn starts.
+    atomic fair<strong> action Land:
+        require self.pending
+        self.pending = False
+        self.status = "running"
+        self.view()
+
+    # POST /send answered with an error: the optimistic row goes and a
+    # "Not sent" row keeps the message with its cause.
+    atomic action SendFails:
+        c = self.calm()
+        require self.pending and c
+        self.pending = False
+        self.failed = True
+        self.view()
+
+    atomic fair<strong> action Finish:
+        require self.status == "running"
+        self.status = "idle"
+        self.view()
+
+    # Esc in the composer with no popover open, or the Stop button. A
+    # turn stopped before any reply puts its prompt back in an empty
+    # draft.
+    atomic action Stop:
+        require self.session == "a" and self.status == "running"
+        require self.popover == "none"
+        self.status = "idle"
+        if self.draft_a == "":
+            restored = oneof ["", "typed"]
+            self.draft_a = restored
+        self.view()
+
+    # ---- the failure row ----
+
+    # Retry resends the same request (a steer if A is live meanwhile).
+    # Archived, the server refuses it and the row stays.
+    atomic action Retry:
+        require self.session == "a" and self.failed and self.status != "archived"
+        self.failed = False
+        live = self.live()
+        if not live:
+            self.pending = True
+        self.view()
+
+    # Edit puts the message back, only into an empty draft (the button
+    # is disabled otherwise): two prompts are never glued together.
+    atomic action EditFailed:
+        require self.edit_enabled
+        self.failed = False
+        self.draft_a = "typed"
+        self.focus = "composer"
+        self.view()
+
+    atomic action Discard:
+        require self.session == "a" and self.failed
+        self.failed = False
+        self.view()
+
+    # ---- archive and switching ----
+
+    # Archived from the header's settings or another client, from a calm
+    # composer. The textarea is disabled and focus falls out of it; the
+    # draft is kept.
+    atomic action Archive:
+        c = self.calm()
+        require c and self.status == "idle" and not self.pending
+        self.status = "archived"
+        self.focus = "elsewhere"
+        self.view()
+
+    # The Unarchive button on the composer's note, or another client.
+    atomic action Unarchive:
+        require self.status == "archived" and self.popover == "none"
+        self.status = "idle"
+        self.view()
+
+    # A click on the other session's row. Each draft stays with its own
+    # session; every popover belongs to the thread left behind.
+    atomic action Switch:
+        c = self.calm()
+        require self.session == "b" or (c and self.status == "idle" and not self.pending)
+        self.session = "b" if self.session == "a" else "a"
+        self.popover = "none"
+        self.listing = "list"
+        self.focus = "elsewhere"
+        self.view()
+
+action Init:
+    composer = Composer()
+
+# ---- what is always true on screen ----
+
+# The textarea shows the open session's own draft, never the other's.
+always assertion DraftIsTheSessions:
+    c = composer
+    return c.shown == (c.draft_a if c.session == "a" else c.draft_b)
+
+# Exactly one owner of the keys: a toolbar popover holds focus, a caret
+# picker leaves it in the composer, and nothing else holds a popover's.
+always assertion FocusFollowsPopover:
+    p = composer.popover
+    if p in ["skills", "model", "effort"]:
+        return composer.focus == "popover"
+    if p in ["slash", "mention"]:
+        return composer.focus == "composer"
+    return composer.focus != "popover"
+
+# A read-only composer is never focused and never has a caret picker.
+always assertion ArchivedIsReadOnly:
+    if composer.composer_on:
+        return True
+    return composer.focus != "composer" and composer.popover not in ["slash", "mention"]
+
+# No send control is enabled that would fail: Send needs a draft, a
+# live composer and no upload in flight; Queue shows only while A runs.
+always assertion NoControlThatWouldFail:
+    c = composer
+    if c.send_enabled and (c.shown in ["", "uploading"] or not c.composer_on):
+        return False
+    if c.queue_shown and not (c.session == "a" and c.status == "running" and c.shown != ""):
+        return False
+    return True
+
+# A live turn always says so, picker open or not; a quiet one does not.
+always assertion LiveTurnHasStatus:
+    c = composer
+    if c.session == "a" and (c.status == "running" or c.pending):
+        return c.status_word != "" and c.stop_shown
+    return c.status_word == "" and not c.stop_shown
+
+# The primary button says Steer exactly while A's turn runs.
+always assertion SteerWhileRunning:
+    running = composer.session == "a" and composer.status == "running"
+    return (composer.send_label == "Steer") == running
+
+# The key hints step aside only for a caret picker.
+always assertion HintsHiddenOnlyForPicker:
+    return (composer.hint == "hidden") == (composer.popover in ["slash", "mention"])
+
+# A tag whose file never arrived is never sent, steered or queued as its
+# placeholder text.
+always assertion NoPlaceholderSent:
+    return not composer.placeholder_sent
+
+# Leaving a session and coming back keeps each draft as it was.
+transition assertion DraftsSurviveSwitch(before, after):
+    b = before.composer
+    a = after.composer
+    if a.session != b.session:
+        return a.draft_a == b.draft_a and a.draft_b == b.draft_b
+    return True
+
+# Edit on a failure row is offered only over an empty draft: a message
+# put back never lands on (or replaces) one already being written.
+always assertion EditOnlyOverEmpty:
+    return not composer.edit_enabled or (composer.failed and composer.shown == "")
+
+# ---- what always ends ----
+
+# "Sending" does not hang: the prompt lands or its failure row shows.
+always eventually assertion SendingResolves:
+    return not composer.pending
+
+# A popover's list does not stay loading (it may fail; Retry is yours).
+always eventually assertion ListSettles:
+    return composer.listing != "loading"
+
+# The queue drains once A's turn ends while A is on screen.
+always eventually assertion QueueDrains:
+    return composer.queued == 0 or composer.status != "idle" or composer.session != "a"
