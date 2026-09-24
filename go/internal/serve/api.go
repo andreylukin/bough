@@ -315,6 +315,13 @@ func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	in, ok := a.info(id)
 	if !ok {
+		// A child the lists show as queued or starting has no transcript
+		// yet, but it is not "not found": the page said so while its own
+		// list still showed the row.
+		if row, pending := a.pendingRow(id); pending {
+			writeJSON(w, http.StatusOK, map[string]any{"session": row, "entries": []Line{}})
+			return
+		}
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
 		return
 	}
@@ -473,11 +480,30 @@ func (a *API) rename(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	// A queued or starting child has meta and no history yet: the name
+	// is meta only, so it takes it now rather than 404ing on a row the
+	// lists show.
+	if _, pending := a.pendingRow(id); pending {
+		if err := a.sup.SetTitle(id, body.Title); err != nil {
+			writeErr(w, statusFor(err), fmt.Errorf("serve: api: session %q: %w", id, err))
+			return
+		}
+		row, _ := a.pendingRow(id)
+		writeJSON(w, http.StatusOK, map[string]any{"session": row})
+		return
+	}
 	a.metaVerb(w, id, func() error { return a.sup.SetTitle(id, body.Title) })
 }
 
 func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// Archiving a child that has not started would hide a row whose
+	// process still boots, or leave a task queued under an archived
+	// row: it says why instead of 404ing on a row the lists show.
+	if _, pending := a.pendingRow(id); pending {
+		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: session %q has not started yet; stop it first", id))
+		return
+	}
 	var body struct {
 		StopChildren bool `json:"stopChildren"`
 	}
