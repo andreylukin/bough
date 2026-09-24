@@ -22,8 +22,9 @@ var ErrNotFound = errors.New("secret not found")
 
 // Seams: tests swap these and never touch the user's keychain.
 var (
-	KeychainRead  = keychainRead
-	KeychainWrite = keychainWrite
+	KeychainRead   = keychainRead
+	KeychainWrite  = keychainWrite
+	KeychainDelete = keychainDelete
 )
 
 // BOUGH_TEST_KEYCHAIN_DIR swaps both seams for a plaintext file per
@@ -49,6 +50,12 @@ func useFileKeychain(dir string) {
 			return err
 		}
 		return os.WriteFile(file(service), []byte(value), 0o600)
+	}
+	KeychainDelete = func(service string) error {
+		if err := os.Remove(file(service)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
 	}
 }
 
@@ -110,6 +117,18 @@ func Store(service, value string) error {
 	return nil
 }
 
+// Delete removes service from the keychain; a missing item is not an
+// error.
+func Delete(service string) error {
+	if err := KeychainDelete(service); err != nil {
+		return err
+	}
+	cache.Lock()
+	delete(cache.m, Ref(service))
+	cache.Unlock()
+	return nil
+}
+
 // Service is the conventional service for an asked secret.
 func Service(slug, name string) string { return "bough/" + slug + "/" + name }
 
@@ -131,6 +150,22 @@ func keychainRead(service string) (string, error) {
 		return "", fmt.Errorf("secrets: read %s: %w: %s", service, err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSuffix(stdout.String(), "\n"), nil
+}
+
+func keychainDelete(service string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, "/usr/bin/security", "delete-generic-password", "-s", service)
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 44 {
+			return nil
+		}
+		return fmt.Errorf("secrets: delete %s: %w: %s", service, err, strings.TrimSpace(out.String()))
+	}
+	return nil
 }
 
 // keychainWrite passes the command on stdin to `security -i`, so the value

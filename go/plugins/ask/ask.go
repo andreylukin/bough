@@ -9,6 +9,7 @@ package ask
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -70,6 +71,12 @@ type Asker struct {
 	// ask's id there times that ask out now. Test use only: a model test
 	// needs the timeout at a step it picks, and the real one is minutes.
 	expireDir string
+	// stepDir is BOUGH_TEST_SECRET_STEP_DIR: an answered tools.secret
+	// waits for <slug>.<NAME>.store there before the keychain write and
+	// for <slug>.<NAME>.set before project.yml, consuming each. Test use
+	// only: a model test puts a rename, a delete or another child's write
+	// between those steps.
+	stepDir string
 }
 
 // pend is one blocked ask: its answer channel, and whether the answer
@@ -229,17 +236,44 @@ func (a *Asker) secretVia(ask func(question string) (string, error), name, reaso
 		return "", fmt.Errorf("secret: user declined")
 	}
 	service := secrets.Service(slug, name)
+	a.step(slug, name, "store")
+	prev, prevErr := secrets.KeychainRead(service)
 	if err := secrets.Store(service, value); err != nil {
 		return "", fmt.Errorf("secret: store failed: %s", scrub(err.Error(), value))
 	}
 	ref := secrets.Ref(service)
+	a.step(slug, name, "set")
 	if err := projectdef.SetSecret(home, slug, name, ref); err != nil {
+		// Nothing references the value just stored (the project was
+		// deleted while the question was open, say): put back what the
+		// keychain held, or remove it, rather than leave it orphaned.
+		switch {
+		case prevErr == nil:
+			_ = secrets.Store(service, prev)
+		case errors.Is(prevErr, secrets.ErrNotFound):
+			_ = secrets.Delete(service)
+		}
 		return "", fmt.Errorf("secret: %s", scrub(err.Error(), value))
 	}
 	if a.project != slug {
 		return fmt.Sprintf("stored %s as %s; applies to project %s's next command or session", name, ref, slug), nil
 	}
 	return fmt.Sprintf("stored %s as %s; available to the next command", name, ref), nil
+}
+
+// step waits, under BOUGH_TEST_SECRET_STEP_DIR only, for the file that
+// lets tools.secret take its next step; it gives up after the ask
+// timeout rather than hang a child forever.
+func (a *Asker) step(slug, name, what string) {
+	if a.stepDir == "" {
+		return
+	}
+	file := filepath.Join(a.stepDir, slug+"."+name+"."+what)
+	for deadline := time.Now().Add(a.timeout); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if os.Remove(file) == nil {
+			return
+		}
+	}
 }
 
 // scrub is belt and braces: an error from a lower layer must not carry
@@ -267,7 +301,14 @@ func (a *Asker) Answer(id, text string) error {
 	}
 	if a.hist != nil {
 		if p.secret {
-			a.hist.Append("ask/answer", map[string]any{"id": id, "text": "[secret stored]", "secret": true})
+			// Written before the keychain or project.yml is touched, so it
+			// says only what is true now; the call's own result says
+			// stored, declined or failed.
+			said := "[secret received]"
+			if t := strings.TrimSpace(text); t == "" || t == "(declined)" {
+				said = "(declined)"
+			}
+			a.hist.Append("ask/answer", map[string]any{"id": id, "text": said, "secret": true})
 		} else {
 			a.hist.Append("ask/answer", map[string]any{"id": id, "text": text})
 		}
@@ -321,6 +362,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		timeout:   timeout,
 		code:      code,
 		expireDir: os.Getenv("BOUGH_TEST_ASK_EXPIRE_DIR"),
+		stepDir:   os.Getenv("BOUGH_TEST_SECRET_STEP_DIR"),
 		emit:      func(ev Event) { ctx.Emit("loop/event", ev) },
 	}
 	if h, err := kernel.Get[appender](ctx, "history"); err == nil {

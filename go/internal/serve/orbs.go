@@ -432,13 +432,27 @@ func (a *API) putOrbFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: %q is not an orb file (have %s)", name, strings.Join(projectdef.EditableFiles, ", ")))
 		return
 	}
+	// Base is the text the editor loaded. With it, a save made after
+	// another writer changed the file (a child's SetSecret, a rename) is
+	// refused rather than silently reverting that change.
 	var body struct {
-		Text string `json:"text"`
+		Text string  `json:"text"`
+		Base *string `json:"base"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	if err := projectdef.WriteFile(a.sup.Home(), p.Slug, name, body.Text); err != nil {
+	var err error
+	if body.Base != nil {
+		err = projectdef.WriteFileIf(a.sup.Home(), p.Slug, name, *body.Base, body.Text)
+	} else {
+		err = projectdef.WriteFile(a.sup.Home(), p.Slug, name, body.Text)
+	}
+	if errors.Is(err, projectdef.ErrStale) {
+		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: save %s/%s: %w", p.Slug, name, err))
+		return
+	}
+	if err != nil {
 		// A validation list is for the person at the editor; send it bare.
 		if inv := (*projectdef.Invalid)(nil); errors.As(err, &inv) {
 			writeErr(w, http.StatusBadRequest, inv)
