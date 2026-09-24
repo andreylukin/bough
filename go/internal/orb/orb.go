@@ -44,6 +44,7 @@ type Orb struct {
 	proxy    *proxy      // host egress for the guest; nil when it could not start
 	token    string      // proxy/relay token; "" for a container created before tokens
 	onResume func(State) // called under mu after each start settles; must not call back into o
+	retired  bool        // Replace swapped this orb out: it must never start its container again
 
 	secretWarned sync.Map // secret names already reported unresolved
 }
@@ -114,35 +115,57 @@ func (o *Orb) fail(err error) error {
 
 // Start is the container side of a start, after Prepare: the image, the
 // container (reused when the last state we wrote proves it runs this
-// image), then resume.sh.
+// image with this spec), then resume.sh.
 func (o *Orb) Start(ctx context.Context) error {
-	rt, home, p := o.rt, o.home, o.project
-	fail := o.fail
 	o.state.Status = StatusBuilding
 	o.state.begin(PhaseBuild)
-	writeState(home, o.state)
-	tag, err := EnsureImage(ctx, rt, home, p, nil)
+	writeState(o.home, o.state)
+	if err := o.build(ctx); err != nil {
+		return o.fail(err)
+	}
+	return o.run(ctx)
+}
+
+// build ensures the image and fixes the run spec it implies. It writes no
+// state.json and touches no container, so a restart can run it while the
+// old container keeps serving the session (Successor).
+func (o *Orb) build(ctx context.Context) error {
+	p := o.project
+	tag, err := EnsureImage(ctx, o.rt, o.home, p, nil)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	o.state.Image = tag
-	o.state.Status = StatusStarting
 	o.spec = container.RunSpec{
 		Name: o.state.Container, Image: tag, Mounts: o.mounts,
 		Env: o.baseEnv(), Workdir: o.state.Primary, CPUs: p.Def.CPUs, Memory: p.Def.Memory,
 	}
+	return nil
+}
+
+// run starts the container build fixed: reused when the last state we
+// wrote proves it was created with this image and this spec, else
+// created; then resume.sh.
+func (o *Orb) run(ctx context.Context) error {
+	rt, home, p := o.rt, o.home, o.project
+	fail := o.fail
+	tag := o.spec.Image
+	key := specKey(o.spec, p.Def.Ports)
+	o.state.Status = StatusStarting
 	o.state.begin(PhaseContainer)
 	writeState(home, o.state)
 	// An existing container is reused only when the last state we wrote
-	// proves it runs this tag: a missing or unreadable state.json says
-	// nothing about its image, mounts or env, and Start would silently
-	// restart it as it was. A failed Remove fails the open for the same
-	// reason.
+	// proves it runs this tag with this spec: a missing or unreadable
+	// state.json says nothing about its image, mounts or env, and Start
+	// would silently restart it as it was. A state from before the spec
+	// was recorded (Spec "") is trusted on its image alone, or upgrading
+	// bough would recreate every container once. A failed Remove fails
+	// the open for the same reason.
 	st, err := rt.Inspect(ctx, o.spec.Name)
 	if err != nil {
 		return fail(fmt.Errorf("inspect %s: %w", o.spec.Name, err))
 	}
-	if st != container.StateMissing && (o.prevErr != nil || o.prev.Image != tag) {
+	if st != container.StateMissing && (o.prevErr != nil || o.prev.Image != tag || (o.prev.Spec != "" && o.prev.Spec != key)) {
 		if err := rt.Remove(ctx, o.spec.Name); err != nil {
 			return fail(fmt.Errorf("remove stale %s: %w", o.spec.Name, err))
 		}
@@ -151,9 +174,11 @@ func (o *Orb) Start(ctx context.Context) error {
 	// A container's env is fixed at create: only a new one gets a new
 	// token; a reused one keeps the token (or the lack of one) it has.
 	if st == container.StateMissing {
+		o.state.Spec = key
 		err = o.newTokenLocked()
 		o.planPortsLocked()
 	} else {
+		o.state.Spec = o.prev.Spec
 		o.token, err = readToken(home, o.session)
 		o.setTokenEnvLocked()
 		o.keepPortsLocked(o.prev.Ports)
@@ -171,6 +196,7 @@ func (o *Orb) Start(ctx context.Context) error {
 			return fail(err)
 		}
 		o.state.Image, o.spec.Image = tag, tag
+		o.state.Spec = specKey(o.spec, p.Def.Ports)
 		writeState(home, o.state)
 		if err := startErr(rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 			return fail(err)
@@ -406,7 +432,7 @@ func (o *Orb) ensureProxyLocked(ctx context.Context) {
 	if err != nil || ip == nil || ip.IsLoopback() {
 		return
 	}
-	p, err := startProxy(ip.String(), o.token)
+	p, err := startProxy(ip.String(), o.token, o.Root())
 	if err != nil {
 		if o.rt.Name() != "fake" {
 			fmt.Fprintf(os.Stderr, "bough: orb: proxy on %s: %v\n", ip, err)
@@ -543,7 +569,16 @@ type guestKiller interface {
 	KillFunc(name string, cmd *exec.Cmd) func() error
 }
 
+// ErrReplaced is what a retired orb's exec fails with: the container
+// under its name now belongs to the orb that replaced it. A caller that
+// resolves the orb per call (the row's handle) retries through the orb
+// now behind it.
+var ErrReplaced = errors.New("orb replaced")
+
 func (o *Orb) ensureRunningLocked(ctx context.Context) error {
+	if o.retired {
+		return ErrReplaced
+	}
 	st, err := o.rt.Inspect(ctx, o.spec.Name)
 	if err != nil {
 		return err
@@ -579,6 +614,12 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 func (o *Orb) Stop(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	return o.stopLocked(ctx)
+}
+
+// stopLocked is Stop with o.mu held: Replace retires the orb in the same
+// critical section, so no exec can restart the container in between.
+func (o *Orb) stopLocked(ctx context.Context) error {
 	// Mark stopped first: jobs killed by the stop check StoppedSince as
 	// they exit, before the runtime says the container is down.
 	prev := o.state.Status

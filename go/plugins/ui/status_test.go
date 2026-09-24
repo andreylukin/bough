@@ -615,3 +615,15 @@ func TestStatusBarShowsOrbLine(t *testing.T) {
 		t.Errorf("status bar missing the orb line:\n%s", p)
 	}
 }
+
+// A restart waiting for the turn to end shows on the bar, so the person
+// knows why the container has not been swapped yet.
+func TestStatusBarShowsOrbRestartPending(t *testing.T) {
+	t.Parallel()
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.orb = fakeOrbLine("orb web · running · 10.0.0.2 · restart pending")
+	d := newDrv(t, 140, 24, cfg)
+	if p := d.plain(); !strings.Contains(p, "restart pending") {
+		t.Errorf("status bar missing the restart:\n%s", p)
+	}
+}

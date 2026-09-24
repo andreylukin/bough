@@ -64,7 +64,16 @@ type State struct {
 	IP        string            `json:"ip,omitempty"`        // the container's bridge address, set each start
 	Ports     []PortState       `json:"ports,omitempty"`     // project.yml ports as the container was created with them
 	Portals   []PortalState     `json:"portals,omitempty"`   // portals the owning session opened on the running container
-	UpdatedAt time.Time         `json:"updatedAt"`
+	// Spec is the key of the run spec the container was created with
+	// (specKey): a start or a restart recreates the container when the
+	// current definition's differs. "" for a container from before it
+	// was recorded.
+	Spec string `json:"spec,omitempty"`
+	// Restart is a requested restart in flight: RestartPending while it
+	// waits, RestartBuilding while the new image builds. The old
+	// container keeps running through both.
+	Restart   string    `json:"restart,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // PortState is one opted-in forward: 127.0.0.1:Host on the host to Guest
@@ -135,10 +144,17 @@ func PhaseLine(s State, now time.Time) string {
 	head := "orb " + s.Project + " · "
 	switch s.Status {
 	case StatusRunning:
+		line := head + "running"
 		if s.IP != "" {
-			return head + "running · " + s.IP
+			line += " · " + s.IP
 		}
-		return head + "running"
+		switch s.Restart {
+		case RestartPending:
+			line += " · restart pending"
+		case RestartBuilding:
+			line += " · rebuilding"
+		}
+		return line
 	case StatusStopped:
 		return head + string(s.Status)
 	case StatusFailed:
@@ -153,6 +169,12 @@ func PhaseLine(s State, now time.Time) string {
 	}
 	return head + "starting"
 }
+
+// The phases of a requested restart, as State.Restart records them.
+const (
+	RestartPending  = "pending"
+	RestartBuilding = "building"
+)
 
 const stateFile = "state.json"
 

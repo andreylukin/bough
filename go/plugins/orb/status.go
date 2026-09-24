@@ -21,10 +21,11 @@ type orbLike interface {
 	State() iorb.State
 	Root() string
 	Stop(context.Context) error
+	Restart(fresh bool, by string) string
 }
 
-// orbCommand is /orb in a project session: status, logs and stop, while
-// any other argument still runs the /orb setup skill.
+// orbCommand is /orb in a project session: status, logs, stop and
+// restart, while any other argument still runs the /orb setup skill.
 func orbCommand(o orbLike, home string, jobs func() []tools.Running) func(string) (string, error) {
 	return func(args string) (string, error) {
 		verb, rest, _ := strings.Cut(strings.TrimSpace(args), " ")
@@ -49,6 +50,26 @@ func orbCommand(o orbLike, home string, jobs func() []tools.Running) func(string
 				return "", err
 			}
 			return "orb stopped; the next command starts it again", nil
+		case "restart":
+			// Never refused the way stop is: the swap waits for the turn,
+			// and the notice says which jobs stopped.
+			fresh := false
+			switch strings.TrimSpace(rest) {
+			case "":
+			case "fresh":
+				fresh = true
+			default:
+				return "", fmt.Errorf("usage: /orb restart [fresh]")
+			}
+			text := o.Restart(fresh, "person")
+			if running := jobs(); len(running) > 0 {
+				names := make([]string, len(running))
+				for i, j := range running {
+					names[i] = j.Cmd
+				}
+				text += fmt.Sprintf(" %d running job(s) will stop: %s.", len(running), strings.Join(names, ", "))
+			}
+			return text, nil
 		}
 		return "", commands.SubmitAction(strings.TrimSpace("/orb " + args))
 	}

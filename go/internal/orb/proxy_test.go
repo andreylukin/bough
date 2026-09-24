@@ -22,7 +22,7 @@ func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; cat; echo oops >&2; exit 3\n"), 0o755)
-	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
+	p, err := startProxyBin("127.0.0.1", "", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestShimRelaysThroughHost(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; exit 2\n"), 0o755)
-	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
+	p, err := startProxyBin("127.0.0.1", "", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestShimNeedsOnlyBashAndBase64(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; cat; exit 0\n"), 0o755)
-	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
+	p, err := startProxyBin("127.0.0.1", "", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestProxyForwardsHTTPAndConnect(t *testing.T) {
 		fmt.Fprint(w, "hello "+r.URL.Path)
 	}))
 	defer up.Close()
-	p, err := startProxy("127.0.0.1", "")
+	p, err := startProxy("127.0.0.1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestProxyRequiresToken(t *testing.T) {
 		fmt.Fprint(w, "ok")
 	}))
 	defer up.Close()
-	p, err := startProxy("127.0.0.1", "s3cret-token")
+	p, err := startProxy("127.0.0.1", "s3cret-token", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestShimSendsToken(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho ok\n"), 0o755)
-	p, err := startProxyBin("127.0.0.1", "tok-12345", fakeBough(fake))
+	p, err := startProxyBin("127.0.0.1", "tok-12345", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,5 +319,151 @@ func TestShimSendsToken(t *testing.T) {
 	}
 	if out, err := run("BOUGH_ORB_TOKEN="); err == nil || !strings.Contains(out, "recreate") {
 		t.Fatalf("without token: %q %v", out, err)
+	}
+}
+
+// relayCI posts `bough ci` args with a guest cwd and returns the status,
+// and the fake host bough's stdout (its pwd and args) on a 200.
+func relayCI(t *testing.T, p *proxy, cwd string, args ...string) (int, string) {
+	t.Helper()
+	var b strings.Builder
+	for _, a := range args {
+		b.WriteString(base64.StdEncoding.EncodeToString([]byte(a)) + "\n")
+	}
+	b.WriteString("\n")
+	req, _ := http.NewRequest("POST", p.URL()+"/bough/exec", strings.NewReader(b.String()))
+	if cwd != "" {
+		req.Header.Set(relayCwdHeader, cwd)
+	}
+	client, closeIdle := ownClient()
+	defer closeIdle()
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return resp.StatusCode, string(raw)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	out, _ := base64.StdEncoding.DecodeString(lines[1])
+	return 200, string(out)
+}
+
+// A guest's `bough ci --no-wait` runs on the host in the guest's cwd,
+// which is the same path: worktrees are mounted at their host paths.
+func TestRelayCIRunsInGuestCwd(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\npwd -P; echo \"$*\"\n"), 0o755)
+	root := t.TempDir()
+	wt := filepath.Join(root, "repo", "sub")
+	os.MkdirAll(wt, 0o755)
+	p, err := startProxyBin("127.0.0.1", "", root, fakeBough(fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	realWT, _ := filepath.EvalSymlinks(wt)
+	for _, args := range [][]string{{"ci", "--no-wait"}, {"ci", "log", "vet"}, {"ci", "-no-wait=true", "--json"}} {
+		code, out := relayCI(t, p, wt, args...)
+		if code != 200 || !strings.HasPrefix(out, realWT+"\n") {
+			t.Fatalf("%v: %d %q (want pwd %s)", args, code, out, realWT)
+		}
+	}
+}
+
+func TestRelayCIRejectsRunsAndCwdOutsideRoot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho ran\n"), 0o755)
+	root := t.TempDir()
+	p, err := startProxyBin("127.0.0.1", "", root, fakeBough(fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	for _, tc := range []struct {
+		cwd  string
+		args []string
+		want string
+	}{
+		{root, []string{"ci"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait=false"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait", "--no-wait=false"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait", "-no-wait=0"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait", "--no-wait=bogus"}, "invalid boolean"},
+		{root, []string{"ci", "--no-wait", "--bogus"}, "not defined"},
+		{root, []string{"ci", "log", "vet", "--dir", "/"}, "--dir"},
+		{root, []string{"ci", "log", "vet", "-dir=/"}, "--dir"},
+		{root, []string{"ci", "--no-wait", "--dir", "/"}, "--dir"},
+		{t.TempDir(), []string{"ci", "--no-wait"}, "outside the orb"},
+		{filepath.Join(root, ".."), []string{"ci", "--no-wait"}, "outside the orb"},
+		{"", []string{"ci", "--no-wait"}, "outside the orb"},
+	} {
+		code, body := relayCI(t, p, tc.cwd, tc.args...)
+		if code != http.StatusForbidden || !strings.Contains(body, tc.want) {
+			t.Errorf("%v from %q: %d %q (want 403 %q)", tc.args, tc.cwd, code, body, tc.want)
+		}
+	}
+}
+
+// The shim sends its working directory, so `bough ci` in the guest is
+// about the checkout the agent's shell is in.
+func TestShimSendsCwd(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "host-bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\npwd -P\n"), 0o755)
+	root := t.TempDir()
+	p, err := startProxyBin("127.0.0.1", "", root, fakeBough(fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	scratch := t.TempDir()
+	if err := writeShim(scratch); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command(filepath.Join(shimDir(scratch), "bough"), "ci", "--no-wait")
+	c.Dir = root
+	c.Env = append(os.Environ(), "BOUGH_HOST="+p.URL())
+	out, err := c.Output()
+	realRoot, _ := filepath.EvalSymlinks(root)
+	if err != nil || strings.TrimSpace(string(out)) != realRoot {
+		t.Fatalf("shim ci: %q %v (want %s)", out, err, realRoot)
+	}
+}
+
+// A relayed command learns whose orb asked: `bough project restart` with
+// no session defaults to the caller's and records the agent as asking.
+func TestRelayPassesCallerSession(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "host-bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho \"s=$BOUGH_SESSION r=$BOUGH_RELAYED b=$AGENT_BROWSER_SESSION\"\n"), 0o755)
+	p, err := startProxyBin("127.0.0.1", "", t.TempDir(), fakeBough(fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	scratch := t.TempDir()
+	if err := writeShim(scratch); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command(filepath.Join(shimDir(scratch), "bough"), "project", "restart")
+	c.Env = append(os.Environ(), "BOUGH_HOST="+p.URL(), "BOUGH_SESSION=sess-7")
+	out, err := c.Output()
+	if err != nil || string(out) != "s=sess-7 r=1 b=sess-7\n" {
+		t.Fatalf("relayed env: %q %v", out, err)
 	}
 }

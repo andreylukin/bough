@@ -192,7 +192,7 @@ func (s configSource) describe() string {
 }
 
 // commands are the subcommands `bough <name>` dispatches to.
-var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true, "serve": true, "project": true, "loop": true, "browser": true}
+var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true, "serve": true, "project": true, "loop": true, "browser": true, "ci": true}
 
 // command splits argv into the subcommand (if any) and its args. A
 // first arg that is neither a flag nor a known subcommand is an error
@@ -310,6 +310,9 @@ func main() {
 		return
 	case "browser":
 		runBrowser(args)
+		return
+	case "ci":
+		runCI(args)
 		return
 	}
 	if pc, ok := kernel.FindCommand(cmd); ok && cmd != "" {
@@ -797,6 +800,8 @@ commands:
             build, status, logs, stop, rm, prune ("project --help")
   loop      run <pipeline.yml> [--detach] | status [id] | stop <id>:
             agent and check nodes routed by exit codes (docs/loops.md)
+  ci        run .bough/ci.yml's checks on a snapshot of the working tree,
+            rerunning only those whose inputs changed; "ci log <check>"
 
 config:
   ./bough.yml           project rows, overlaid on the embedded default

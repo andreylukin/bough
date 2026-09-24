@@ -229,3 +229,80 @@ func TestProjectListNoRepos(t *testing.T) {
 		t.Errorf("list:\n%s", out)
 	}
 }
+
+// restart writes the request a live session polls for, and says so;
+// relayed from an orb it defaults to the caller's session and records the
+// agent as asking. A session that is not running needs nothing: its next
+// start applies the definition.
+func TestProjectRestart(t *testing.T) {
+	home, _, run := orbFixture(t)
+	t.Setenv("BOUGH_SESSION", "")
+	t.Setenv("BOUGH_RELAYED", "")
+	if _, err := run("", "create", "web", "~/repos/web"); err != nil {
+		t.Fatal(err)
+	}
+	putState(t, home, orb.State{Session: "s1", Project: "web", Status: orb.StatusRunning, PID: os.Getpid()})
+	out, err := run("", "restart", "s1")
+	if err != nil || !strings.Contains(out, "Restart of orb s1 scheduled") {
+		t.Fatalf("restart = %q, %v", out, err)
+	}
+	if r, ok := orb.TakeRestart(home, "s1"); !ok || r.By != "cli" || r.Fresh {
+		t.Fatalf("request %+v %v", r, ok)
+	}
+
+	var b bytes.Buffer
+	if err := projectRestart(&b, home, []string{"--fresh"}, "s1", true); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := orb.TakeRestart(home, "s1"); !ok || r.By != "agent" || !r.Fresh {
+		t.Fatalf("relayed request %+v %v", r, ok)
+	}
+	if _, err := run("", "restart"); err == nil || !strings.Contains(err.Error(), "usage: bough project restart") {
+		t.Fatalf("no session = %v", err)
+	}
+
+	putState(t, home, orb.State{Session: "s2", Project: "web", Status: orb.StatusStopped})
+	if out, err := run("", "restart", "s2"); err != nil || !strings.Contains(out, "not running") {
+		t.Fatalf("dead owner = %q, %v", out, err)
+	}
+	if _, ok := orb.TakeRestart(home, "s2"); ok {
+		t.Fatal("request written for a session nobody runs")
+	}
+	if _, err := run("", "restart", "zzz"); err == nil || !strings.Contains(err.Error(), `no orb for session "zzz"`) {
+		t.Fatalf("unknown session = %v", err)
+	}
+	os.WriteFile(filepath.Join(projectdef.Root(home), "web", projectdef.FileYAML), []byte("repos: [\n"), 0o644)
+	if _, err := run("", "restart", "s1"); err == nil {
+		t.Fatal("an invalid project.yml was accepted")
+	}
+	if _, ok := orb.TakeRestart(home, "s1"); ok {
+		t.Fatal("request written for an invalid definition")
+	}
+}
+
+// --fresh for a session nobody runs cannot wait for a swap: the container
+// is removed now (worktrees stay), so the next start creates a new one.
+func TestProjectRestartFreshNotRunning(t *testing.T) {
+	home, rt, run := orbFixture(t)
+	t.Setenv("BOUGH_SESSION", "")
+	t.Setenv("BOUGH_RELAYED", "")
+	if _, err := run("", "create", "web", "~/repos/web"); err != nil {
+		t.Fatal(err)
+	}
+	putState(t, home, orb.State{Session: "s2", Project: "web", Status: orb.StatusStopped, Container: container.OrbName("s2")})
+	wt := filepath.Join(orb.Dir(home, "s2"), "web")
+	os.MkdirAll(wt, 0o755)
+	out, err := run("", "restart", "s2", "--fresh")
+	if err != nil || !strings.Contains(out, "removed its container") {
+		t.Fatalf("restart --fresh = %q, %v", out, err)
+	}
+	if calls := rt.CallList(); len(calls) != 1 || calls[0] != "remove "+container.OrbName("s2") {
+		t.Fatalf("runtime calls %v", calls)
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("worktree gone: %v", err)
+	}
+	if _, ok := orb.TakeRestart(home, "s2"); ok {
+		t.Fatal("request written for a session nobody runs")
+	}
+}

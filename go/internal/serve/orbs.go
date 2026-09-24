@@ -10,6 +10,7 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -125,6 +126,7 @@ func (a *API) routeOrbs() {
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/log", a.sessionOrbLog)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/build/log", a.sessionBuildLog)
 	a.mux.HandleFunc("POST /api/sessions/{id}/orb/stop", a.stopOrb)
+	a.mux.HandleFunc("POST /api/sessions/{id}/orb/restart", a.restartOrb)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/remove", a.removeOrbPlan)
 	a.mux.HandleFunc("DELETE /api/sessions/{id}/orb", a.removeOrb)
 }
@@ -673,6 +675,39 @@ func (a *API) stopOrb(w http.ResponseWriter, r *http.Request) {
 	}
 	a.forgetRunning() // the snapshot said it was up; it is not now
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// restartOrb asks a live session to apply its project's current
+// definition to its orb ({"fresh":true} recreates the container even when
+// nothing changed). Only the owning process can swap its orb, so this
+// writes the request file it polls: 202, scheduled. A session nobody runs
+// needs nothing — its next start applies the definition — so that is 200
+// with scheduled false.
+func (a *API) restartOrb(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := orb.ReadState(a.sup.Home(), id)
+	if err != nil || st.Session == "" {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: restart orb %q: no orb", id))
+		return
+	}
+	var body struct {
+		Fresh bool `json:"fresh"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: restart orb %q: %w", id, err))
+			return
+		}
+	}
+	if a.sup.childPID(id) == 0 && !a.ownerAlive(id, st) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "scheduled": false})
+		return
+	}
+	if err := orb.RequestRestart(a.sup.Home(), id, orb.RestartRequest{Fresh: body.Fresh, By: "web"}); err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: restart orb %q: %w", id, err))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "scheduled": true})
 }
 
 // createProjectSession starts a thread inside a project's orb. cwd is
