@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { OrbDetail, OrbFile, Project, Row } from "./types";
 import { api } from "./api";
 import { ProjectOrb, confirmStopOrb, removeOrbQuestion } from "./orb";
@@ -362,7 +362,12 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     return true;
   };
 
-  const createProject = async () => {
+  // Which New project… button asked. The list going empty (or not)
+  // while the dialog is up swaps that button for a fresh element, which
+  // the dialog cannot hand focus back to: the one now in its place takes it.
+  const newHead = useRef<HTMLButtonElement>(null);
+  const newEmpty = useRef<HTMLButtonElement>(null);
+  const createProject = async (from?: RefObject<HTMLButtonElement | null>) => {
     made.current = null;
     await askText("New project", { placeholder: "What is this work?", action: "Create",
       onSubmit: async (name) => {
@@ -373,6 +378,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
       } });
     // Done or cancelled, the next creation is a new project.
     made.current = null;
+    requestAnimationFrame(() => { if (document.activeElement === document.body) from?.current?.focus(); });
   };
 
   // Explicit: names the project after the repo, asks first, and files only that repo's unassigned sessions.
@@ -431,7 +437,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         {(projects.length > 0 || needle) && (
           <div className="head-side">
             {upTotal > 0 && <OrbUp n={upTotal} />}
-            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
+            <button ref={newHead} className="btn btn-primary" onClick={() => { void createProject(newHead); }}>New project…</button>
           </div>
         )}
       </header>
@@ -449,7 +455,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         {projects.length === 0 && !needle && (
           <div className="proj-empty-row">
             <p><b>No projects yet.</b> Group sessions from any repo under one name; moving a session doesn’t change it.</p>
-            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
+            <button ref={newEmpty} className="btn btn-primary" onClick={() => { void createProject(newEmpty); }}>New project…</button>
           </div>
         )}
 

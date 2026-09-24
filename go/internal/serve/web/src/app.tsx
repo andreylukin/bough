@@ -5016,7 +5016,10 @@ export default function App() {
     // Each read lands on its own: a projects outage must not freeze the
     // fleet. Only the fleet's freshness is reported, in one place.
     // Projects change by hand, rarely: a poll reads them every 30s, an action at once.
-    if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now(); api.projects().then(setProjects, () => {}); }
+    // An action's read is awaited whole: a dialog that closes on it must
+    // hand focus back to the list as it now is, not the one it replaces.
+    let projectsRead: Promise<void> | undefined;
+    if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now(); projectsRead = api.projects().then(setProjects, () => {}); }
     const seq = ++readSeq.current;
     inFlight.current = true;
     try {
@@ -5033,7 +5036,7 @@ export default function App() {
         api.session(open, lastSeq.current).then((r) => { if (openRef.current === open) setLooked(r.session); }, () => {});
       }
     } catch (e) { if (seq === readSeq.current) setLoadErr(e instanceof Error ? e.message : String(e)); }
-    finally { if (seq === readSeq.current) inFlight.current = false; }
+    finally { if (seq === readSeq.current) inFlight.current = false; if (!poll) await projectsRead; }
   }, [archived]);
 
   // While a session's event stream is open it carries that session's
