@@ -2377,6 +2377,7 @@ export function ToolCall({ code, result, calls = [], live, stopped, current, spa
  * the count says whether anything happened and the ledger is one click in.
  */
 const DECIDED: Record<string, string> = { block: "blocked", deny: "denied", allow: "allowed", ask: "asked", rewrite: "rewritten", approve: "approved" };
+const REFUSED = new Set(["block", "deny", "blocked", "denied"]);
 
 /** "Stop hooks" when every fire is one event, else "Hooks": the row says which part of the turn it belongs to. */
 function hookEventLabel(fires: Line[]): string {
@@ -2411,7 +2412,9 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
   }
   const parts = [`${fires.length || loose.length} ${fires.length ? "fired" : "notices"}`];
   const bad: string[] = [];
-  for (const [d, n] of outcomes) (d === "block" || d === "deny" ? bad : parts).push(`${n} ${DECIDED[d] ?? d}`);
+  // The ledger writes "blocked"/"denied"; testing only "block"/"deny"
+  // put every refusal in the grey count with no badge.
+  for (const [d, n] of outcomes) (REFUSED.has(d) ? bad : parts).push(`${n} ${DECIDED[d] ?? d}`);
   if (rules.size) parts.push(`${rules.size} ${rules.size === 1 ? "rule" : "rules"} applied`);
   return (
     <details className="block thin turn-hooks">
