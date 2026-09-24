@@ -160,6 +160,9 @@ func mountFakeRows(t *testing.T, files map[string]string, extra ...kernel.Row) (
 	}
 	t.Chdir(dir)
 	t.Setenv("BOUGH_LSP_FAKE", "1")
+	// The fake server is this race binary, whose runtime sleeps a second
+	// at exit by default, and Unmount waits for that exit.
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	t.Setenv(iorb.WriteRootsEnv, dir)
 	saved := languages
 	languages = []*language{{name: "fake", exts: map[string]string{".fake": "fake"}, markers: []string{"fake.toml"}, argv: [][]string{{os.Args[0]}}}}
