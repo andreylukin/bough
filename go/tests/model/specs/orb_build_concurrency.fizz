@@ -1,0 +1,364 @@
+---
+# Once the caps below are spent and every build has ended, nothing is left
+# to do: that is rest, not a deadlock.
+deadlock_detection: false
+---
+# One project's image built by more than one process at once: serve's
+# build goroutine (Projects → Orb "Build image", a session's "Rebuild") and
+# a session's child (orb.Start → EnsureImage), serialised by build.lock,
+# and the build state the two followers show while they race: the Orb
+# panel (GET /api/projects/{slug}/orb/build/log, projects.tsx) and the
+# session's build view (GET /api/sessions/{id}/orb/build-log, app.tsx
+# OrbBuildLog).
+#
+# Code: orb/image.go EnsureImage, FailedBuild, pruneImages; orb/orb.go
+# Start (the prune-then-rebuild-once retry); serve/orbs.go buildOrb,
+# buildLog, sessionBuildLog, orbState.
+#
+# Two definitions, A and B: an edit flips the project's hash and so its tag
+# (bough-orb/<slug>:<hash>). A failed build leaves its tag behind ("bad"),
+# the worst case EnsureImage has to guard against. Edits are capped at two
+# (enough to revert), kills at one and builds a person starts (POSTs and
+# session starts) at three: a person's actions are finite, which the
+# liveness claims need (every poller stops once nobody starts builds), and
+# the caps keep the graph small.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - EnsureImage checks the tag BEFORE the lock with the definition its
+#     caller loaded (serve: at the POST; a child: at open), and again under
+#     the lock after re-loading project.yml. Both checks are here
+#     (ServeSynced / ChildStart, then *Acquire).
+#   - "Start recovers" is the whole of the prune guard: pruneImages spares
+#     only tags a container uses, so a tag a child has resolved but not
+#     started is removable. orb.Start's rt.Start fails, ImageExists says
+#     missing, and it calls EnsureImage once more (which re-loads
+#     project.yml under the lock, so it may build the NEW definition), then
+#     starts on that; a second prune in that window fails the session.
+#   - A killed child's session keeps state.json "building" (orbState
+#     returns building as is, no owner check), so sessionBuildLog's
+#     "interrupted" rule does not fire for the session whose builder died:
+#     only a view whose session is not stuck building says interrupted.
+#   - sessionBuildLog never reads serve's buildErr, so a serve build that
+#     failed before build.json (SyncRepos) reads failed on the panel and
+#     the previous build's state in the session view.
+#   - Byte offsets (truncate + regrow) are not here: they multiply the
+#     graph by ~30 and are one follower's arithmetic, the same in the
+#     panel, the session view and the CLI's tailFile. See the notes of the
+#     change that added this spec for the glued-log counterexample.
+#   - A `bough project build` (CLI) is a builder like the child: same
+#     EnsureImage, no session. It is not a separate process here.
+#
+# Fields (role Project):
+#   defn     the definition's current hash: A | B; edits: edits so far
+#   starts   builds a person has asked for (POSTs, ChildStart) so far
+#   imga/b   the tag for A / B: none | good | bad (a failed build's leftover)
+#   jst, jh  build.json: state "" | building | ok | failed, and its hash
+#   s, sh    serve's goroutine: idle | sync (SyncRepos, first check to
+#            come with sh, the hash loaded at the POST) | wait (for the
+#            lock) | build (holds build.lock, building sh).
+#            building[slug] is s != idle
+#   serr     serve's buildErr[slug]
+#   k, kh    the session's child: idle (none, exited or failed) | wait (for
+#            the lock) | build (holds build.lock, building kh) | start
+#            (EnsureImage returned kh, rt.Start not run yet) | up (its
+#            container uses kh) | dead (killed in EnsureImage: flock
+#            released, state.json left "building")
+#   kretry   orb.Start already used its one rebuild after a missing tag
+#   killed   the child has been killed once
+#   dup      ghost: a build began for a tag that existed and had not failed
+#   kbad     ghost: EnsureImage returned a tag build.json says failed
+
+def img(p, h):
+    if h == "A":
+        return p.imga
+    return p.imgb
+
+# FailedBuild: build.json's state is failed AND describes this hash.
+def failed_for(p, h):
+    return p.jst == "failed" and p.jh == h
+
+# EnsureImage's early return, before and under the lock.
+def usable(p, h):
+    return img(p, h) != "none" and not failed_for(p, h)
+
+# build.lock is a flock: held exactly by the builder in build.
+def locked(p):
+    return p.s == "build" or p.k == "build"
+
+# A build.json "building" nobody is building: its builder died.
+def orphan(p):
+    return p.jst == "building" and not locked(p)
+
+def live(p):
+    return p.s != "idle" or p.k in ("wait", "build")
+
+# buildLog's (the panel's) state, in the handler's order.
+def panel_state(p):
+    st = p.jst
+    if p.serr:
+        st = "failed"
+    if p.s != "idle":
+        st = "building"
+    return st
+
+# The viewing session's orb status is building from orb.Start until it
+# writes starting, and for good once its child died there.
+def kid_building(p):
+    return p.k in ("wait", "build", "dead")
+
+# sessionBuildLog's state, for the child's own session.
+def session_state(p):
+    st = p.jst
+    if p.s != "idle":
+        st = "building"
+    elif st == "building" and not kid_building(p):
+        st = "interrupted"
+    return st
+
+role Project:
+    action Init:
+        self.defn = "A"
+        self.edits = 0
+        self.starts = 0
+        self.imga = "none"
+        self.imgb = "none"
+        self.jst = ""
+        self.jh = ""
+        self.s = "idle"
+        self.sh = ""
+        self.serr = False
+        self.k = "idle"
+        self.kh = ""
+        self.kretry = False
+        self.killed = False
+        self.dup = False
+        self.kbad = False
+
+    # project.yml saved (the editor or an agent's write): a new hash.
+    atomic action Edit:
+        require self.edits < 2
+        self.edits = self.edits + 1
+        self.defn = "B" if self.defn == "A" else "A"
+
+    # --- serve's build goroutine ---
+
+    # POST orb/build from the panel's "Build image" (disabled while the
+    # panel reads building) or the session view's "Rebuild" (offered once
+    # it stopped). A POST while the goroutine lives is a 409: no change.
+    atomic action BuildImage:
+        require self.starts < 3 and panel_state(self) != "building"
+        self.serve_post()
+
+    atomic action Rebuild:
+        require self.starts < 3 and session_state(self) != "building"
+        self.serve_post()
+
+    # SyncRepos failed: buildErr only, build.json untouched.
+    atomic fair action ServeSyncFail:
+        require self.s == "sync"
+        self.s = "idle"
+        self.sh = ""
+        self.serr = True
+
+    # EnsureImage's first check, with the definition loaded at the POST.
+    atomic fair action ServeSynced:
+        require self.s == "sync"
+        if usable(self, self.sh):
+            self.s = "idle"
+        else:
+            self.s = "wait"
+        self.sh = ""
+
+    # The lock: re-load project.yml, re-hash, re-check, else build.
+    atomic fair<strong> action ServeAcquire:
+        require self.s == "wait" and not locked(self)
+        if usable(self, self.defn):
+            self.s = "idle"
+        else:
+            self.s = "build"
+            self.sh = self.defn
+            self.begin(self.sh)
+
+    atomic fair action ServeBuildOk:
+        require self.s == "build"
+        self.build_ok(self.sh)
+        self.s = "idle"
+        self.sh = ""
+
+    atomic fair action ServeBuildFail:
+        require self.s == "build"
+        self.build_fail(self.sh)
+        self.s = "idle"
+        self.sh = ""
+        self.serr = True
+
+    # --- the session's child (orb.Start) ---
+
+    # A session starts or resumes: state.json building, then EnsureImage's
+    # first check with the definition loaded at open.
+    atomic action ChildStart:
+        require self.starts < 3 and self.k in ("idle", "dead")
+        self.starts = self.starts + 1
+        self.kretry = False
+        if usable(self, self.defn):
+            self.resolved(self.defn)
+        else:
+            self.k = "wait"
+
+    atomic fair<strong> action ChildAcquire:
+        require self.k == "wait" and not locked(self)
+        if usable(self, self.defn):
+            self.resolved(self.defn)
+        else:
+            self.k = "build"
+            self.kh = self.defn
+            self.begin(self.kh)
+
+    atomic fair action ChildBuildOk:
+        require self.k == "build"
+        self.build_ok(self.kh)
+        self.resolved(self.kh)
+
+    atomic fair action ChildBuildFail:
+        require self.k == "build"
+        self.build_fail(self.kh)
+        self.child_done()
+
+    # rt.Start on the resolved tag. Missing (pruned since): EnsureImage
+    # once more (from its first check), then fail.
+    atomic fair action ChildRun:
+        require self.k == "start"
+        if img(self, self.kh) != "none":
+            self.k = "up"
+            self.kretry = False
+        elif not self.kretry:
+            self.kretry = True
+            if usable(self, self.defn):
+                self.resolved(self.defn)
+            else:
+                self.k = "wait"
+                self.kh = ""
+        else:
+            self.child_done()
+
+    # The session ends: its container goes (orb Remove), so it no longer
+    # pins its tag against prune.
+    atomic action ChildExit:
+        require self.k == "up"
+        self.child_done()
+
+    # SIGKILL mid-EnsureImage (Kill, archive, serve's restart of its
+    # child): the flock goes with the process; build.json stays.
+    atomic action KillBuilder:
+        require not self.killed and self.k in ("wait", "build")
+        self.killed = True
+        self.k = "dead"
+        self.kh = ""
+        self.kretry = False
+
+    # --- helpers (atomic func: a plain func is a yield point) ---
+
+    atomic func serve_post():
+        self.starts = self.starts + 1
+        if self.s == "idle":
+            self.s = "sync"
+            self.sh = self.defn
+            self.serr = False
+
+    # Under the lock: truncate build.log, write build.json building.
+    atomic func begin(h):
+        self.dup = self.dup or usable(self, h)
+        self.jst = "building"
+        self.jh = h
+
+    # build.json ok, the lock released, then pruneImages: every other tag
+    # of the project that no container uses (only an up child's does).
+    atomic func build_ok(h):
+        self.set_img(h, "good")
+        self.jst = "ok"
+        for o in ["A", "B"]:
+            if o != h and not (self.k == "up" and self.kh == o):
+                self.set_img(o, "none")
+
+    atomic func build_fail(h):
+        self.set_img(h, "bad")
+        self.jst = "failed"
+
+    atomic func set_img(h, v):
+        if h == "A":
+            self.imga = v
+        else:
+            self.imgb = v
+
+    atomic func resolved(h):
+        self.kbad = self.kbad or (img(self, h) == "bad" and failed_for(self, h))
+        self.k = "start"
+        self.kh = h
+
+    atomic func child_done():
+        self.k = "idle"
+        self.kh = ""
+        self.kretry = False
+
+action Init:
+    project = Project()
+
+# build.lock: one build per project at a time, so no builder truncates a
+# log another is writing.
+always assertion OneBuild:
+    return not (project.s == "build" and project.k == "build")
+
+# The re-check under the lock: a waiter never rebuilds (and so never
+# truncates the log of) a tag a peer has just built.
+always assertion NoRebuildOfFreshTag:
+    return not project.dup
+
+# EnsureImage never hands out a tag whose failure build.json records when
+# it checks. Weaker than "a failed tag is never used", which the product
+# breaks twice (see notes): FailedBuild is keyed on the one hash
+# build.json describes, so a reverted definition runs its broken tag, and
+# a check made while that hash is being rebuilt (build.json "building")
+# returns the broken tag without waiting for the lock.
+always assertion NoKnownFailedTag:
+    return not project.kbad
+
+# Prune never leaves a session running on a tag that is gone (Start
+# rebuilds or fails).
+always assertion NoRunOnMissingTag:
+    p = project
+    return p.k != "up" or img(p, p.kh) != "none"
+
+# "building" is shown only for a live build, except the two leftovers of a
+# dead builder: the panel reads its build.json, and its own session reads
+# its state.json (see notes).
+always assertion BuildingMeansLive:
+    p = project
+    pan_ok = panel_state(p) != "building" or live(p) or orphan(p)
+    ses_ok = session_state(p) != "building" or live(p) or p.k == "dead"
+    return pan_ok and ses_ok
+
+# The panel and the session view say the same thing, except a serve
+# failure before build.json (only the panel sees buildErr) and a dead
+# builder's build.json (panel building, session interrupted).
+always assertion PanelSessionAgree:
+    p = project
+    a = panel_state(p)
+    b = session_state(p)
+    return a == b or (p.serr and p.s == "idle") or orphan(p)
+
+# Every EnsureImage (serve's, the child's, Start's retry) returns.
+always eventually assertion EnsureImageReturns:
+    return project.s == "idle" and project.k not in ("wait", "build", "start")
+
+# A live build leaves "building" (a dead builder's does not: see notes).
+always eventually assertion LiveBuildEnds:
+    return project.jst != "building" or not locked(project)
+
+# The panel's poller (projects.tsx) polls exactly while its endpoint says
+# building, so it stops unless a dead builder's build.json holds it.
+always eventually assertion PanelStopsPolling:
+    return panel_state(project) != "building" or orphan(project)
+
+# The session view's poller stops, unless its own child died building.
+always eventually assertion SessionStopsPolling:
+    return session_state(project) != "building" or project.k == "dead"
