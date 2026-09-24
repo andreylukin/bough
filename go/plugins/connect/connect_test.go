@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/andreylukin/bough/kernel"
@@ -119,6 +120,54 @@ func TestProviderWithoutKeySaysWhatToRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "/connect cerebras <key>") {
 		t.Errorf("it should say exactly what to run:\n%s", out)
+	}
+}
+
+// A dotfile-style `export KEY=` line is the same variable: kept, the file
+// had two lines for it, the key check read the new one and every session
+// (the env loader takes the first) the old one.
+func TestWriteKeyReplacesExportLine(t *testing.T) {
+	t.Parallel()
+	path := envFile(t)
+	if err := os.WriteFile(path, []byte("export ANTHROPIC_API_KEY=old\nOPENAI_API_KEY=q\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeKey(path, "ANTHROPIC_API_KEY", "new"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	if got := string(b); got != "OPENAI_API_KEY=q\nANTHROPIC_API_KEY=new\n" {
+		t.Errorf("env file = %q, want the export line replaced", got)
+	}
+}
+
+// serve's welcome and another tab (or /connect in a terminal) can save
+// two providers at once: each save must keep the other's line, and none
+// may fail on the other's temp file.
+func TestWriteKeyConcurrentSavesKeepEveryProvider(t *testing.T) {
+	t.Parallel()
+	path := envFile(t)
+	envs := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY"}
+	for round := range 20 {
+		os.Remove(path)
+		var wg sync.WaitGroup
+		errs := make(chan error, len(envs))
+		for _, env := range envs {
+			wg.Go(func() { errs <- writeKey(path, env, "k") })
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		b, _ := os.ReadFile(path)
+		for _, env := range envs {
+			if !strings.Contains(string(b), env+"=k") {
+				t.Fatalf("round %d: %s's line lost: %q", round, env, b)
+			}
+		}
 	}
 }
 
