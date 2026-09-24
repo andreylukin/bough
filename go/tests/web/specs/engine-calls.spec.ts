@@ -19,12 +19,13 @@ import { test as base, expect } from '../helpers/fixtures';
 import { boughBin, freePort } from '../helpers/bough';
 
 const SID = '2026-09-22T10-00-00-00001';
+const SID_RUNNING = '2026-09-22T09-00-00-00001';
 const jsonl = (...entries: unknown[]) => entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
 const t = (s: number) => new Date(Date.UTC(2026, 8, 22, 10, 0, s)).toISOString();
 
 // What the projector records for an engine turn: string call ids, no code
 // blocks, a done that left one call running, and the wake turn it started.
-const transcript = jsonl(
+const entries = [
   { seq: 1, at: t(0), kind: 'meta', data: { cwd: '/w' } },
   { seq: 2, at: t(0), kind: 'input', data: { text: 'Run the tests and build in the background' } },
   { seq: 3, at: t(1), kind: 'engine', data: { engine: 'unreal', model: 'claude-opus-5-5', provider: 'anthropic' } },
@@ -38,7 +39,10 @@ const transcript = jsonl(
   { seq: 11, at: t(91), kind: 'input', data: { text: '[background call toolu_c finished]', wake: true, reason: 'call', calls: ['toolu_c'] } },
   { seq: 12, at: t(92), kind: 'assistant', data: { text: 'The build passed.', hseq: 13 } },
   { seq: 13, at: t(93), kind: 'done', data: { wake: true } },
-);
+];
+const transcript = jsonl(...entries);
+// The same session read before the build reported: its call is still out.
+const running = jsonl(...entries.filter((e) => e.seq <= 8));
 
 interface Serve { url: string; home: string; cwd: string }
 
@@ -51,6 +55,7 @@ const test = base.extend<{ serve: Serve; overlay: string }>({
     fs.mkdirSync(path.join(cwd, '.git'), { recursive: true });
     fs.mkdirSync(path.join(home, '.bough', 'history'), { recursive: true });
     fs.writeFileSync(path.join(home, '.bough', 'history', `${SID}.jsonl`), transcript);
+    fs.writeFileSync(path.join(home, '.bough', 'history', `${SID_RUNNING}.jsonl`), running);
     fs.writeFileSync(path.join(home, '.bough', 'bough.yml'), overlay.replaceAll('$ROOT', root));
     const addr = `127.0.0.1:${await freePort()}`;
     const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
@@ -84,8 +89,8 @@ test('a recorded engine turn: call rows open onto output, a wake turn is a quiet
   // The engine's build record is provenance, not conversation.
   await expect(page.locator('.turn').getByText('unreal', { exact: true })).toHaveCount(0);
 
-  // The turn that left a call running says so, and leads to Work.
-  await expect(page.getByRole('button', { name: '1 call still running' })).toBeVisible();
+  // The build reported (seq 9), so the turn that left it running no longer says it is.
+  await expect(page.getByRole('button', { name: /still running/ })).toHaveCount(0);
 
   // The wake turn opens on a quiet line, holding the call that finished.
   const wake = page.locator('.call-wake');
@@ -106,6 +111,12 @@ test('a recorded engine turn: call rows open onto output, a wake turn is a quiet
   await build.evaluate((el) => { for (let d = el.parentElement?.closest('details'); d; d = d.parentElement?.closest('details')) (d as HTMLDetailsElement).open = true; });
   await build.locator('summary').click();
   await expect(page.getByText('SENTINEL_BUILD_OUTPUT')).toBeVisible();
+});
+
+test('a turn that left a call running says so until the call reports, and leads to Work', async ({ page, serve }) => {
+  await page.goto(`${serve.url}/#/s/${SID_RUNNING}`);
+  await expect(page.getByText('Fixed the parser; the build runs on in the background.')).toBeVisible();
+  await expect(page.getByRole('button', { name: '1 call still running' })).toBeVisible();
 });
 
 // The live half needs an engine-unreal row that mounts in this binary.
