@@ -3990,13 +3990,25 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // Shown only while you have scrolled away from the end, so reading
   // history during a live turn has a way back that does not yank you.
   const [away, setAway] = useState(false);
+  // A jump to the latest under way. Its smooth scroll passes through
+  // "not at the end" on its way there, and each of those scroll events
+  // used to drop the stick: a fragment or a record arriving meanwhile
+  // moved the end past where the jump was headed, and the jump stopped
+  // short with "New activity" back on screen. Only the reader's own
+  // wheel, touch or pointer ends it early.
+  const jumping = useRef(false);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     // A slack of a couple of lines: "near the bottom" is what a reader
     // means by "at the bottom", and an exact test loses the stick the
     // moment a fragment arrives a pixel early.
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (jumping.current) {
+      if (!near) return;
+      jumping.current = false;
+    }
+    atBottom.current = near;
     if (!loading) scrollMemo.set(row.id, { top: el.scrollTop, follow: atBottom.current });
     // What was recorded when you left, so the button can say something new arrived.
     if (!atBottom.current && !away) awayAt.current = newest;
@@ -4007,6 +4019,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const [down, setDown] = useState(false);
   const toStart = () => {
     atBottom.current = false;
+    jumping.current = false;
     const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     scroller.current?.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
   };
@@ -4015,6 +4028,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     atBottom.current = true; setAway(false);
     scrollMemo.delete(row.id);
     const still = instant || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    jumping.current = !still;
     end.current?.scrollIntoView({ block: "end", behavior: still ? "auto" : "smooth" });
   };
   // More than a screen from the end: a smooth scroll would crawl, so jump.
@@ -4068,6 +4082,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     if (e.key === "End") { e.preventDefault(); toLatest(); return; }
     if (by[e.key] === undefined) return;
     e.preventDefault();
+    jumping.current = false;
     el.scrollBy({ top: by[e.key] });
   };
   // Coming back to a session lands where you were reading. One that was
@@ -4667,6 +4682,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
       {orbView === "build" && row.orb && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
+           // The scrollbar is the scroller's own pointerdown; a click on a row scrolls nothing.
+           onWheel={() => { jumping.current = false; }} onTouchMove={() => { jumping.current = false; }} onPointerDown={(e) => { if (e.target === e.currentTarget) jumping.current = false; }}
            onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}
            tabIndex={0} role="region" aria-label="Transcript">
         {loading && loadError && (
