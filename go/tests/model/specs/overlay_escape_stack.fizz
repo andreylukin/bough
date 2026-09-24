@@ -1,0 +1,325 @@
+# The layers a person stacks over session A's page, and which one each
+# Escape closes (go/tests/model/README.md). The second half of the
+# overlay_stack_navigation flow: that spec has one modal while the route
+# changes; this one has one route family (A's thread and its two
+# sub-pages) and the whole stack, with a turn running under it and an
+# IME composing in the composer. Each other spec covers Escape for its
+# own layer only.
+#
+# This spec is the CONTRACT, not a transcript of the code: where the code
+# does something else today, the comment on that action says so, and the
+# mutation that models the code fails one of the claims below. The web
+# code (go/internal/serve/web/src):
+#   app.tsx      usePopovers (2789-2811): the strip's Details, Escape on
+#                the window's CAPTURE phase with stopPropagation; the
+#                Settings popover (3914-3935): Escape on the window's
+#                capture phase too, yielding only to an open Select
+#                (.sel-open); escStops (3733-3735): Escape in the
+#                composer stops a running turn unless a picker is open
+#                or an IME composes; the sub-page guard (5473-5484):
+#                Escape on #/s/A/context or /portal returns to the thread
+#                unless a field has focus or one of .dlg-scrim, .sel-pop,
+#                .skills-pop, .mention is in the DOM.
+#   select.tsx   the Select's Escape (150): React, stopPropagation.
+#   work-ui.tsx  the Work sheet: aria-modal, Escape on the window capture
+#                phase (478-485).
+#   mention.tsx  the composer's @ popup (185-190): Escape closes it.
+#   dialog.tsx   DialogHost's Escape (224): in the box, React.
+#   palette.tsx  the palette's Escape (538): React, no stopPropagation.
+#   portal.tsx   the URL field's Escape (161): reverts and blurs, with no
+#                preventDefault.
+#
+# Fields:
+#   page     "A" (A's thread), "Actx" (its Context page, #/s/A/context)
+#            or "Aportal" (its portal pane beside the thread,
+#            #/s/A/portal). A sub-page replaces the history entry
+#            (hashToReplace), so no history here.
+#   stack    the layers up, comma-joined, bottom first:
+#              details   the runtime strip's Details disclosure
+#              settings  Session settings (head-pop)
+#              picker    the next-turn model Select inside Settings
+#              work      the Work sheet (aria-modal)
+#              mention   the composer's @ popup
+#              url       the portal URL field, being edited
+#              palette   the ⌘K palette (aria-modal)
+#              archive   askConfirm "Archive this session?" (DialogHost)
+#   opener   where focus goes when the one modal closes: "page",
+#            "layer" (the layer under it), "composer", "field" or "gone"
+#            (a palette pick nulls it); "" with no modal up.
+#   focus    "page" (a control on the page), "layer" (inside the top
+#            layer), "composer", "field" (the URL field), "app" (.app).
+#   running  a turn runs; stopped: the last one was stopped by Escape.
+#   composing  an IME composition is open in the composer.
+#   escaping   the person is pressing Escape until the page is plain.
+#
+# The contract this asks of the code: one Escape closes exactly the top
+# layer; the URL field's Escape is its own; a closing layer never drops
+# focus to <body>.
+#
+# Abstractions:
+# - Layers open by keyboard keep the non-modal ones under them (a click's
+#   mousedown would close them): that is how Details stays open under
+#   Settings, the Work sheet, a dialog or the palette. Opening by click is
+#   then the same step from the empty stack.
+# - The Work sheet and Settings open on A's thread only; the URL field on
+#   the portal pane only; the palette over "", Details, Settings or the
+#   URL field; the archive confirm from Settings (which closes Settings
+#   first) or a palette pick. Other dialogs (?, rename, delete) are the
+#   same DialogHost layer: overlay_stack_navigation.fizz has them.
+# - Confirm on the archive dialog is Escape here: which subject it acts
+#   on is the other spec's claim.
+# - The IME takes Escape itself (keydown says "Process"), which ends the
+#   composition: that is ComposeEnd.
+#
+# Fairness: Escape is weakly fair, and so are the turn ending (TurnEnds)
+# and the IME's end (ComposeEnd). The person's other actions are not.
+# EscapeRun is the person deciding to press Escape until the page is
+# plain: while it holds no other action of theirs is enabled, and the
+# liveness claim is that the run always ends.
+
+MODALS = ("work", "palette", "archive")
+
+def layers(s):
+    if s == "":
+        return []
+    return s.split(",")
+
+def top(s):
+    l = layers(s)
+    if len(l) == 0:
+        return ""
+    return l[-1]
+
+def pop(s):
+    return ",".join(layers(s)[:-1])
+
+def push(s, x):
+    if s == "":
+        return x
+    return s + "," + x
+
+def modal_of(s):
+    for l in layers(s):
+        if l in MODALS:
+            return l
+    return ""
+
+# Where focus lands when a modal closes onto the rest of the stack: into
+# the layer left on top when it holds focus, else the opener, or .app
+# when the opener is gone. The code checks isConnected and otherwise
+# leaves <body> (dialog.tsx 154, palette.tsx 350).
+def land(opener, rest):
+    t = top(rest)
+    if t in ("settings", "picker"):
+        return "layer"
+    if t == "url":
+        return "field"
+    if opener == "gone":
+        return "app"
+    return opener
+
+# The person's own steps wait for an IME composition to end, and only
+# Escape is theirs while they press it to the plain page.
+def quiet(p):
+    return not p.escaping and not p.composing
+
+role Page:
+    action Init:
+        self.page = "A"
+        self.stack = ""
+        self.opener = ""
+        self.focus = "page"
+        self.running = False
+        self.stopped = False
+        self.composing = False
+        self.escaping = False
+
+    # ---- opening layers ------------------------------------------------
+
+    atomic action OpenDetails:
+        require quiet(self) and self.page == "A" and self.stack == ""
+        self.stack = "details"
+        self.focus = "page"
+
+    atomic action OpenSettings:
+        require quiet(self) and self.page == "A" and self.stack in ("", "details")
+        self.stack = push(self.stack, "settings")
+        self.focus = "layer"
+
+    atomic action OpenPicker:
+        require quiet(self) and top(self.stack) == "settings"
+        self.stack = push(self.stack, "picker")
+        self.focus = "layer"
+
+    atomic action OpenWork:
+        require quiet(self) and self.page == "A" and self.stack in ("", "details")
+        self.opener = "page"
+        self.stack = push(self.stack, "work")
+        self.focus = "layer"
+
+    # ⌥I: focus to the composer; Details stays open.
+    atomic action FocusComposer:
+        require quiet(self) and self.page == "A" and self.stack in ("", "details") and self.focus != "composer"
+        self.focus = "composer"
+
+    atomic action TypeMention:
+        require quiet(self) and self.focus == "composer" and self.stack in ("", "details")
+        self.stack = push(self.stack, "mention")
+
+    atomic action ComposeStart:
+        require quiet(self) and self.focus == "composer" and self.stack in ("", "details")
+        self.composing = True
+
+    atomic fair action ComposeEnd:
+        require self.composing
+        self.composing = False
+
+    atomic action Send:
+        require quiet(self) and self.page == "A" and self.stack == "" and self.focus == "composer" and not self.running
+        self.running = True
+        self.stopped = False
+
+    atomic fair action TurnEnds:
+        require self.running
+        self.running = False
+
+    # Settings > Archive...: closeMore(true) closes Settings first and
+    # leaves its button (on the page) as the opener.
+    atomic action ArchiveMenu:
+        require quiet(self) and top(self.stack) == "settings"
+        self.stack = push(pop(self.stack), "archive")
+        self.opener = "page"
+        self.focus = "layer"
+
+    atomic action EditUrl:
+        require quiet(self) and self.page == "Aportal" and self.stack == ""
+        self.stack = "url"
+        self.focus = "field"
+
+    atomic action CmdK:
+        require quiet(self) and self.stack in ("", "details", "settings", "url")
+        self.opener = self.focus
+        self.stack = push(self.stack, "palette")
+        self.focus = "layer"
+
+    # A palette pick closes it, nulls its opener, then asks.
+    atomic action PickArchive:
+        require quiet(self) and top(self.stack) == "palette"
+        self.stack = push(pop(self.stack), "archive")
+        self.opener = "gone"
+        self.focus = "layer"
+
+    # The thread header's Context and Portal buttons (only with nothing
+    # modal up; their click closes the non-modal layers).
+    atomic action OpenContext:
+        require quiet(self) and self.page == "A" and modal_of(self.stack) == ""
+        self.page = "Actx"
+        self.stack = ""
+        self.focus = "page"
+
+    atomic action OpenPortal:
+        require quiet(self) and self.page == "A" and modal_of(self.stack) == ""
+        self.page = "Aportal"
+        self.stack = ""
+        self.focus = "page"
+
+    # ---- Escape ----------------------------------------------------------
+
+    atomic action EscapeRun:
+        require quiet(self) and self.stack != ""
+        self.escaping = True
+
+    # One Escape closes exactly the top layer. CODE: usePopovers and the
+    # Settings popover both listen on the window's capture phase, and
+    # stopPropagation does not stop a second listener on the same target:
+    # "details,settings" loses both at once. Over Details the capture
+    # listener runs first and stops the event, so on "details,work",
+    # "details,palette", "details,archive" Escape closes Details under
+    # the modal and the modal stays; on "settings,palette" it closes
+    # Settings AND the palette (the palette's handler is React, later).
+    # The URL field reverts and blurs without preventDefault, and the
+    # sub-page guard then sees no field focused and leaves the portal.
+    atomic fair action Escape:
+        require self.stack != "" and not self.composing
+        t = top(self.stack)
+        self.stack = pop(self.stack)
+        if t in MODALS:
+            self.focus = land(self.opener, self.stack)
+            self.opener = ""
+        elif t == "picker":
+            self.focus = "layer"
+        elif t == "mention":
+            self.focus = "composer"
+        else:
+            # Details' summary, the Settings button, the portal pane.
+            self.focus = "page"
+        if self.stack == "":
+            self.escaping = False
+
+    # Escape with nothing open on a sub-page returns to the thread.
+    atomic action EscapeSub:
+        require quiet(self) and self.page in ("Actx", "Aportal") and self.stack == "" and self.focus != "field"
+        self.page = "A"
+        self.focus = "app"
+
+    # Escape in the composer with nothing open stops the running turn.
+    atomic action EscapeStop:
+        require quiet(self) and self.page == "A" and self.stack == "" and self.focus == "composer" and self.running
+        self.running = False
+        self.stopped = True
+
+action Init:
+    page = Page()
+
+# At most one aria-modal surface, and nothing stacks above it.
+always assertion OneModal:
+    n = 0
+    for l in layers(page.stack):
+        if l in MODALS:
+            n += 1
+    m = modal_of(page.stack)
+    return n <= 1 and (m == "" or top(page.stack) == m)
+
+# Focus is in the top layer when that layer takes it, and never in a
+# layer that is not up.
+always assertion FocusWithLayers:
+    t = top(page.stack)
+    if t in MODALS or t in ("settings", "picker"):
+        return page.focus == "layer"
+    if t == "url":
+        return page.focus == "field"
+    if t == "mention":
+        return page.focus == "composer"
+    return page.focus not in ("layer", "field")
+
+# A step that closes layers without leaving the page closes exactly the
+# top one.
+transition assertion EscapeTopOnly(before, after):
+    b = layers(before.page.stack)
+    a = layers(after.page.stack)
+    if after.page.page == before.page.page and len(a) < len(b):
+        return after.page.stack == pop(before.page.stack)
+    return True
+
+# Escape never stops a turn while a layer is open or an IME composes.
+transition assertion StopOnlyWhenPlain(before, after):
+    if after.page.stopped and not before.page.stopped:
+        return before.page.stack == "" and not before.page.composing and before.page.focus == "composer"
+    return True
+
+# Escape on a sub-page returns to the thread only when nothing on it is
+# open.
+transition assertion SubEscapeOnlyWhenPlain(before, after):
+    if before.page.page in ("Actx", "Aportal") and after.page.page == "A":
+        return before.page.stack == ""
+    return True
+
+# Liveness: pressing Escape again and again from any stack reaches the
+# plain page.
+always eventually assertion EscapeReachesPlain:
+    return not page.escaping
+
+# A closing layer never drops focus to <body>: it lands on the opener,
+# the layer under it, or .app.
+always assertion FocusNeverBody:
+    return page.focus != "body"
