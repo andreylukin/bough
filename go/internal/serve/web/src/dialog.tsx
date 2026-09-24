@@ -262,7 +262,10 @@ export function DialogView({ req, text, saving, failed, onText: setText, onSubmi
             <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
                     onClick={() => finish(a)}>{a}</button>
           )) : <button ref={ok} className={"btn " + (req.danger ? "btn-danger" : "btn-primary")}
-                  disabled={blocked || saving} onClick={submit}>
+                  // Busy, not disabled, while saving: disabling the focused
+                  // button dropped focus to <body>, so a refused save left
+                  // the keyboard nowhere. submit ignores a press meanwhile.
+                  disabled={blocked} aria-disabled={saving || undefined} onClick={submit}>
             {saving ? req.action.replace(/e?$/, "ing…") : req.action}
           </button>}
         </div>

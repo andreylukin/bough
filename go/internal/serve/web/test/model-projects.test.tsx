@@ -157,7 +157,10 @@ test("every ui_projects node renders what it promises", () => {
     at("Cancel and a primary", buttons.length === 2);
     const [cancel, primary] = buttons;
     at("Cancel disabled iff saving", cancel.includes('disabled=""') === n.saving && cancel.includes(">Cancel<"));
-    at("primary disabled iff blocked or saving", primary.includes('disabled=""') === (n.saving || n.draft === "blocked"));
+    // Busy is aria-disabled, not disabled: disabling the focused button
+    // dropped focus to <body> (ui_dialogs walk).
+    at("primary disabled iff blocked", / disabled=""/.test(primary) === (n.draft === "blocked"));
+    at("primary aria-disabled iff saving", primary.includes('aria-disabled="true"') === n.saving);
     at("delete's primary is the danger one", primary.includes("btn-danger") === (n.dialog === "delete"));
     const label = n.saving ? { create: "Creating…", rename: "Renaming…" }[n.dialog]
       : { create: "Create", rename: "Rename", delete: "Delete project" }[n.dialog];

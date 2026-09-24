@@ -882,14 +882,17 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           const dup = (r: Row) => (seen.get(nameKey(r)) ?? 0) > 1;
           return (
             <div role="group">
-              {fresh.map((r) => session(r, dup(r)))}
-              {older.length > 0 && (
-                <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
+              {/* One keyed list: a row that moves between fresh and older
+                  (opening it untucks it) is moved, not remounted, so the
+                  click that opened it keeps focus. */}
+              {[...fresh.map((r) => session(r, dup(r))),
+                older.length > 0 && (
+                <button key="older" type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
                         onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
                   <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} ${more}` : `${older.length} ${more}`}
                 </button>
-              )}
-              {olderOpen && older.map((r) => session(r, dup(r)))}
+              ),
+                ...(olderOpen ? older.map((r) => session(r, dup(r))) : [])]}
               {/* A long expansion folds from its foot too, so the way back is never a scroll away. */}
               {olderOpen && older.length > 8 && (
                 <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
@@ -5083,6 +5086,9 @@ export default function App() {
   // opened never overwrites the one that includes it.
   const readSeq = useRef(0);
   const projectsAt = useRef(0);
+  // The projects list too: a poll's read that left before a delete must
+  // not land after the delete's own read and bring the project back.
+  const projectsSeq = useRef(0);
   // A poll never stacks on a read still out: one list request at a time.
   const inFlight = useRef(false);
   const refresh = useCallback(async (poll = false) => {
@@ -5093,7 +5099,9 @@ export default function App() {
     // An action's read is awaited whole: a dialog that closes on it must
     // hand focus back to the list as it now is, not the one it replaces.
     let projectsRead: Promise<void> | undefined;
-    if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now(); projectsRead = api.projects().then(setProjects, () => {}); }
+    if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now();
+      const pseq = ++projectsSeq.current;
+      projectsRead = api.projects().then((ps) => { if (pseq === projectsSeq.current) setProjects(ps); }, () => {}); }
     const seq = ++readSeq.current;
     inFlight.current = true;
     try {
@@ -5117,10 +5125,14 @@ export default function App() {
   // changes, so the list poll slows down.
   const streaming = selected !== null;
   const mountedRefresh = useRef(false);
+  const lastRefresh = useRef(refresh);
   useEffect(() => {
     // The first read is the mount's; a later change (Archived) reads at once too.
-    if (!mountedRefresh.current || !streaming) void refresh();
+    // Only a stream opening waits for the poll: opening Archived with a
+    // session open used to say "Loading archived…" for the whole 12 s.
+    if (!mountedRefresh.current || !streaming || lastRefresh.current !== refresh) void refresh();
     mountedRefresh.current = true;
+    lastRefresh.current = refresh;
     // A hidden tab does not poll; coming back reads at once.
     const t = setInterval(() => { if (!document.hidden) void refresh(true); }, streaming ? POLL_MS * 3 : POLL_MS);
     const back = () => { if (!document.hidden) void refresh(true); };
