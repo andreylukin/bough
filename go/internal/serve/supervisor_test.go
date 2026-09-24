@@ -476,6 +476,40 @@ func TestSupervisorSendAdoptsAndAskBlocksSend(t *testing.T) {
 	}
 }
 
+// An ask that returns with no answer (a timeout) disarms on the event
+// StatusOf reads: the row says running again, and a /prompt then must
+// steer rather than be refused as answering a question nobody waits on.
+// A call's live start and another tool's end leave the ask armed.
+// Found by tests/model/mbt/ask_answer_test.go (AskPlain, Resolve).
+func TestSupervisorAskEndWithoutAnswerDisarms(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	emit := func(kind, text string, extra map[string]any) {
+		f.sup.mu.Lock()
+		f.sup.emitLocked("sess-end", kind, text, extra)
+		f.sup.mu.Unlock()
+	}
+	for _, end := range []struct {
+		kind  string
+		extra map[string]any
+	}{
+		{"call", map[string]any{"tool": "ask", "id": "c1", "error": "ask: no answer after 10m0s"}},
+		{"call", map[string]any{"tool": "secret", "id": "c1", "error": "secret: ask: no answer after 10m0s"}},
+		{"result", nil},
+	} {
+		emit("ask", "which?", map[string]any{"id": "ask-1"})
+		emit("call", "which?", map[string]any{"tool": "ask", "id": "c1", "phase": "start"})
+		emit("call", "ls", map[string]any{"tool": "bash", "id": "c0"})
+		if f.sup.PendingAsk("sess-end") == nil {
+			t.Fatalf("%s: a live start or another tool's end disarmed the ask", end.kind)
+		}
+		emit(end.kind, "", end.extra)
+		if a := f.sup.PendingAsk("sess-end"); a != nil {
+			t.Fatalf("after %s %v the ask is still armed: %+v", end.kind, end.extra["tool"], a)
+		}
+	}
+}
+
 func TestSupervisorNonJSONStdoutIsSurfaced(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNoise+"=1")

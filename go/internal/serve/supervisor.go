@@ -866,6 +866,14 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 		// The turn (or the process) ended: stop routing stdin to an
 		// ask nobody is waiting on any more.
 		delete(s.asks, id)
+	case "result", "call":
+		// The ask returned with no answer (a timeout): a code block's
+		// result, or the native ask or secret call's end. StatusOf stops
+		// showing it on the same entry, and an arm kept past it refused
+		// every /prompt with 409 while the row offered to steer.
+		if kind == "result" || (extra["phase"] != "start" && (extra["tool"] == "ask" || extra["tool"] == "secret")) {
+			delete(s.asks, id)
+		}
 	}
 	s.childEventLocked(id, kind, extra)
 

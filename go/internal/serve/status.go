@@ -101,8 +101,10 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 		case "call":
 			// The engine's native ask is a call, not a block: its end is
 			// the same signal a result is above (answered, timed out or
-			// cancelled), and a timeout records no ask/answer.
-			if str(e.Data["tool"]) == "ask" {
+			// cancelled), and a timeout records no ask/answer. The native
+			// secret asks the same way, and a timed-out one kept the page
+			// on needs-you for a question nothing waited on.
+			if t := str(e.Data["tool"]); t == "ask" || t == "secret" {
 				pending = nil
 			}
 		case "done", "cancelled":

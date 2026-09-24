@@ -229,6 +229,13 @@ func hlPrint(ev Event) {
 		hlAsk = nil
 		hlMu.Unlock()
 	}
+	if askEnded(ev) {
+		// The ask returned with no answer (a timeout): the next line is
+		// a steer again, not an answer Asker.Answer would refuse and lose.
+		hlMu.Lock()
+		hlAsk = nil
+		hlMu.Unlock()
+	}
 	switch ev.Kind {
 	case "error":
 		// Held until the turn ends: a failed code block is followed by the
@@ -341,6 +348,21 @@ func drainEngine() {
 			return
 		}
 	}
+}
+
+// askEnded reports an event that means the pending ask has returned,
+// answered or not: a code block's result (tools.ask blocks its block),
+// or the recorded end of the engine's native ask or secret call. serve's
+// StatusOf and its arm read the same events.
+func askEnded(ev Event) bool {
+	if ev.Kind == "result" {
+		return true
+	}
+	if ev.Kind != "call" || ev.Data["phase"] == "start" {
+		return false
+	}
+	t, _ := ev.Data["tool"].(string)
+	return t == "ask" || t == "secret"
 }
 
 // hlLineIn routes one stdin line.

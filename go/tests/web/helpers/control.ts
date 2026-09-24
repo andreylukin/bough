@@ -9,10 +9,13 @@ import * as path from 'path';
 export const CONTROL_CONFIG = '- id: llm\n  plugin: llm-control\n';
 
 export interface Turn {
-  mode: 'ok' | 'error' | 'slow' | 'block';
+  /** "call": the response is one call of tool with args (e.g. ask). */
+  mode: 'ok' | 'error' | 'slow' | 'block' | 'call';
   text?: string;
   error?: string;
   delay_ms?: number;
+  tool?: string;
+  args?: Record<string, unknown>;
 }
 
 /** The control dir the row reads when its config names none. */

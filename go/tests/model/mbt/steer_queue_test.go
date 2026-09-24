@@ -831,7 +831,7 @@ func TestSteerQueuePaths(t *testing.T) {
 			a := newSteerQueueAdapter(t)
 			acts := steerQueueActions(a)
 			for i := sh; i < len(paths); i += shards {
-				walkPath(t, a, acts, i, paths[i])
+				walkSteerPath(t, a, acts, i, paths[i])
 			}
 			t.Logf("shard %d: %v", sh, a.stats)
 			g, err := tracecheck.Load(filepath.Join(specPath("x"), "..", "..", "testdata", "steer_queue"))
@@ -867,10 +867,10 @@ func loadPaths(t *testing.T, spec string) []genPath {
 	return f.Paths
 }
 
-// walkPath runs one generated path from Init, failing on the first step
+// walkSteerPath runs one generated path from Init, failing on the first step
 // whose action errs, is refused by the adapter's own require, or leaves
 // a state other than the path's.
-func walkPath(t *testing.T, a *steerQueueAdapter, acts map[string]map[string]fmbt.ActionFunc, n int, p genPath) {
+func walkSteerPath(t *testing.T, a *steerQueueAdapter, acts map[string]map[string]fmbt.ActionFunc, n int, p genPath) {
 	t.Helper()
 	defer a.Cleanup()
 	if err := a.Init(); err != nil {

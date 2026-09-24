@@ -17,15 +17,18 @@ import (
 	"time"
 )
 
-// Turn is one queued model response. Mode is "ok", "error", "slow" or
-// "block". Call, on a release, answers with that tool call after Text,
-// so the turn goes on instead of ending.
+// Turn is one queued model response. Mode is "ok", "error", "slow",
+// "block" or "call" (one call of Tool with Args, e.g. tools.ask). Call,
+// on a release, answers with that tool call after Text, so the turn
+// goes on instead of ending.
 type Turn struct {
-	Mode    string `json:"mode"`
-	Text    string `json:"text,omitempty"`
-	Error   string `json:"error,omitempty"`
-	DelayMS int    `json:"delay_ms,omitempty"`
-	Call    *Call  `json:"call,omitempty"`
+	Mode    string         `json:"mode"`
+	Text    string         `json:"text,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	DelayMS int            `json:"delay_ms,omitempty"`
+	Call    *Call          `json:"call,omitempty"`
+	Tool    string         `json:"tool,omitempty"`
+	Args    map[string]any `json:"args,omitempty"`
 }
 
 // Call is a tool call the model makes: a native tool by name, with its

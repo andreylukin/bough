@@ -179,6 +179,22 @@ func TestStatusOfEngineAsk(t *testing.T) {
 	}
 }
 
+// The native secret is the same shape: its call ending without an
+// answer (a timeout) leaves nothing waiting on you. Found by
+// tests/model/mbt/ask_answer_test.go (AskSecret then Resolve).
+func TestStatusOfEngineSecretTimeout(t *testing.T) {
+	t.Parallel()
+	ask := ent(3, "ask", map[string]any{"id": "ask-2", "question": "Secret TOKEN for p1: why", "secret": true})
+	base := entries(ent(1, "input", text("x")), ask)
+	if st, _ := StatusOf(base, true); st != StatusNeedsYou {
+		t.Fatalf("armed: %s, want needs-you", st)
+	}
+	timedOut := append(append([]history.Entry{}, base...), ent(4, "call", map[string]any{"tool": "secret", "text": "TOKEN", "id": "c1", "error": "secret: ask: no answer after 10m0s"}))
+	if st, a := StatusOf(timedOut, true); st != StatusRunning || a != nil {
+		t.Fatalf("timed out: %s %+v, want running with no ask", st, a)
+	}
+}
+
 func TestLastModelFromEngineEntry(t *testing.T) {
 	t.Parallel()
 	es := entries(

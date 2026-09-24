@@ -14,7 +14,8 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 | `{"mode":"ok","text":"done"}` | finishes with `text` |
 | `{"mode":"error","error":"boom"}` | fails; the turn errors and headless exits 1 |
 | `{"mode":"slow","text":"a b c","delay_ms":300}` | streams `text` a word per `delay_ms` |
-| `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it, `{"call":{"name":"ask","args":{...}}}` answers with that tool call) |
+| `{"mode":"call","tool":"ask","args":{"question":"why?"}}` | answers with one call of `tool`; its result goes out on the next request, which takes the next queued turn |
+| `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it, `{"call":{"name":"ask","args":{...}}}` answers with that tool call after its text, `{"mode":"call",…}` makes the call) |
 
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
