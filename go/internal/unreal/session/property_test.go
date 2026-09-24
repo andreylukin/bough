@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
@@ -106,144 +107,154 @@ func newHoldKit(t *rapid.T) *holdKit {
 // something new is said.
 func TestDoneAccountingProperty(t *testing.T) {
 	t.Parallel()
-	rapid.Check(t, func(rt *rapid.T) {
-		dir := t.TempDir()
-		h, err := history.Open(filepath.Join(dir, "history", "p.jsonl"))
-		if err != nil {
-			rt.Fatal(err)
-		}
-		defer h.Close()
-		model := &reactive{}
-		kit := newHoldKit(rt)
-		jobs := &fakeJobs{wake: make(chan struct{}, 1)}
-		short := rapid.Bool().Draw(rt, "short_settle")
-		settleFor := time.Minute
-		if short {
-			settleFor = 30 * time.Millisecond
-		}
-		r, err := Open(context.Background(), Deps{
-			SessionID: "p",
-			Store:     filepath.Join(dir, "engine"),
-			Scratch:   func() string { return filepath.Join(dir, "scratch") },
-			Cwd:       dir,
-			Config: Config{TurnSettle: settleFor, CallTimeout: time.Minute,
-				SteerInterrupts: rapid.Bool().Draw(rt, "steer_interrupts")},
-			LLM:     func() (agentllm.Source, string, error) { return model, "fake", nil },
-			Tools:   kit.reg,
-			Jobs:    func() Jobs { return jobs },
-			History: h,
-		})
-		if err != nil {
-			rt.Fatal(err)
-		}
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = r.Close(ctx)
-		}()
+	// The bubble's fake clock runs the settle, SLOW, wait and
+	// after-cancel sleeps (~4s a run in real time) instantly, and the
+	// after-cancel check sees every goroutine parked instead of racing
+	// a 50ms window. What remains is the harness store's fsync on every
+	// append, ~3ms each on macOS (F_FULLFSYNC, serialised per device):
+	// ~5s here for 100 runs, well under 1s where fsync is cheap. rapid
+	// gets the T wrapped because it calls T.Deadline, which panics in a
+	// bubble.
+	synctest.Test(t, func(t *testing.T) {
+		rapid.Check(struct{ testing.TB }{t}, func(rt *rapid.T) {
+			dir := t.TempDir()
+			h, err := history.Open(filepath.Join(dir, "history", "p.jsonl"))
+			if err != nil {
+				rt.Fatal(err)
+			}
+			defer h.Close()
+			model := &reactive{}
+			kit := newHoldKit(rt)
+			jobs := &fakeJobs{wake: make(chan struct{}, 1)}
+			short := rapid.Bool().Draw(rt, "short_settle")
+			settleFor := time.Minute
+			if short {
+				settleFor = 30 * time.Millisecond
+			}
+			r, err := Open(context.Background(), Deps{
+				SessionID: "p",
+				Store:     filepath.Join(dir, "engine"),
+				Scratch:   func() string { return filepath.Join(dir, "scratch") },
+				Cwd:       dir,
+				Config: Config{TurnSettle: settleFor, CallTimeout: time.Minute,
+					SteerInterrupts: rapid.Bool().Draw(rt, "steer_interrupts")},
+				LLM:     func() (agentllm.Source, string, error) { return model, "fake", nil },
+				Tools:   kit.reg,
+				Jobs:    func() Jobs { return jobs },
+				History: h,
+			})
+			if err != nil {
+				rt.Fatal(err)
+			}
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = r.Close(ctx)
+			}()
 
-		submits := 0
-		// A steer Steer accepted can still find its turn closed by the
-		// time the actor takes it; it then runs as an input of its own.
-		accepted := map[string]bool{}
-		ops := rapid.SliceOfN(rapid.SampledFrom([]string{
-			"text", "hold", "echo", "fail", "slow", "steer", "cancel", "release", "notice", "wait",
-		}), 1, 10).Draw(rt, "ops")
-		for i, op := range ops {
-			line := fmt.Sprintf("line%d", i)
-			switch op {
-			case "text", "hold", "echo", "fail", "slow":
-				r.Submit(line + " " + strings.ToUpper(op))
-				submits++
-			case "steer":
-				// What ui does: a refused steer is sent as input.
-				if !r.Steer(line + " steer") {
-					r.Submit(line + " steer")
+			submits := 0
+			// A steer Steer accepted can still find its turn closed by the
+			// time the actor takes it; it then runs as an input of its own.
+			accepted := map[string]bool{}
+			ops := rapid.SliceOfN(rapid.SampledFrom([]string{
+				"text", "hold", "echo", "fail", "slow", "steer", "cancel", "release", "notice", "wait",
+			}), 1, 10).Draw(rt, "ops")
+			for i, op := range ops {
+				line := fmt.Sprintf("line%d", i)
+				switch op {
+				case "text", "hold", "echo", "fail", "slow":
+					r.Submit(line + " " + strings.ToUpper(op))
 					submits++
-				} else {
-					accepted[line+" steer"] = true
-				}
-			case "cancel":
-				r.Cancel()
-				if !short {
-					// With nothing adopted, only something new said after
-					// the cancel — a line queued behind the cancelled
-					// turn, a notice — may call the model; each of those
-					// records its input first. A request already on its
-					// way when the cancel landed gets 50ms to show up.
-					time.Sleep(50 * time.Millisecond)
-					before := model.requests.Load()
-					if saidNothingSince(h.Entries()) {
-						time.Sleep(100 * time.Millisecond)
-						if after := model.requests.Load(); after != before && saidNothingSince(h.Entries()) {
-							rt.Fatalf("%d provider requests after a cancel with nothing new said\n%s", after-before, dumpEntries(h.Entries()))
+				case "steer":
+					// What ui does: a refused steer is sent as input.
+					if !r.Steer(line + " steer") {
+						r.Submit(line + " steer")
+						submits++
+					} else {
+						accepted[line+" steer"] = true
+					}
+				case "cancel":
+					r.Cancel()
+					if !short {
+						// With nothing adopted, only something new said after
+						// the cancel — a line queued behind the cancelled
+						// turn, a notice — may call the model; each of those
+						// records its input first. A request already on its
+						// way when the cancel landed gets 50ms to show up.
+						time.Sleep(50 * time.Millisecond)
+						before := model.requests.Load()
+						if saidNothingSince(h.Entries()) {
+							time.Sleep(100 * time.Millisecond)
+							if after := model.requests.Load(); after != before && saidNothingSince(h.Entries()) {
+								rt.Fatalf("%d provider requests after a cancel with nothing new said\n%s", after-before, dumpEntries(h.Entries()))
+							}
 						}
 					}
+				case "release":
+					kit.rel <- struct{}{}
+				case "notice":
+					jobs.notify("news " + line)
+				case "wait":
+					time.Sleep(time.Duration(rapid.IntRange(1, 60).Draw(rt, "ms")) * time.Millisecond)
 				}
-			case "release":
-				kit.rel <- struct{}{}
-			case "notice":
-				jobs.notify("news " + line)
-			case "wait":
-				time.Sleep(time.Duration(rapid.IntRange(1, 60).Draw(rt, "ms")) * time.Millisecond)
 			}
-		}
-		close(kit.all)
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		// A notice reaches the actor through the watch goroutine, so a
-		// Drain can run before it. Once the actor has taken every notice
-		// (Take runs on the actor), a Drain queued after that sees the
-		// turn it opened.
-		for {
-			jobs.mu.Lock()
-			left := len(jobs.news)
-			jobs.mu.Unlock()
-			if left == 0 {
-				break
+			close(kit.all)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			// A notice reaches the actor through the watch goroutine, so a
+			// Drain can run before it. Once the actor has taken every notice
+			// (Take runs on the actor), a Drain queued after that sees the
+			// turn it opened.
+			for {
+				jobs.mu.Lock()
+				left := len(jobs.news)
+				jobs.mu.Unlock()
+				if left == 0 {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		if err := r.Drain(ctx); err != nil {
-			rt.Fatalf("drain: %v\n%s", err, dumpEntries(h.Entries()))
-		}
+			if err := r.Drain(ctx); err != nil {
+				rt.Fatalf("drain: %v\n%s", err, dumpEntries(h.Entries()))
+			}
 
-		es := h.Entries()
-		pending, wakes, inputs := 0, 0, 0
-		for i, e := range es {
-			switch e.Kind {
-			case "input":
-				switch {
-				case e.Data["steer"] == true:
-				case e.Data["wake"] == true:
-					wakes++
-				default:
-					pending++
-					if !accepted[fmt.Sprint(e.Data["text"])] {
-						inputs++
+			es := h.Entries()
+			pending, wakes, inputs := 0, 0, 0
+			for i, e := range es {
+				switch e.Kind {
+				case "input":
+					switch {
+					case e.Data["steer"] == true:
+					case e.Data["wake"] == true:
+						wakes++
+					default:
+						pending++
+						if !accepted[fmt.Sprint(e.Data["text"])] {
+							inputs++
+						}
+					}
+				case "done":
+					if e.Data["wake"] == true {
+						wakes--
+					} else {
+						pending--
+					}
+					if pending < 0 || wakes < 0 {
+						rt.Fatalf("a done with no turn open at entry %d\n%s", e.Seq, dumpEntries(es))
+					}
+				case "cancelled":
+					if i+1 >= len(es) || es[i+1].Kind != "done" {
+						rt.Fatalf("cancelled at entry %d is not followed by done\n%s", e.Seq, dumpEntries(es))
 					}
 				}
-			case "done":
-				if e.Data["wake"] == true {
-					wakes--
-				} else {
-					pending--
-				}
-				if pending < 0 || wakes < 0 {
-					rt.Fatalf("a done with no turn open at entry %d\n%s", e.Seq, dumpEntries(es))
-				}
-			case "cancelled":
-				if i+1 >= len(es) || es[i+1].Kind != "done" {
-					rt.Fatalf("cancelled at entry %d is not followed by done\n%s", e.Seq, dumpEntries(es))
-				}
 			}
-		}
-		if pending != 0 || wakes != 0 {
-			rt.Fatalf("%d turns and %d wakes never got their done\n%s", pending, wakes, dumpEntries(es))
-		}
-		if inputs != submits {
-			rt.Fatalf("%d lines submitted, %d recorded as turns\n%s", submits, inputs, dumpEntries(es))
-		}
+			if pending != 0 || wakes != 0 {
+				rt.Fatalf("%d turns and %d wakes never got their done\n%s", pending, wakes, dumpEntries(es))
+			}
+			if inputs != submits {
+				rt.Fatalf("%d lines submitted, %d recorded as turns\n%s", submits, inputs, dumpEntries(es))
+			}
+		})
 	})
 }
 

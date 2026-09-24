@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/unreallabsai/unreal-agent/harness/contextbuilder"
@@ -163,6 +164,10 @@ func (e *env) of(kind sessionstore.ItemKind) []sessionstore.Item {
 	return out
 }
 
+// waitFor and stays sleep on the fake clock when the test runs inside
+// synctest.Test, as every test that waits out the 1s grace does: the
+// clock only moves once the coordinator is parked, so a gap measured on
+// RecordedAt is the grace itself rather than the grace plus scheduling.
 func (e *env) waitFor(what string, cond func() bool) {
 	e.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -204,19 +209,21 @@ func results(r ullm.Request) map[string]string {
 // into one request.
 func TestCompletionsInGraceAreOneRequest(t *testing.T) {
 	t.Parallel()
-	f := fake.New(t,
-		fake.Step{Output: []ullm.Item{fake.Call("a", "echo", `{"text":"a"}`), fake.Call("b", "echo", `{"text":"b"}`)}},
-		fake.Step{Output: []ullm.Item{fake.Text("both")}},
-	)
-	e := newEnv(t, f)
-	e.start()
-	e.submit("in1", "go")
-	e.waitFor("two requests", func() bool { return len(f.Requests()) == 2 })
-	e.stays("two requests", 1500*time.Millisecond, func() bool { return len(f.Requests()) == 2 })
-	got := results(f.Requests()[1].Request)
-	if !strings.HasPrefix(got["a"], "echoed") || !strings.HasPrefix(got["b"], "echoed") {
-		t.Fatalf("second request results = %v", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		f := fake.New(t,
+			fake.Step{Output: []ullm.Item{fake.Call("a", "echo", `{"text":"a"}`), fake.Call("b", "echo", `{"text":"b"}`)}},
+			fake.Step{Output: []ullm.Item{fake.Text("both")}},
+		)
+		e := newEnv(t, f)
+		e.start()
+		e.submit("in1", "go")
+		e.waitFor("two requests", func() bool { return len(f.Requests()) == 2 })
+		e.stays("two requests", 1500*time.Millisecond, func() bool { return len(f.Requests()) == 2 })
+		got := results(f.Requests()[1].Request)
+		if !strings.HasPrefix(got["a"], "echoed") || !strings.HasPrefix(got["b"], "echoed") {
+			t.Fatalf("second request results = %v", got)
+		}
+	})
 }
 
 // 1b. A completion inside grace plus a call still running when grace
@@ -224,103 +231,111 @@ func TestCompletionsInGraceAreOneRequest(t *testing.T) {
 // as a placeholder; the model is not called again until it finishes.
 func TestGraceExpiryIsOneRequestWithAPlaceholder(t *testing.T) {
 	t.Parallel()
-	f := fake.New(t,
-		fake.Step{Output: []ullm.Item{fake.Call("a", "echo", `{"text":"a"}`), fake.Call("h", "hold", `{"text":"h"}`)}},
-		fake.Step{Output: []ullm.Item{fake.Text("waiting")}},
-		fake.Step{Output: []ullm.Item{fake.Text("finished")}},
-	)
-	e := newEnv(t, f)
-	e.start()
-	e.submit("in1", "go")
-	e.waitFor("the second request", func() bool { return len(f.Requests()) == 2 })
-	turns := e.of(sessionstore.ItemTurn)
-	resp := e.of(sessionstore.ItemModelResponse)
-	if len(turns) != 2 || len(resp) < 1 {
-		t.Fatalf("%d turns, %d responses", len(turns), len(resp))
-	}
-	gap := turns[1].RecordedAt.Sub(resp[0].RecordedAt)
-	if gap < 800*time.Millisecond || gap > 3*time.Second {
-		t.Fatalf("second request %v after the response, want about the 1s grace", gap)
-	}
-	got := results(f.Requests()[1].Request)
-	if !strings.HasPrefix(got["a"], "echoed") {
-		t.Fatalf("echo result = %q", got["a"])
-	}
-	if got["h"] == "" || got["h"] == "released" {
-		t.Fatalf("hold should be a running placeholder, got %q", got["h"])
-	}
-	e.stays("no request while hold runs", 1200*time.Millisecond, func() bool { return len(f.Requests()) == 2 })
-	close(e.hold)
-	e.waitFor("the completion's request", func() bool { return len(f.Requests()) == 3 })
-	if got := results(f.Requests()[2].Request)["h"]; got != "released" && !strings.Contains(got, "released") {
-		t.Fatalf("late result = %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		f := fake.New(t,
+			fake.Step{Output: []ullm.Item{fake.Call("a", "echo", `{"text":"a"}`), fake.Call("h", "hold", `{"text":"h"}`)}},
+			fake.Step{Output: []ullm.Item{fake.Text("waiting")}},
+			fake.Step{Output: []ullm.Item{fake.Text("finished")}},
+		)
+		e := newEnv(t, f)
+		e.start()
+		e.submit("in1", "go")
+		e.waitFor("the second request", func() bool { return len(f.Requests()) == 2 })
+		turns := e.of(sessionstore.ItemTurn)
+		resp := e.of(sessionstore.ItemModelResponse)
+		if len(turns) != 2 || len(resp) < 1 {
+			t.Fatalf("%d turns, %d responses", len(turns), len(resp))
+		}
+		gap := turns[1].RecordedAt.Sub(resp[0].RecordedAt)
+		if gap < 800*time.Millisecond || gap > 3*time.Second {
+			t.Fatalf("second request %v after the response, want about the 1s grace", gap)
+		}
+		got := results(f.Requests()[1].Request)
+		if !strings.HasPrefix(got["a"], "echoed") {
+			t.Fatalf("echo result = %q", got["a"])
+		}
+		if got["h"] == "" || got["h"] == "released" {
+			t.Fatalf("hold should be a running placeholder, got %q", got["h"])
+		}
+		e.stays("no request while hold runs", 1200*time.Millisecond, func() bool { return len(f.Requests()) == 2 })
+		close(e.hold)
+		e.waitFor("the completion's request", func() bool { return len(f.Requests()) == 3 })
+		if got := results(f.Requests()[2].Request)["h"]; got != "released" && !strings.Contains(got, "released") {
+			t.Fatalf("late result = %q", got)
+		}
+	})
 }
 
 // 2. A reply with no tool calls and nothing pending leaves the
 // coordinator idle until the next input.
 func TestTextReplyLeavesItIdle(t *testing.T) {
 	t.Parallel()
-	f := fake.New(t, fake.Step{Output: []ullm.Item{fake.Text("hi")}}, fake.Step{Output: []ullm.Item{fake.Text("again")}})
-	e := newEnv(t, f)
-	e.start()
-	e.submit("in1", "hello")
-	e.waitFor("one request", func() bool { return len(f.Requests()) == 1 })
-	e.stays("idle", 1500*time.Millisecond, func() bool { return len(f.Requests()) == 1 })
-	e.submit("in2", "more")
-	e.waitFor("the next input's request", func() bool { return len(f.Requests()) == 2 })
+	synctest.Test(t, func(t *testing.T) {
+		f := fake.New(t, fake.Step{Output: []ullm.Item{fake.Text("hi")}}, fake.Step{Output: []ullm.Item{fake.Text("again")}})
+		e := newEnv(t, f)
+		e.start()
+		e.submit("in1", "hello")
+		e.waitFor("one request", func() bool { return len(f.Requests()) == 1 })
+		e.stays("idle", 1500*time.Millisecond, func() bool { return len(f.Requests()) == 1 })
+		e.submit("in2", "more")
+		e.waitFor("the next input's request", func() bool { return len(f.Requests()) == 2 })
+	})
 }
 
 // 3. An empty completed Response — what the Gate answers for a cancel,
 // an error or a muted request — is persisted and treated as idle.
 func TestEmptyResponseIsPersistedAndIdle(t *testing.T) {
 	t.Parallel()
-	f := fake.New(t, fake.Step{}, fake.Step{Output: []ullm.Item{fake.Text("back")}})
-	e := newEnv(t, f)
-	e.start()
-	e.submit("in1", "hello")
-	e.waitFor("the empty response", func() bool { return len(e.of(sessionstore.ItemModelResponse)) == 1 })
-	mr := e.of(sessionstore.ItemModelResponse)[0].Data.(sessionstore.ModelResponse)
-	if len(mr.Response.Output) != 0 || mr.Response.Stop != ullm.StopComplete {
-		t.Fatalf("persisted %+v", mr.Response)
-	}
-	e.stays("idle", 1500*time.Millisecond, func() bool { return len(f.Requests()) == 1 })
-	e.submit("in2", "more")
-	e.waitFor("the next request", func() bool { return len(f.Requests()) == 2 })
+	synctest.Test(t, func(t *testing.T) {
+		f := fake.New(t, fake.Step{}, fake.Step{Output: []ullm.Item{fake.Text("back")}})
+		e := newEnv(t, f)
+		e.start()
+		e.submit("in1", "hello")
+		e.waitFor("the empty response", func() bool { return len(e.of(sessionstore.ItemModelResponse)) == 1 })
+		mr := e.of(sessionstore.ItemModelResponse)[0].Data.(sessionstore.ModelResponse)
+		if len(mr.Response.Output) != 0 || mr.Response.Stop != ullm.StopComplete {
+			t.Fatalf("persisted %+v", mr.Response)
+		}
+		e.stays("idle", 1500*time.Millisecond, func() bool { return len(f.Requests()) == 1 })
+		e.submit("in2", "more")
+		e.waitFor("the next request", func() bool { return len(f.Requests()) == 2 })
+	})
 }
 
 // 4. LocalOperationManager.Add of a known id returns nil and emits
 // nothing, even after the op finished — the reason ops.Manager exists.
 func TestLocalManagerDropsAKnownAdd(t *testing.T) {
 	t.Parallel()
-	h := &stepHandler{updates: make(chan operation.Operation, 4), added: make(chan operation.Operation, 4)}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	m := operation.NewLocalOperationManager(ctx, h)
-	op := newOp(t, "op1")
-	if err := m.Add(op); err != nil {
-		t.Fatal(err)
-	}
-	accepted := <-h.added
-	h.finish(t, accepted)
-	select {
-	case got := <-m.Updates():
-		if got.Status != operation.StatusCompleted {
-			t.Fatalf("status %s", got.Status)
+	synctest.Test(t, func(t *testing.T) {
+		h := &stepHandler{updates: make(chan operation.Operation, 4), added: make(chan operation.Operation, 4)}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		m := operation.NewLocalOperationManager(ctx, h)
+		op := newOp(t, "op1")
+		if err := m.Add(op); err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no terminal update")
-	}
-	if err := m.Add(op); err != nil {
-		t.Fatalf("re-Add = %v, want nil", err)
-	}
-	select {
-	case got := <-m.Updates():
-		t.Fatalf("re-Add emitted %s %s", got.ID, got.Status)
-	case <-h.added:
-		t.Fatal("re-Add reached the handler")
-	case <-time.After(300 * time.Millisecond):
-	}
+		accepted := <-h.added
+		h.finish(t, accepted)
+		select {
+		case got := <-m.Updates():
+			if got.Status != operation.StatusCompleted {
+				t.Fatalf("status %s", got.Status)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no terminal update")
+		}
+		if err := m.Add(op); err != nil {
+			t.Fatalf("re-Add = %v, want nil", err)
+		}
+		select {
+		case got := <-m.Updates():
+			t.Fatalf("re-Add emitted %s %s", got.ID, got.Status)
+		case <-h.added:
+			t.Fatal("re-Add reached the handler")
+		case <-time.After(300 * time.Millisecond):
+		}
+	})
 }
 
 // 5. Run's ctx cancelled while a call runs, the call finishing with no
@@ -328,33 +343,35 @@ func TestLocalManagerDropsAKnownAdd(t *testing.T) {
 // call still reaches a terminal status and the model reads its result.
 func TestRebuiltCoordinatorGetsTheResult(t *testing.T) {
 	t.Parallel()
-	f := fake.New(t,
-		fake.Step{Output: []ullm.Item{fake.Call("h", "hold", `{"text":"h"}`)}},
-		fake.Step{Output: []ullm.Item{fake.Text("got it")}},
-	)
-	e := newEnv(t, f)
-	e.start()
-	e.submit("in1", "go")
-	e.waitFor("the call's first status", func() bool { return len(e.of(sessionstore.ItemToolCallStatus)) >= 1 })
-	e.stop()
-	close(e.hold)
-	time.Sleep(100 * time.Millisecond) // the update lands with nobody reading
-	e.start()
-	e.waitFor("a terminal status", func() bool {
-		for _, it := range e.of(sessionstore.ItemToolCallStatus) {
-			st := it.Data.(sessionstore.ToolCallStatus)
-			for _, op := range st.Operations {
-				if op.Status == operation.StatusCompleted {
-					return true
+	synctest.Test(t, func(t *testing.T) {
+		f := fake.New(t,
+			fake.Step{Output: []ullm.Item{fake.Call("h", "hold", `{"text":"h"}`)}},
+			fake.Step{Output: []ullm.Item{fake.Text("got it")}},
+		)
+		e := newEnv(t, f)
+		e.start()
+		e.submit("in1", "go")
+		e.waitFor("the call's first status", func() bool { return len(e.of(sessionstore.ItemToolCallStatus)) >= 1 })
+		e.stop()
+		close(e.hold)
+		time.Sleep(100 * time.Millisecond) // the update lands with nobody reading
+		e.start()
+		e.waitFor("a terminal status", func() bool {
+			for _, it := range e.of(sessionstore.ItemToolCallStatus) {
+				st := it.Data.(sessionstore.ToolCallStatus)
+				for _, op := range st.Operations {
+					if op.Status == operation.StatusCompleted {
+						return true
+					}
 				}
 			}
+			return false
+		})
+		e.waitFor("the model reading it", func() bool { return len(f.Requests()) == 2 })
+		if got := results(f.Requests()[1].Request)["h"]; !strings.Contains(got, "released") {
+			t.Fatalf("result = %q", got)
 		}
-		return false
 	})
-	e.waitFor("the model reading it", func() bool { return len(f.Requests()) == 2 })
-	if got := results(f.Requests()[1].Request)["h"]; !strings.Contains(got, "released") {
-		t.Fatalf("result = %q", got)
-	}
 }
 
 // 6. Observers fire synchronously, in order, and only for appended

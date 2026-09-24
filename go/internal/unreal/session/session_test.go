@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/andreylukin/bough/internal/unreal/fake"
@@ -54,43 +55,45 @@ func TestTextTurn(t *testing.T) {
 // and the model has read its result.
 func TestCallInProgressThenFinal(t *testing.T) {
 	t.Parallel()
-	r := newRig(t,
-		fake.Step{Want: "run it", Output: []ullmItem{
-			fake.Call("c0", "echo", `{"text":"quick"}`),
-			fake.Call("c1", "hold", `{"text":"long job"}`),
-		}},
-		fake.Step{Match: func(req ullmRequest) error {
-			last := fake.LastUserText(req.Input)
-			if !strings.Contains(last, "echoed quick") || !strings.Contains(last, "still running") {
-				return errf("want the quick result and the placeholder, got %q", last)
-			}
-			return nil
-		}, Output: []ullmItem{fake.Text("waiting for it")}},
-		fake.Step{Want: "held and released", Output: []ullmItem{fake.Text("it finished")}},
-	)
-	r.rt.Submit("run it")
-	r.waitRequests(2)
-	r.waitFor("the placeholder reply", func() bool { return r.count("assistant") == 1 })
-	r.stays("no done while the call runs", 300*time.Millisecond, func() bool { return r.count("done") == 0 })
-	close(r.kit.release)
-	r.waitDone(1)
-	if got, want := r.turnKinds(), []string{"input", "call", "assistant", "call", "assistant", "done"}; !slices.Equal(got, want) {
-		t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
-	}
-	call := r.last("call")
-	if call.Data["tool"] != "hold" || call.Data["id"] != "c1" || call.Data["late"] != true || call.Data["text"] != "long job" {
-		t.Fatalf("call row %v", call.Data)
-	}
-	if !strings.Contains(call.Data["output"].(string), "held and released") {
-		t.Fatalf("call output %v", call.Data["output"])
-	}
-	if r.last("done").Data["running"] != nil {
-		t.Fatalf("done says calls were left running: %v", r.last("done").Data)
-	}
-	if !slices.Contains(r.evs.kinds(), "call-delta") {
-		t.Fatalf("no call-delta event: %v", r.evs.kinds())
-	}
-	fake.AssertAppendOnly(t, r.fake.Requests())
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t,
+			fake.Step{Want: "run it", Output: []ullmItem{
+				fake.Call("c0", "echo", `{"text":"quick"}`),
+				fake.Call("c1", "hold", `{"text":"long job"}`),
+			}},
+			fake.Step{Match: func(req ullmRequest) error {
+				last := fake.LastUserText(req.Input)
+				if !strings.Contains(last, "echoed quick") || !strings.Contains(last, "still running") {
+					return errf("want the quick result and the placeholder, got %q", last)
+				}
+				return nil
+			}, Output: []ullmItem{fake.Text("waiting for it")}},
+			fake.Step{Want: "held and released", Output: []ullmItem{fake.Text("it finished")}},
+		)
+		r.rt.Submit("run it")
+		r.waitRequests(2)
+		r.waitFor("the placeholder reply", func() bool { return r.count("assistant") == 1 })
+		r.stays("no done while the call runs", 300*time.Millisecond, func() bool { return r.count("done") == 0 })
+		close(r.kit.release)
+		r.waitDone(1)
+		if got, want := r.turnKinds(), []string{"input", "call", "assistant", "call", "assistant", "done"}; !slices.Equal(got, want) {
+			t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
+		}
+		call := r.last("call")
+		if call.Data["tool"] != "hold" || call.Data["id"] != "c1" || call.Data["late"] != true || call.Data["text"] != "long job" {
+			t.Fatalf("call row %v", call.Data)
+		}
+		if !strings.Contains(call.Data["output"].(string), "held and released") {
+			t.Fatalf("call output %v", call.Data["output"])
+		}
+		if r.last("done").Data["running"] != nil {
+			t.Fatalf("done says calls were left running: %v", r.last("done").Data)
+		}
+		if !slices.Contains(r.evs.kinds(), "call-delta") {
+			t.Fatalf("no call-delta event: %v", r.evs.kinds())
+		}
+		fake.AssertAppendOnly(t, r.fake.Requests())
+	})
 }
 
 // Two calls in one response run in parallel and, finishing inside the
@@ -125,21 +128,23 @@ func TestTwoCallsFanOut(t *testing.T) {
 // the answer wakes the model inside the same turn.
 func TestAskRoundTrip(t *testing.T) {
 	t.Parallel()
-	r := newRigWith(t, []rigOpt{settle(100 * time.Millisecond)},
-		fake.Step{Want: "decide", Output: []ullmItem{fake.Call("q1", "ask", `{"text":"which one?"}`)}},
-		fake.Step{Want: "the user answered: the blue one", Output: []ullmItem{fake.Text("blue it is")}},
-	)
-	r.rt.Submit("decide for me")
-	r.waitRequests(1)
-	// Well past turn_settle: a blocking call is never adopted.
-	r.stays("the turn stays open on ask", 600*time.Millisecond, func() bool {
-		return r.count("done") == 0 && r.count("job") == 0
+	synctest.Test(t, func(t *testing.T) {
+		r := newRigWith(t, []rigOpt{settle(100 * time.Millisecond)},
+			fake.Step{Want: "decide", Output: []ullmItem{fake.Call("q1", "ask", `{"text":"which one?"}`)}},
+			fake.Step{Want: "the user answered: the blue one", Output: []ullmItem{fake.Text("blue it is")}},
+		)
+		r.rt.Submit("decide for me")
+		r.waitRequests(1)
+		// Well past turn_settle: a blocking call is never adopted.
+		r.stays("the turn stays open on ask", 600*time.Millisecond, func() bool {
+			return r.count("done") == 0 && r.count("job") == 0
+		})
+		r.kit.answer <- "the blue one"
+		r.waitDone(1)
+		if r.last("assistant").Data["text"] != "blue it is" || r.count("done") != 1 {
+			t.Fatalf("history\n%s", r.dump())
+		}
 	})
-	r.kit.answer <- "the blue one"
-	r.waitDone(1)
-	if r.last("assistant").Data["text"] != "blue it is" || r.count("done") != 1 {
-		t.Fatalf("history\n%s", r.dump())
-	}
 }
 
 // Esc during a running call: the call is cancelled and its row lands
@@ -147,38 +152,40 @@ func TestAskRoundTrip(t *testing.T) {
 // and the next input reaches the provider with the cancelled result.
 func TestCancelMidCall(t *testing.T) {
 	t.Parallel()
-	r := newRig(t,
-		fake.Step{Want: "slow", Output: []ullmItem{fake.Call("h1", "hold", `{"text":"sleep 100"}`)}},
-		fake.Step{Want: "next", Match: func(req ullmRequest) error {
-			if !strings.Contains(fake.Render(req), "Cancelled") {
-				return errf("the cancelled result is not in the request")
-			}
-			return nil
-		}, Output: []ullmItem{fake.Text("ok, moving on")}},
-	)
-	r.rt.Submit("slow thing")
-	r.waitRequests(1)
-	r.waitFor("the call to start", func() bool {
-		r.kit.mu.Lock()
-		defer r.kit.mu.Unlock()
-		return slices.Contains(r.kit.calls, "hold")
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t,
+			fake.Step{Want: "slow", Output: []ullmItem{fake.Call("h1", "hold", `{"text":"sleep 100"}`)}},
+			fake.Step{Want: "next", Match: func(req ullmRequest) error {
+				if !strings.Contains(fake.Render(req), "Cancelled") {
+					return errf("the cancelled result is not in the request")
+				}
+				return nil
+			}, Output: []ullmItem{fake.Text("ok, moving on")}},
+		)
+		r.rt.Submit("slow thing")
+		r.waitRequests(1)
+		r.waitFor("the call to start", func() bool {
+			r.kit.mu.Lock()
+			defer r.kit.mu.Unlock()
+			return slices.Contains(r.kit.calls, "hold")
+		})
+		r.rt.Cancel()
+		r.waitDone(1)
+		kinds := r.turnKinds()
+		if got, want := kinds, []string{"input", "call", "cancelled", "done"}; !slices.Equal(got, want) {
+			t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
+		}
+		if c := r.last("call"); c.Data["canceled"] != true {
+			t.Fatalf("call row %v", c.Data)
+		}
+		r.stays("no request after the cancel", 1500*time.Millisecond, func() bool { return len(r.fake.Requests()) == 1 })
+		r.rt.Submit("next thing")
+		r.waitDone(2)
+		if len(r.fake.Requests()) != 2 || r.last("assistant").Data["text"] != "ok, moving on" {
+			t.Fatalf("history\n%s", r.dump())
+		}
+		fake.AssertAppendOnly(t, r.fake.Requests())
 	})
-	r.rt.Cancel()
-	r.waitDone(1)
-	kinds := r.turnKinds()
-	if got, want := kinds, []string{"input", "call", "cancelled", "done"}; !slices.Equal(got, want) {
-		t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
-	}
-	if c := r.last("call"); c.Data["canceled"] != true {
-		t.Fatalf("call row %v", c.Data)
-	}
-	r.stays("no request after the cancel", 1500*time.Millisecond, func() bool { return len(r.fake.Requests()) == 1 })
-	r.rt.Submit("next thing")
-	r.waitDone(2)
-	if len(r.fake.Requests()) != 2 || r.last("assistant").Data["text"] != "ok, moving on" {
-		t.Fatalf("history\n%s", r.dump())
-	}
-	fake.AssertAppendOnly(t, r.fake.Requests())
 }
 
 // A steer while a request is in flight waits for that request's answer,
