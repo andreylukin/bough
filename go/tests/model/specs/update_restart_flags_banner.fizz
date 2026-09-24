@@ -1,0 +1,169 @@
+# bough update restarts the control room: the serve that comes back has
+# the flags the person started it with, and a page left open across the
+# update offers the reload exactly when it runs an older bundle.
+#
+# One installed serve (launchd agent, or a detached daemon), proxied by
+# name (tailscale serve in front of a loopback bind, `--host=NAME`), and
+# one tab of the control room reaching it through that proxy.
+#
+# What the code does:
+#
+# - restartServe (cmd/bough/update.go) reads addr off the pidfile,
+#   derives insecure from it (a non-loopback addr is only ever bound
+#   with --insecure-bind, serve.go serveAddr), SIGINTs the serve, waits
+#   for it to exit, and brings the new binary up: on macOS by rewriting
+#   the plist and re-bootstrapping it (installServeAgent), elsewhere by
+#   launchServe. Stop and restart are two steps here, BoughUpdate and
+#   LaunchdReinstall, because a page can ask in between.
+# - Guard (internal/serve/auth.go) trusts loopback Host headers and the
+#   one --host name; any other Host is a 403. A proxied request carries
+#   the proxy's name, so a serve without --host refuses every request
+#   the page makes. The refusal still names its build (X-Bough-Build).
+# - Every API answer names the build that gave it (build.go buildID:
+#   revision + executable path + mtime, so every update is a new build).
+#   The page (api.ts noteBuild) keeps a baseline, loadedBuild, and calls
+#   the banner once when an answer names another build. A reload runs
+#   the module again: baseline empty, banner gone, dismissal forgotten.
+#
+# Builds are numbered 1, 2, 3: the install starts on 1 and the spec
+# allows two updates (SecondUpdate is the second BoughUpdate).
+#
+# The spec says what the flow must do; where the code does something
+# else, the Go/browser stages are expected to go red there:
+#
+# BUG 1 (update.go restartServe, host "" at the installServeAgent and
+#   launchServe calls): the pidfile does not record --host, so the
+#   restart drops it, and on macOS the rewritten plist keeps it dropped
+#   through every later launchd restart. Every proxied request is then a
+#   403 (the mapped HostDropped / ProxyRefused_403 states). Also: when
+#   the agent is installed but serve is not running, addr falls back to
+#   defaultServeAddr and insecure to false, losing a non-default bind
+#   the plist had. Here LaunchdReinstall keeps `flags` "install".
+# BUG 2 (api.ts noteBuild): the baseline is the first answer's build,
+#   not the bundle's. A page loaded from build 1 whose first request is
+#   answered by build 2 (the update landed between the HTML and the
+#   first fetch) takes 2 as its baseline and never shows the banner
+#   while it runs bundle 1 (the mapped BaselineWrong state). Here the
+#   first answer seeds the baseline with the bundle's build.
+# BUG 3 (api.ts watchBuild/noteBuild, app.tsx Dismiss): noteBuild
+#   clears onNewBuild when it fires and Dismiss only hides the element,
+#   so after one dismissal no later update (build 3) ever shows the
+#   banner again. Here a dismissal hides only the build it was for.
+#
+# Fields:
+#   serve     "up" | "down"
+#   build     the build of the installed binary (the one that answers)
+#   flags     "install": serve runs with the addr/insecure/--host it was
+#             installed with; "lost": a restart dropped them (BUG 1)
+#   page      "none" | "open"
+#   bundle    build the open page's JS came from (0 while no page)
+#   baseline  the page's loadedBuild (0 = not seeded yet)
+#   seen      build named by the page's last answer (0 = none yet)
+#   answer    "none" | "ok" | "refused": how the last request came back
+#   banner    the "bough updated. Reload" banner is showing
+#   dismissed the build whose banner the person dismissed (0 = none)
+
+role Room:
+    action Init:
+        self.serve = "up"
+        self.build = 1
+        self.flags = "install"
+        self.page = "none"
+        self.bundle = 0
+        self.baseline = 0
+        self.seen = 0
+        self.answer = "none"
+        self.banner = False
+        self.dismissed = 0
+
+    # The person opens the control room through the proxy; the HTML and
+    # its JS come from the build serving now. No API answer yet.
+    atomic action LoadPage:
+        require self.serve == "up" and self.page == "none"
+        self.page = "open"
+        self.bundle = self.build
+        self.baseline = 0
+        self.seen = 0
+        self.answer = "none"
+
+    # bough update (first or second): the new binary is in place and the
+    # old serve is interrupted and gone.
+    atomic action BoughUpdate:
+        require self.serve == "up" and self.build < 3
+        self.serve = "down"
+        self.build = self.build + 1
+
+    # restartServe brings the new binary up (launchd bootstrap of the
+    # rewritten plist, or launchServe), with the install's flags.
+    atomic fair action LaunchdReinstall:
+        require self.serve == "down"
+        self.serve = "up"
+        self.flags = "install"
+
+    # The page's poll (or any req) goes through the proxy and comes back
+    # naming the build that answered. The first answer seeds the
+    # baseline; any answer from another build asks for the reload unless
+    # the person dismissed that very build. A 403 counts the same way:
+    # Guard stamps the build on refusals too.
+    atomic fair action ApiAnswer:
+        require self.serve == "up" and self.page == "open"
+        if self.flags == "install":
+            self.answer = "ok"
+        else:
+            self.answer = "refused"
+        self.seen = self.build
+        if self.baseline == 0:
+            self.baseline = self.bundle
+        if self.build != self.baseline and self.dismissed != self.build:
+            self.banner = True
+
+    # The banner's close button.
+    atomic action Dismiss:
+        require self.banner
+        self.banner = False
+        self.dismissed = self.seen
+
+    # The banner's Reload (or the person's): the page now runs the
+    # build serving it, and the module starts over.
+    atomic action Reload:
+        require self.serve == "up" and self.page == "open"
+        self.bundle = self.build
+        self.baseline = 0
+        self.seen = 0
+        self.answer = "none"
+        self.banner = False
+        self.dismissed = 0
+
+action Init:
+    room = Room()
+
+# update/restart preserves addr, insecure and --host.
+always assertion FlagsPreserved:
+    return room.serve == "down" or room.flags == "install"
+
+# A proxied install is never refused by its own serve.
+always assertion ProxiedNeverRefused:
+    return room.answer != "refused"
+
+# The page compares answers against the build it is running.
+always assertion BaselineIsBundle:
+    return room.baseline == 0 or room.baseline == room.bundle
+
+# The banner shows only while the page runs an older bundle than the
+# build that last answered it.
+always assertion BannerOnlyForNewBuild:
+    return not room.banner or (room.seen != 0 and room.seen != room.bundle)
+
+# An answer from a newer build shows the banner, unless the person
+# dismissed that very build: a dismissal does not hide a later update.
+always assertion NewBuildShowsBanner:
+    return room.seen == 0 or room.seen == room.bundle or room.seen == room.dismissed or room.banner
+
+# After an update an open page on an older bundle eventually offers the
+# reload (or the person already dismissed exactly this build).
+always eventually assertion BannerAfterUpdate:
+    return room.page == "none" or room.bundle == room.build or room.banner or room.dismissed == room.build
+
+# A proxied install is reachable again after every update.
+always eventually assertion ReachableAfterUpdate:
+    return room.serve == "up" and room.flags == "install"
