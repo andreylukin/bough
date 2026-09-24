@@ -62,7 +62,7 @@ func followUpWaitDone(a *app, n int) {
 		if c >= n {
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	a.t.Fatalf("turn %d never finished:\n%s", n, a.text())
 }

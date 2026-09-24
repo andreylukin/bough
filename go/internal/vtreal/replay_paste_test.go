@@ -48,7 +48,7 @@ func pasteWaitEntry(a *app, want string, kinds ...string) history.Entry {
 				}
 			}
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	a.t.Fatalf("no %v entry containing %q was recorded:\n%s", kinds, want, a.text())
 	return history.Entry{}

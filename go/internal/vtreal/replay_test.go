@@ -141,7 +141,7 @@ func (a *app) waitDone(n int, timeout time.Duration) bool {
 		if a.doneCount() >= n {
 			return true
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // ~600 calls a run: a coarser poll cost ~15 s of test time
 	}
 	return false
 }

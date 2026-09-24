@@ -86,7 +86,7 @@ func resizeTmuxWaitDone(t *testing.T, tm *tmuxApp, home string, n int) {
 		if resizeTmuxDone(home) >= n {
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("turn %d never finished\nscreen:\n%s", n, resizeTmuxScreen(tm))
 }
