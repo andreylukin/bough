@@ -181,6 +181,14 @@ async function confirm(c: Ctx, name: string): Promise<State> {
 async function act(c: Ctx, name: string, before: State): Promise<State> {
   switch (name) {
     case 'OpenRemovePlan':
+      // The row's one button is Remove… or Stop orb, and a detail read
+      // before the last step can swap one for the other under the click
+      // (a Stop orb click that was aimed at Remove…, 6 of 708 walks). A
+      // fresh load settles which one serve offers now; it also drops the
+      // alert of an earlier remove, as any reload would.
+      await c.page.reload();
+      c.error = '';
+      await expect(row(c).locator('.orb-act button')).toBeVisible();
       if (await row(c).getByRole('button', { name: 'Remove…' }).isVisible()) {
         const after = await PAGE.OpenRemovePlan(c);
         if (after) return after;
