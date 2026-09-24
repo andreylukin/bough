@@ -1,0 +1,457 @@
+# Call rows and their output, as the page shows them, for both engines.
+# One session; its first action picks the engine it runs on (the
+# adapter creates it with --set loop.plugin=loop, or on the default
+# engine-unreal row), and it keeps it. turn_lifecycle owns the send and
+# the header; here a turn opens at once and what is modelled is what
+# happens inside it: code blocks and their calls on the loop, native
+# calls and their streamed output on the engine.
+#
+# Checked against the code (2026-09-24, main 5471918e):
+#
+# The loop (plugins/loop/loop.go Run, plugins/tools/calls.go Stats.call):
+#   - A reply's js blocks run IN ORDER, at most maxBlocks = 8 of them;
+#     capBlocks drops the rest and the last result says so.
+#   - Every block records "code" first. One identical to the block that
+#     just failed (lastFailed && sameBlock) records a "not run" result
+#     and runs nothing; the rest of that reply is dropped (break).
+#     lastFailed survives a refusal, so a third copy is refused again,
+#     with the stronger "do not run it again" wording (sameFails >= 2).
+#   - A failing block ends the reply: the blocks after it are not run.
+#   - A reply with no block right after a failed block (and no refusal
+#     since) is pushed back once (a nudge), which clears lastFailed.
+#   - Each tools.* call inside a block announces itself (a live "call"
+#     start with a NUMERIC id, never recorded) and records its end. The
+#     page keeps ONE slot for it (app.tsx RunningCall, set on the start,
+#     cleared by the end or any other non-delta event). Tools in goja
+#     are synchronous (no tool returns a Promise: codemode drains no
+#     async tool work, tools.bash returns a string), so
+#     Promise.all([tools.bash(a), tools.bash(b)]) runs a then b: two
+#     loop calls never run at once and the single slot is enough. The
+#     mapped model's "two loop calls under Promise.all" state does not
+#     exist; parallel calls are modelled on the engine only.
+#   - Loop calls stream no output (no call-delta); a view that hits
+#     viewCap (256 KB) says where it stopped and how to read on, and a
+#     job whose output overflowed jobHead+jobTail names the spill file
+#     holding the cut middle (jobs.go job.output).
+#
+# The engine (internal/unreal/{session,project}, internal/serve):
+#   - Calls run in parallel, each with a string id. The page keeps a map
+#     of running calls by id (app.tsx liveNative / withRunningCalls): a
+#     start adds a row, a call-delta extends that id's tail, and a row
+#     gives way to the record with its id once the refetch brings it.
+#     done/cancelled clear the map: a call still running then goes on as
+#     a job, shown in Work, not as a row.
+#   - Output is redacted as a stream (tools/native.go foreground:
+#     redactor().Writer), which holds back a possible secret split across
+#     chunks until the next chunk decides it; Close releases what is held
+#     before the tool returns.
+#   - It is coalesced twice: the actor's progress buffer (100 ms / 4 KiB,
+#     session/actor.go onProgress) and serve's delta window (50 ms, one
+#     run per call id, deltas.go). Both flush before the call's record:
+#     the actor at the ToolCallStatus item, serve before any recorded
+#     event. Merged here into one buffer per call.
+#   - The record keeps at most RowOutput (8 KiB) of output, head and tail
+#     (project.go headTail), with truncated set iff it cut.
+#   - call starts are live but not deltas, so they enter serve's replay
+#     ring; call-deltas do not. A page that reconnects (or opens) mid-call
+#     gets the running row back from the ring with an empty tail, which
+#     refills from the next output.
+#   - Progress after the record: the tool's last Emit and stream.Close
+#     happen before it returns, and both reach the actor through the
+#     same post queue ahead of the result, so a call-delta after the
+#     record is not reachable; it is not modelled. Were one sent, the
+#     page drops it (liveNative ignores an unknown id; withRunningCalls
+#     hides a recorded id).
+#
+# Fields. behind: something was recorded that the transcript on screen
+# does not have yet (fair CatchUp, as in turn_lifecycle).
+#   loop:   left/ran    blocks still to run / run, of the current reply
+#           block       none | running
+#           result      the last block's result on record: "" (none yet
+#                       or one running), ok, failed, not_run,
+#                       view_capped, job_cut
+#           rest        that result says where the rest of its output is
+#           lastFailed  the loop's lastFailed; refusals its sameFails
+#           lcall       none | running: a call of the block runs
+#           lrow        the page's loop running row (the one slot)
+#   engine: c0, c1      none | running | ended (recorded, not fetched) | job
+#           row0, row1  the page shows the call's running row
+#           t0, t1      its running tail: "" | out (own output)
+#           p0, p1      output buffered server-side, not yet sent
+#           held0       the redactor holds a possible secret prefix
+#           big0        c0 printed more than RowOutput
+#           rec0/trunc0 c0's record: "" | full | cut / its truncated flag
+# Only c0 prints large output or secrets; c1 exists to run beside it.
+
+NONE = "none"
+MAX_BLOCKS = 8
+
+role Session:
+    action Init:
+        self.engine = ""
+        self.status = "idle"
+        self.behind = False
+        # loop
+        self.left = 0
+        self.ran = 0
+        self.block = NONE
+        self.result = ""
+        self.rest = False
+        self.lastFailed = False
+        self.refusals = 0
+        self.lcall = NONE
+        self.lrow = False
+        # engine
+        self.c0 = NONE
+        self.c1 = NONE
+        self.row0 = False
+        self.row1 = False
+        self.t0 = ""
+        self.t1 = ""
+        self.p0 = False
+        self.p1 = False
+        self.held0 = False
+        self.big0 = False
+        self.rec0 = ""
+        self.trunc0 = False
+
+    # --- the session ---
+
+    atomic action UseLoop:
+        require self.engine == ""
+        self.engine = "loop"
+
+    atomic action UseEngine:
+        require self.engine == ""
+        self.engine = "unreal"
+
+    # A prompt whose input is recorded: the turn is open.
+    atomic action Prompt:
+        require self.engine != "" and self.status != "running" and not self.behind
+        self.status = "running"
+        self.behind = True
+        self.left = 0
+        self.ran = 0
+        self.result = ""
+        self.rest = False
+        self.lastFailed = False
+        self.refusals = 0
+        self.rec0 = ""
+        self.trunc0 = False
+
+    # --- the loop's model ---
+
+    # A reply with one js block (ReplyWithBlock) or with nine
+    # (ReplyWithNBlocks): capBlocks keeps eight.
+    atomic action ReplyWithBlock:
+        require self.engine == "loop" and self.status == "running" and self.left == 0 and self.block == NONE
+        self.left = 1
+        self.ran = 0
+        self.behind = True
+
+    atomic action ReplyWithNBlocks:
+        require self.engine == "loop" and self.status == "running" and self.left == 0 and self.block == NONE
+        self.left = min(9, MAX_BLOCKS)
+        self.ran = 0
+        self.behind = True
+
+    # The failed block again, verbatim: its "code" and a "not run"
+    # result are recorded and nothing runs.
+    atomic action RepeatFailedBlock:
+        require self.engine == "loop" and self.status == "running" and self.left == 0 and self.block == NONE and self.lastFailed
+        self.ran = 0
+        self.result = "not_run"
+        self.rest = False
+        self.refusals = min(self.refusals + 1, 2)
+        self.behind = True
+
+    # A reply with no block: the answer, or a nudge when it comes right
+    # after a failed block.
+    atomic action Answer:
+        require self.engine == "loop" and self.status == "running" and self.left == 0 and self.block == NONE
+        if self.lastFailed and self.result != "not_run":
+            self.lastFailed = False
+            self.behind = True
+        else:
+            self.close("done")
+
+    # --- the loop's blocks and calls ---
+
+    # The next block of the reply: its "code" is recorded and it runs.
+    atomic action BlockStart:
+        require self.engine == "loop" and self.status == "running" and self.left > 0 and self.block == NONE
+        self.left -= 1
+        self.ran += 1
+        self.block = "running"
+        self.result = ""
+        self.rest = False
+        self.behind = True
+
+    # A tools.* call starts: live, the page's slot takes it.
+    atomic action LoopCallStart:
+        require self.engine == "loop" and self.block == "running" and self.lcall == NONE
+        self.lcall = "running"
+        self.lrow = True
+
+    # It returns: its "call" record lands and clears the slot.
+    atomic fair action LoopCallEnd:
+        require self.engine == "loop" and self.lcall == "running"
+        self.lcall = NONE
+        self.lrow = False
+        self.behind = True
+
+    # The block returns (its calls have, tools are synchronous).
+    atomic fair action BlockOk:
+        require self.engine == "loop" and self.block == "running" and self.lcall == NONE
+        self.endBlock("ok", False)
+
+    atomic action BlockFailed:
+        require self.engine == "loop" and self.block == "running" and self.lcall == NONE
+        self.endBlock("failed", False)
+
+    # Model.ViewLargeFile: tools.view stopped at viewCap and says how to
+    # read on.
+    atomic action BlockViewCapped:
+        require self.engine == "loop" and self.block == "running" and self.lcall == NONE
+        self.endBlock("view_capped", True)
+
+    # Model.JobOutput: a job whose output overflowed: head, the cut
+    # size and the spill file, tail.
+    atomic action BlockJobCut:
+        require self.engine == "loop" and self.block == "running" and self.lcall == NONE
+        self.endBlock("job_cut", True)
+
+    atomic func endBlock(result, rest):
+        self.block = NONE
+        self.result = result
+        self.rest = rest
+        self.behind = True
+        if result == "failed":
+            self.lastFailed = True
+            self.left = 0
+        else:
+            self.lastFailed = False
+            self.refusals = 0
+
+    # --- the engine's calls ---
+
+    # One call (Model.ReplyWithBlock on the engine) or two in one
+    # response (ParallelCalls): live starts, a running row each.
+    atomic action NativeCall:
+        require self.engine == "unreal" and self.status == "running" and self.c0 == NONE and self.c1 == NONE
+        self.startCall0()
+
+    atomic action ParallelCalls:
+        require self.engine == "unreal" and self.status == "running" and self.c0 == NONE and self.c1 == NONE
+        self.startCall0()
+        self.c1 = "running"
+        self.row1 = True
+        self.t1 = ""
+
+    atomic func startCall0():
+        self.c0 = "running"
+        self.row0 = True
+        self.t0 = ""
+        self.big0 = False
+        self.held0 = False
+        self.rec0 = ""
+        self.trunc0 = False
+
+    # System.OutputChunk: output the redactor let through, buffered.
+    atomic action Output0:
+        require self.c0 in ("running", "job")
+        self.p0 = True
+
+    atomic action Output1:
+        require self.c1 in ("running", "job")
+        self.p1 = True
+
+    # More than RowOutput in all (Model's long/fast output).
+    atomic action BigOutput0:
+        require self.c0 in ("running", "job") and not self.big0
+        self.big0 = True
+        self.p0 = True
+
+    # A chunk ending in what may be the start of a secret: held back.
+    atomic action SecretHead0:
+        require self.c0 in ("running", "job") and not self.held0
+        self.held0 = True
+
+    # The next chunk completes it: the masked value goes out.
+    atomic action SecretTail0:
+        require self.c0 in ("running", "job") and self.held0
+        self.held0 = False
+        self.p0 = True
+
+    # System.ProgressTimer / Serve.DeltaWindowFlush: the buffered output
+    # goes out, one run per call id, to that id's row.
+    atomic fair action Flush:
+        require self.p0 or self.p1
+        self.flush0()
+        self.flush1()
+
+    atomic func flush0():
+        if self.p0 and self.row0:
+            self.t0 = "out"
+        self.p0 = False
+
+    atomic func flush1():
+        if self.p1 and self.row1:
+            self.t1 = "out"
+        self.p1 = False
+
+    # Tools.CallEnd: stream.Close releases what the redactor held, the
+    # buffers flush, then the record (head+tail cut when big). The
+    # running row stays until the refetch brings the record.
+    atomic fair action End0:
+        require self.c0 == "running"
+        self.end0()
+
+    atomic fair action End1:
+        require self.c1 == "running"
+        self.end1()
+
+    atomic func end0():
+        if self.held0:
+            self.held0 = False
+            self.p0 = True
+        self.flush0()
+        self.c0 = "ended"
+        if self.big0:
+            self.rec0 = "cut"
+        else:
+            self.rec0 = "full"
+        self.trunc0 = self.big0
+        self.behind = True
+
+    atomic func end1():
+        self.flush1()
+        self.c1 = "ended"
+        self.behind = True
+
+    # A call that outlived its turn ends: its record (adopted) lands.
+    atomic fair action JobEnd0:
+        require self.c0 == "job"
+        self.end0()
+
+    atomic fair action JobEnd1:
+        require self.c1 == "job"
+        self.end1()
+
+    # The model answers while calls run: done clears the page's map, the
+    # running calls go on as jobs (Work), their rows go.
+    atomic action NativeAnswer:
+        require self.engine == "unreal" and self.status == "running"
+        if self.c0 == "running":
+            self.c0 = "job"
+        if self.c1 == "running":
+            self.c1 = "job"
+        self.close("done")
+
+    # --- the person and the page ---
+
+    # User.Stop mid-block / mid-call. The loop's block sees the cancel,
+    # its call returns with the error (recorded), then cancelled + done.
+    # The engine cancels its running calls; they record as cancelled
+    # (buffers flushed first) before the turn's cancelled + done.
+    atomic action Stop:
+        require self.status == "running"
+        if self.lcall == "running":
+            self.lcall = NONE
+        self.block = NONE
+        self.left = 0
+        if self.c0 == "running":
+            self.end0()
+        if self.c1 == "running":
+            self.end1()
+        self.close("stopped")
+
+    atomic func close(to):
+        self.status = to
+        self.lrow = False
+        self.row0 = False
+        self.row1 = False
+        self.t0 = ""
+        self.t1 = ""
+        self.behind = True
+
+    # Page.Reconnect mid-call: the EventSource reopens and serve replays
+    # its ring. The starts are in it (rows stay); the call-deltas are
+    # not, and a replayed start resets its tail.
+    atomic action Reconnect:
+        require self.status == "running" and (self.row0 or self.row1 or self.lrow)
+        self.t0 = ""
+        self.t1 = ""
+
+    # Page.CatchUp: a GET ?since= lands; recorded calls replace their
+    # running rows by id.
+    atomic fair action CatchUp:
+        require self.behind
+        self.behind = False
+        if self.c0 == "ended":
+            self.c0 = NONE
+            self.row0 = False
+            self.t0 = ""
+        if self.c1 == "ended":
+            self.c1 = NONE
+            self.row1 = False
+            self.t1 = ""
+
+action Init:
+    session = Session()
+
+# The loop's running row is shown iff a call of its block runs.
+always assertion LoopRowIffCall:
+    return session.lrow == (session.lcall == "running")
+
+# An engine call's running row is shown while it runs, and after that
+# only until its record is on screen (or the turn closed).
+always assertion NativeRowWhileRunning:
+    return rowFits(session.c0, session.row0) and rowFits(session.c1, session.row1)
+
+def rowFits(c, r):
+    if c == "running" and not r:
+        return False
+    return not r or c in ("running", "ended")
+
+# A refused identical block runs nothing.
+always assertion RefusedRunsNothing:
+    return session.result != "not_run" or (session.block == NONE and session.lcall == NONE)
+
+# At most eight blocks of one reply run.
+always assertion AtMostEightBlocks:
+    return session.ran + session.left <= MAX_BLOCKS
+
+# The loop's slot and the engine's rows never show the same call twice:
+# a session has one or the other.
+always assertion RowsNeverDouble:
+    return not (session.lrow and (session.row0 or session.row1))
+
+# A running tail shows its own call's output, and only on its own row.
+always assertion TailOwnRowOnly:
+    return (session.t0 != "mixed" and session.t1 != "mixed"
+            and (session.t0 == "" or session.row0) and (session.t1 == "" or session.row1))
+
+# A recorded row is head+tail cut iff its output was too long, and says
+# truncated iff it was cut.
+always assertion RecordCutIffTruncated:
+    return (session.trunc0 == (session.rec0 == "cut")) and (session.rec0 != "cut" or session.big0) and (session.rec0 != "full" or not session.big0)
+
+# A secret split across chunks never reaches a tail.
+always assertion SecretNeverShown:
+    return session.t0 != "half"
+
+# A capped view or a cut job output says where the rest is.
+always assertion CappedSaysWhere:
+    return session.result not in ("view_capped", "job_cut") or session.rest
+
+# Every started row gives way to its record, or is cleared.
+always eventually assertion RowsResolve:
+    return not (session.lrow or session.row0 or session.row1)
+
+# Buffered output goes out (within the window, or before the record).
+always eventually assertion BuffersFlush:
+    return not (session.p0 or session.p1)
+
+always eventually assertion TranscriptCatchesUp:
+    return not session.behind
