@@ -14,7 +14,12 @@
 #
 # draft is the composer: "" blank, "msg" a draft that is a message, "q1"
 # or "q2" a draft that answers that question (app.tsx draftAsk: decided
-# when you start typing, from the question on screen then). inflight is
+# when you start typing, from the question on screen then); "sec" is a
+# value in the secret's own field (app.tsx SecretAnswer), which is never
+# kept: it leaves with its question, and it is never anything but that
+# question's answer (the composer is disabled while it is on screen, so
+# a composer answer to the secret is only ever "Use for this question"
+# on an older draft). inflight is
 # the POST the page sent and serve has not handled yet ("q2nl": an
 # answer to the secret with a newline in it). A refused POST (409/400)
 # changes nothing the model tracks: the page reports it and keeps
@@ -66,7 +71,9 @@ role Session:
     # screen, or a message when there is none.
     atomic action Type:
         require self.draft == "" and self.inflight == ""
-        if self.ask != "":
+        if self.ask == "q2":
+            self.draft = "sec"
+        elif self.ask != "":
             self.draft = self.ask
         else:
             self.draft = "msg"
@@ -74,22 +81,26 @@ role Session:
     # The draft was written for another question (or none): "Use for
     # this question" / "Keep as message" (app.tsx askChanged note).
     atomic action UseForQuestion:
-        require self.draft != "" and self.ask != "" and self.draft != self.ask
+        require self.draft != "" and self.draft != "sec" and self.ask != "" and self.draft != self.ask
         self.draft = self.ask
 
     atomic action KeepAsMessage:
-        require self.draft != "" and self.draft != "msg" and self.draft != self.ask
+        require self.draft != "" and self.draft != "msg" and self.draft != "sec" and self.draft != self.ask
         self.draft = "msg"
 
     # Enter / Send. Disabled while askChanged or a send is in flight; an
     # answer draft POSTs /answer {text, ask: draftAsk}, a message /prompt.
     atomic action Send:
         require self.inflight == "" and self.draft != ""
-        require (self.draft == "msg" and self.ask == "") or self.draft == self.ask
-        self.inflight = self.draft
+        require (self.draft == "msg" and self.ask == "") or self.draft == self.ask or (self.draft == "sec" and self.ask == "q2")
+        if self.draft == "sec":
+            self.inflight = "q2"
+        else:
+            self.inflight = self.draft
         self.draft = ""
 
-    # The same, with a multi-line answer to the secret.
+    # The same, with a multi-line answer to the secret: only a composer
+    # draft can carry one, the secret field being a one-line <input>.
     atomic action SendMultiline:
         require self.inflight == "" and self.draft == "q2" and self.ask == "q2"
         self.inflight = "q2nl"
@@ -143,6 +154,8 @@ role Session:
         self.armed = ""
         self.ask = ""
         self.status = "running"
+        if self.draft == "sec":
+            self.draft = ""
 
     atomic fair action Finish:
         require self.alive and self.status == "running" and self.open == ""
@@ -161,6 +174,8 @@ role Session:
         self.armed = ""
         self.ask = ""
         self.status = "interrupted"
+        if self.draft == "sec":
+            self.draft = ""
 
     # The Asker records ask/answer and the blocked call returns: the
     # question leaves the screen and the turn runs on.

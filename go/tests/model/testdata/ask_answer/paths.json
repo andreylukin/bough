@@ -1,16 +1,212 @@
 {
   "paths": [
     {
-      "target": 106,
+      "target": 112,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        47,
+        71,
+        92,
+        107,
+        112
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.UseForQuestion",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.SendMultiline",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Finish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "done",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Deliver",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "done",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 105,
       "links": [
         0,
         3,
         10,
         25,
         43,
-        68,
-        92,
-        106
+        67,
+        89,
+        105
       ],
       "trace": [
         {
@@ -178,16 +374,547 @@
       ]
     },
     {
-      "target": 107,
+      "target": 106,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        47,
+        71,
+        92,
+        106
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.UseForQuestion",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.SendMultiline",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Deliver",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 108,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        47,
+        71,
+        93,
+        108
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.UseForQuestion",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.SendMultiline",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Exit",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": false,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "interrupted",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Deliver",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": false,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "interrupted",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 109,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        47,
+        72,
+        95,
+        109
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.UseForQuestion",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Finish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "done",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.KeepAsMessage",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "msg",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "done",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 110,
       "links": [
         0,
         4,
         13,
         31,
         52,
-        75,
-        96,
-        107
+        78,
+        99,
+        110
       ],
       "trace": [
         {
@@ -270,7 +997,7 @@
             "Session#0.armed": "q2",
             "Session#0.ask": "q2",
             "Session#0.asked": 2,
-            "Session#0.draft": "q2",
+            "Session#0.draft": "sec",
             "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
             "Session#0.open": "q2",
@@ -355,193 +1082,16 @@
       ]
     },
     {
-      "target": 108,
-      "links": [
-        0,
-        4,
-        13,
-        31,
-        53,
-        78,
-        99,
-        108
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.SendMultiline",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Finish",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "done",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Deliver",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "done",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 109,
+      "target": 111,
       "links": [
         0,
         4,
         13,
         32,
-        56,
-        83,
-        103,
-        109
+        55,
+        80,
+        102,
+        111
       ],
       "trace": [
         {
@@ -709,15 +1259,15 @@
       ]
     },
     {
-      "target": 91,
+      "target": 88,
       "links": [
         0,
         3,
         10,
         25,
         43,
-        68,
-        91
+        67,
+        88
       ],
       "trace": [
         {
@@ -867,15 +1417,15 @@
       ]
     },
     {
-      "target": 93,
+      "target": 90,
       "links": [
         0,
         3,
         10,
         25,
         43,
-        69,
-        93
+        68,
+        90
       ],
       "trace": [
         {
@@ -1025,13 +1575,171 @@
       ]
     },
     {
+      "target": 91,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        47,
+        71,
+        91
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.UseForQuestion",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.SendMultiline",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2nl",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Deliver",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
       "target": 94,
       "links": [
         0,
         3,
         11,
         27,
-        49,
+        47,
         72,
         94
       ],
@@ -1127,6 +1835,322 @@
           }
         },
         {
+          "action": "Session#0.UseForQuestion",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.KeepAsMessage",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "msg",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 96,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        47,
+        73,
+        96
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.UseForQuestion",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Exit",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": false,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "interrupted",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.KeepAsMessage",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": false,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "msg",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "interrupted",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 97,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        49,
+        75,
+        97
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
           "action": "Session#0.Resolve",
           "state": {
             "session": "role Session#0",
@@ -1183,329 +2207,13 @@
       ]
     },
     {
-      "target": 95,
-      "links": [
-        0,
-        4,
-        13,
-        31,
-        52,
-        75,
-        95
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Send",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Deliver",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 97,
-      "links": [
-        0,
-        4,
-        13,
-        31,
-        52,
-        76,
-        97
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Send",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Exit",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": false,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "interrupted",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Deliver",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": false,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "interrupted",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
       "target": 98,
       "links": [
         0,
         4,
         13,
         31,
-        53,
+        52,
         78,
         98
       ],
@@ -1590,7 +2298,7 @@
             "Session#0.armed": "q2",
             "Session#0.ask": "q2",
             "Session#0.asked": 2,
-            "Session#0.draft": "q2",
+            "Session#0.draft": "sec",
             "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
             "Session#0.open": "q2",
@@ -1601,7 +2309,7 @@
           }
         },
         {
-          "action": "Session#0.SendMultiline",
+          "action": "Session#0.Send",
           "state": {
             "session": "role Session#0",
             "Session#0.alive": true,
@@ -1609,7 +2317,7 @@
             "Session#0.ask": "q2",
             "Session#0.asked": 2,
             "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
+            "Session#0.inflight": "q2",
             "Session#0.msgAnswered": false,
             "Session#0.open": "q2",
             "Session#0.secretLogged": false,
@@ -1627,7 +2335,7 @@
             "Session#0.ask": "",
             "Session#0.asked": 2,
             "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
+            "Session#0.inflight": "q2",
             "Session#0.msgAnswered": false,
             "Session#0.open": "",
             "Session#0.secretLogged": false,
@@ -1663,7 +2371,7 @@
         4,
         13,
         31,
-        53,
+        52,
         79,
         100
       ],
@@ -1748,7 +2456,7 @@
             "Session#0.armed": "q2",
             "Session#0.ask": "q2",
             "Session#0.asked": 2,
-            "Session#0.draft": "q2",
+            "Session#0.draft": "sec",
             "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
             "Session#0.open": "q2",
@@ -1759,7 +2467,7 @@
           }
         },
         {
-          "action": "Session#0.SendMultiline",
+          "action": "Session#0.Send",
           "state": {
             "session": "role Session#0",
             "Session#0.alive": true,
@@ -1767,7 +2475,7 @@
             "Session#0.ask": "q2",
             "Session#0.asked": 2,
             "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
+            "Session#0.inflight": "q2",
             "Session#0.msgAnswered": false,
             "Session#0.open": "q2",
             "Session#0.secretLogged": false,
@@ -1785,7 +2493,7 @@
             "Session#0.ask": "",
             "Session#0.asked": 2,
             "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
+            "Session#0.inflight": "q2",
             "Session#0.msgAnswered": false,
             "Session#0.open": "",
             "Session#0.secretLogged": false,
@@ -1820,9 +2528,9 @@
         0,
         4,
         13,
-        31,
-        54,
-        81,
+        32,
+        55,
+        80,
         101
       ],
       "trace": [
@@ -1899,24 +2607,6 @@
           }
         },
         {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
           "action": "Session#0.Resolve",
           "state": {
             "session": "role Session#0",
@@ -1924,7 +2614,7 @@
             "Session#0.armed": "",
             "Session#0.ask": "",
             "Session#0.asked": 2,
-            "Session#0.draft": "q2",
+            "Session#0.draft": "",
             "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
             "Session#0.open": "",
@@ -1935,25 +2625,7 @@
           }
         },
         {
-          "action": "Session#0.Finish",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "done",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.KeepAsMessage",
+          "action": "Session#0.Type",
           "state": {
             "session": "role Session#0",
             "Session#0.alive": true,
@@ -1966,22 +2638,58 @@
             "Session#0.open": "",
             "Session#0.secretLogged": false,
             "Session#0.split": false,
-            "Session#0.status": "done",
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Send",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "msg",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Deliver",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
             "Session#0.wrongAnswer": false
           }
         }
       ]
     },
     {
-      "target": 102,
+      "target": 103,
       "links": [
         0,
         4,
         13,
         32,
-        56,
-        83,
-        102
+        55,
+        81,
+        103
       ],
       "trace": [
         {
@@ -2093,6 +2801,24 @@
           }
         },
         {
+          "action": "Session#0.Finish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "msg",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "done",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
           "action": "Session#0.Send",
           "state": {
             "session": "role Session#0",
@@ -2106,25 +2832,7 @@
             "Session#0.open": "",
             "Session#0.secretLogged": false,
             "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Deliver",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
+            "Session#0.status": "done",
             "Session#0.wrongAnswer": false
           }
         }
@@ -2136,9 +2844,9 @@
         0,
         4,
         13,
-        32,
-        56,
-        84,
+        33,
+        57,
+        83,
         104
       ],
       "trace": [
@@ -2215,164 +2923,6 @@
           }
         },
         {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "msg",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Finish",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "msg",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "done",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Send",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "msg",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "done",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 105,
-      "links": [
-        0,
-        4,
-        13,
-        33,
-        58,
-        86,
-        105
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
           "action": "Session#0.Exit",
           "state": {
             "session": "role Session#0",
@@ -2447,14 +2997,14 @@
       ]
     },
     {
-      "target": 67,
+      "target": 66,
       "links": [
         0,
         3,
         10,
         25,
         43,
-        67
+        66
       ],
       "trace": [
         {
@@ -2586,13 +3136,152 @@
       ]
     },
     {
-      "target": 70,
+      "target": 69,
       "links": [
         0,
         3,
         10,
         25,
         45,
+        69
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Send",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q1",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q1",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Finish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q1",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "done",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Deliver",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "done",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        0,
+        3,
+        11,
+        27,
+        47,
         70
       ],
       "trace": [
@@ -2651,24 +3340,6 @@
           }
         },
         {
-          "action": "Session#0.Send",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q1",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
           "action": "Session#0.Resolve",
           "state": {
             "session": "role Session#0",
@@ -2676,8 +3347,8 @@
             "Session#0.armed": "",
             "Session#0.ask": "",
             "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q1",
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
             "Session#0.open": "",
             "Session#0.secretLogged": false,
@@ -2687,52 +3358,70 @@
           }
         },
         {
-          "action": "Session#0.Finish",
+          "action": "Session#0.AskSecret",
           "state": {
             "session": "role Session#0",
             "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q1",
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q1",
+            "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
-            "Session#0.open": "",
+            "Session#0.open": "q2",
             "Session#0.secretLogged": false,
             "Session#0.split": false,
-            "Session#0.status": "done",
+            "Session#0.status": "needs-you",
             "Session#0.wrongAnswer": false
           }
         },
         {
-          "action": "Session#0.Deliver",
+          "action": "Session#0.UseForQuestion",
           "state": {
             "session": "role Session#0",
             "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "q2",
             "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
-            "Session#0.open": "",
+            "Session#0.open": "q2",
             "Session#0.secretLogged": false,
             "Session#0.split": false,
-            "Session#0.status": "done",
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Send",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "q2",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
             "Session#0.wrongAnswer": false
           }
         }
       ]
     },
     {
-      "target": 71,
+      "target": 74,
       "links": [
         0,
         3,
         11,
         27,
         49,
-        71
+        74
       ],
       "trace": [
         {
@@ -2864,14 +3553,14 @@
       ]
     },
     {
-      "target": 73,
+      "target": 76,
       "links": [
         0,
         3,
         11,
         27,
         50,
-        73
+        76
       ],
       "trace": [
         {
@@ -3003,152 +3692,13 @@
       ]
     },
     {
-      "target": 74,
-      "links": [
-        0,
-        4,
-        13,
-        31,
-        52,
-        74
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Send",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "q2",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Deliver",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
       "target": 77,
       "links": [
         0,
         4,
         13,
         31,
-        53,
+        52,
         77
       ],
       "trace": [
@@ -3232,7 +3782,7 @@
             "Session#0.armed": "q2",
             "Session#0.ask": "q2",
             "Session#0.asked": 2,
-            "Session#0.draft": "q2",
+            "Session#0.draft": "sec",
             "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
             "Session#0.open": "q2",
@@ -3243,7 +3793,7 @@
           }
         },
         {
-          "action": "Session#0.SendMultiline",
+          "action": "Session#0.Send",
           "state": {
             "session": "role Session#0",
             "Session#0.alive": true,
@@ -3251,7 +3801,7 @@
             "Session#0.ask": "q2",
             "Session#0.asked": 2,
             "Session#0.draft": "",
-            "Session#0.inflight": "q2nl",
+            "Session#0.inflight": "q2",
             "Session#0.msgAnswered": false,
             "Session#0.open": "q2",
             "Session#0.secretLogged": false,
@@ -3265,149 +3815,10 @@
           "state": {
             "session": "role Session#0",
             "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 80,
-      "links": [
-        0,
-        4,
-        13,
-        31,
-        54,
-        80
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
             "Session#0.armed": "",
             "Session#0.ask": "",
             "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.KeepAsMessage",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "msg",
+            "Session#0.draft": "",
             "Session#0.inflight": "",
             "Session#0.msgAnswered": false,
             "Session#0.open": "",
@@ -3425,148 +3836,9 @@
         0,
         4,
         13,
-        31,
-        55,
-        82
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Exit",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": false,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "interrupted",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.KeepAsMessage",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": false,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 2,
-            "Session#0.draft": "msg",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "interrupted",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 85,
-      "links": [
-        0,
-        4,
-        13,
         32,
-        57,
-        85
+        56,
+        82
       ],
       "trace": [
         {
@@ -3698,14 +3970,14 @@
       ]
     },
     {
-      "target": 87,
+      "target": 84,
       "links": [
         0,
         4,
         14,
         35,
-        62,
-        87
+        61,
+        84
       ],
       "trace": [
         {
@@ -3837,14 +4109,14 @@
       ]
     },
     {
-      "target": 88,
+      "target": 85,
       "links": [
         0,
         4,
         14,
         35,
-        62,
-        88
+        61,
+        85
       ],
       "trace": [
         {
@@ -3976,14 +4248,14 @@
       ]
     },
     {
-      "target": 89,
+      "target": 86,
       "links": [
         0,
         4,
         14,
         35,
-        62,
-        89
+        61,
+        86
       ],
       "trace": [
         {
@@ -4115,14 +4387,14 @@
       ]
     },
     {
-      "target": 90,
+      "target": 87,
       "links": [
         0,
         4,
         14,
         35,
-        64,
-        90
+        63,
+        87
       ],
       "trace": [
         {
@@ -4494,126 +4766,6 @@
       ]
     },
     {
-      "target": 47,
-      "links": [
-        0,
-        3,
-        11,
-        27,
-        47
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 0,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskPlain",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Type",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q1",
-            "Session#0.ask": "q1",
-            "Session#0.asked": 1,
-            "Session#0.draft": "q1",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q1",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.Resolve",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "",
-            "Session#0.ask": "",
-            "Session#0.asked": 1,
-            "Session#0.draft": "q1",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "running",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.AskSecret",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q1",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        },
-        {
-          "action": "Session#0.UseForQuestion",
-          "state": {
-            "session": "role Session#0",
-            "Session#0.alive": true,
-            "Session#0.armed": "q2",
-            "Session#0.ask": "q2",
-            "Session#0.asked": 2,
-            "Session#0.draft": "q2",
-            "Session#0.inflight": "",
-            "Session#0.msgAnswered": false,
-            "Session#0.open": "q2",
-            "Session#0.secretLogged": false,
-            "Session#0.split": false,
-            "Session#0.status": "needs-you",
-            "Session#0.wrongAnswer": false
-          }
-        }
-      ]
-    },
-    {
       "target": 48,
       "links": [
         0,
@@ -4854,13 +5006,253 @@
       ]
     },
     {
-      "target": 59,
+      "target": 53,
+      "links": [
+        0,
+        4,
+        13,
+        31,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "sec",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 54,
+      "links": [
+        0,
+        4,
+        13,
+        31,
+        54
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 0,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskPlain",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q1",
+            "Session#0.ask": "q1",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q1",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Resolve",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 1,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "running",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.AskSecret",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Type",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": true,
+            "Session#0.armed": "q2",
+            "Session#0.ask": "q2",
+            "Session#0.asked": 2,
+            "Session#0.draft": "sec",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "q2",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "needs-you",
+            "Session#0.wrongAnswer": false
+          }
+        },
+        {
+          "action": "Session#0.Exit",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.alive": false,
+            "Session#0.armed": "",
+            "Session#0.ask": "",
+            "Session#0.asked": 2,
+            "Session#0.draft": "",
+            "Session#0.inflight": "",
+            "Session#0.msgAnswered": false,
+            "Session#0.open": "",
+            "Session#0.secretLogged": false,
+            "Session#0.split": false,
+            "Session#0.status": "interrupted",
+            "Session#0.wrongAnswer": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
       "links": [
         0,
         4,
         14,
         34,
-        59
+        58
       ],
       "trace": [
         {
@@ -4974,13 +5366,13 @@
       ]
     },
     {
-      "target": 60,
+      "target": 59,
       "links": [
         0,
         4,
         14,
         34,
-        60
+        59
       ],
       "trace": [
         {
@@ -5094,13 +5486,13 @@
       ]
     },
     {
-      "target": 61,
+      "target": 60,
       "links": [
         0,
         4,
         14,
         34,
-        61
+        60
       ],
       "trace": [
         {
@@ -5214,13 +5606,13 @@
       ]
     },
     {
-      "target": 63,
+      "target": 62,
       "links": [
         0,
         4,
         14,
         35,
-        63
+        62
       ],
       "trace": [
         {
@@ -5334,13 +5726,13 @@
       ]
     },
     {
-      "target": 65,
+      "target": 64,
       "links": [
         0,
         4,
         14,
         36,
-        65
+        64
       ],
       "trace": [
         {
@@ -5454,13 +5846,13 @@
       ]
     },
     {
-      "target": 66,
+      "target": 65,
       "links": [
         0,
         5,
         16,
         38,
-        66
+        65
       ],
       "trace": [
         {
@@ -6857,13 +7249,13 @@
   ],
   "coverage": {
     "states": {
-      "covered": 58,
-      "total": 58,
+      "covered": 59,
+      "total": 59,
       "uncovered": []
     },
     "transitions": {
-      "covered": 110,
-      "total": 110,
+      "covered": 113,
+      "total": 113,
       "uncovered": []
     }
   }

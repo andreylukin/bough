@@ -57,7 +57,7 @@ type askAnswerAdapter struct {
 	held string // the model request held in flight, "" when none
 	next string // the block turn queued for the next request
 
-	draft, draftID       string // "", "msg", "q1", "q2"; the ask id it answers
+	draft, draftID       string // "", "msg", "q1", "q2", "sec"; the ask id it answers
 	inflight, inflightID string // "", "msg", "q1", "q2", "q2nl"
 	ids                  []string
 	did                  map[string]int // steps taken per action, gated ones not counted
@@ -383,8 +383,12 @@ func (a *askAnswerAdapter) Type() error {
 		return err
 	}
 	a.draft, a.draftID = onScreen(v.row)
-	if a.draft == "" {
+	switch a.draft {
+	case "":
 		a.draft = "msg"
+	case "q2":
+		// Typed into the secret's own field, which leaves with it.
+		a.draft = "sec"
 	}
 	return nil
 }
@@ -395,7 +399,7 @@ func (a *askAnswerAdapter) UseForQuestion() error {
 		return err
 	}
 	ask, askID := onScreen(v.row)
-	if !a.gate.pass(a.draft != "" && ask != "" && a.draft != ask) {
+	if !a.gate.pass(a.draft != "" && a.draft != "sec" && ask != "" && a.draft != ask) {
 		return nil
 	}
 	a.draft, a.draftID = ask, askID
@@ -408,7 +412,7 @@ func (a *askAnswerAdapter) KeepAsMessage() error {
 		return err
 	}
 	ask, _ := onScreen(v.row)
-	if !a.gate.pass(a.draft != "" && a.draft != "msg" && a.draft != ask) {
+	if !a.gate.pass(a.draft != "" && a.draft != "msg" && a.draft != "sec" && a.draft != ask) {
 		return nil
 	}
 	a.draft, a.draftID = "msg", ""
@@ -421,10 +425,13 @@ func (a *askAnswerAdapter) Send() error {
 		return err
 	}
 	ask, _ := onScreen(v.row)
-	if !a.gate.pass(a.inflight == "" && a.draft != "" && ((a.draft == "msg" && ask == "") || a.draft == ask)) {
+	if !a.gate.pass(a.inflight == "" && a.draft != "" && ((a.draft == "msg" && ask == "") || a.draft == ask || (a.draft == "sec" && ask == "q2"))) {
 		return nil
 	}
 	a.inflight, a.inflightID = a.draft, a.draftID
+	if a.draft == "sec" {
+		a.inflight = "q2"
+	}
 	a.draft, a.draftID = "", ""
 	return nil
 }
@@ -534,6 +541,7 @@ func (a *askAnswerAdapter) Resolve() error {
 	if err := os.WriteFile(filepath.Join(a.expire, v.openID), nil, 0o644); err != nil {
 		return err
 	}
+	a.dropSecretDraft()
 	return a.takeNext()
 }
 
@@ -586,7 +594,15 @@ func (a *askAnswerAdapter) Exit() error {
 		return nil
 	}
 	a.held = ""
+	a.dropSecretDraft()
 	return a.kill()
+}
+
+// dropSecretDraft: the secret field's value leaves with its question.
+func (a *askAnswerAdapter) dropSecretDraft() {
+	if a.draft == "sec" {
+		a.draft, a.draftID = "", ""
+	}
 }
 
 func waitTaken(dir, name string) error {
