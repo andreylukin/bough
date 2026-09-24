@@ -59,8 +59,10 @@ func replayConfig(tape string) string {
 // panicky is what a Go crash or a lipgloss overflow leaves on screen.
 var panicky = regexp.MustCompile(`panic:|goroutine \d+ \[|runtime error:`)
 
-// check is the set of invariants every settled screen must hold.
-func (a *app) check(where string) {
+// check is the set of invariants every settled screen must hold. It
+// returns the settled screen it judged, so a caller with more to assert
+// need not wait out another settle window for the same frame.
+func (a *app) check(where string) string {
 	a.t.Helper()
 	// The screen is eventually consistent and the callers are not: most
 	// reach here through waitDone, which gates on a history entry — a
@@ -95,6 +97,7 @@ func (a *app) check(where string) {
 			a.t.Errorf("%s: row %d is %d cells wide in a %d-column pane:\n%s", where, i, w, a.cols, s)
 		}
 	}
+	return s
 }
 
 // doneCount counts finished turns in the newest session file under
