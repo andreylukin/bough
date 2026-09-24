@@ -332,7 +332,10 @@ role Thread:
             self.edits = True
         self.fresh = self.away
 
-    # The turn ends on an error (a provider failure): the error card.
+    # The turn ends on an error (a provider failure): the error card. A
+    # turn that made a call had a response first, which reported usage,
+    # and a call that wrote changed a file whatever came after: the page
+    # shows both on the failed turn (the browser walk found it).
     atomic action Fail:
         require live(self) and self.status == "running" and self.call != "running"
         self.status = "error"
@@ -340,6 +343,10 @@ role Thread:
         self.workOpen = False
         self.callOpen = self.call == "failed"
         self.errCard = True
+        if self.call != "none":
+            self.usage = True
+        if self.call == "ok":
+            self.edits = True
         self.fresh = self.away
 
 action Init:
