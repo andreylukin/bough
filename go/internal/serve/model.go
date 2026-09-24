@@ -22,3 +22,13 @@ func (a *API) ForgetRunning() { a.forgetRunning() }
 func (a *API) ReapIdleOrbs(ctx context.Context, idle time.Duration, now time.Time) []string {
 	return a.reapIdleOrbs(ctx, idle, now)
 }
+
+// SetRunningTTL sets how long a running snapshot answers for. A browser
+// walk is slower than runningTTL, and a snapshot that expired mid-walk
+// is a Refresh the spec did not take; the walk takes it with
+// ForgetRunning instead.
+func (a *API) SetRunningTTL(d time.Duration) {
+	a.runningMu.Lock()
+	defer a.runningMu.Unlock()
+	a.runningFor = d
+}

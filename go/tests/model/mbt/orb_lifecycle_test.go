@@ -502,6 +502,7 @@ func (a *orbAdapter) write(fresh bool, edit func(*orb.State)) error {
 	st.PID = pid
 	// Past both the last write and serve's last stop: updatedAt only moves on.
 	st.UpdatedAt = time.Now().UTC()
+	timePhases(&st, st.UpdatedAt)
 	if !st.UpdatedAt.After(a.wrote) {
 		st.UpdatedAt = a.wrote.Add(time.Microsecond)
 	}
@@ -514,6 +515,20 @@ func (a *orbAdapter) write(fresh bool, edit func(*orb.State)) error {
 	}
 	a.wrote = st.UpdatedAt
 	return nil
+}
+
+// timePhases keeps state.json's timed phases as orb.Start does: the
+// step in progress is open, every other one ended. The row's chip names
+// the open one, which is how the page shows a start's phase.
+func timePhases(st *orb.State, now time.Time) {
+	busy := st.Status == orb.StatusStarting || st.Status == orb.StatusBuilding
+	n := len(st.Phases)
+	if n > 0 && st.Phases[n-1].EndedAt.IsZero() && (!busy || st.Phases[n-1].Name != st.Phase) {
+		st.Phases[n-1].EndedAt = now
+	}
+	if busy && (n == 0 || st.Phases[n-1].Name != st.Phase || !st.Phases[n-1].EndedAt.IsZero()) {
+		st.Phases = append(st.Phases, orb.Phase{Name: st.Phase, StartedAt: now})
+	}
 }
 
 // build writes the project's build.json as EnsureImage does.
@@ -789,6 +804,8 @@ func (a *orbAdapter) Kill() error {
 	if !ok || err != nil {
 		return err
 	}
+	// The portal's listener is the killed child's, so it goes with it.
+	a.closePortal()
 	return a.sup.Kill(a.id)
 }
 
@@ -838,6 +855,10 @@ func (a *orbAdapter) Remove() error {
 	o, ok, err := a.step("Remove", func(o orbFields) bool { return o.file != "none" && !o.up() && o.owner != "cli" })
 	if !ok || err != nil {
 		return err
+	}
+	// serve kills its own child first, and the portal's listener with it.
+	if o.owner == "serve" {
+		a.closePortal()
 	}
 	ctx, cancel := actionCtx()
 	defer cancel()

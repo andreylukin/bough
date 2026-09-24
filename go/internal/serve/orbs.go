@@ -202,7 +202,11 @@ func (a *API) containerUp(session string) bool {
 	a.sup.mu.Unlock()
 	a.runningMu.Lock()
 	defer a.runningMu.Unlock()
-	if a.running == nil || time.Since(a.runningAt) > runningTTL || (stopped && !stoppedAt.Before(a.runningAt)) {
+	ttl := runningTTL
+	if a.runningFor > 0 {
+		ttl = a.runningFor
+	}
+	if a.running == nil || time.Since(a.runningAt) > ttl || (stopped && !stoppedAt.Before(a.runningAt)) {
 		ctx, cancel := context.WithTimeout(context.Background(), runtimeTimeout)
 		names, err := rt.Running(ctx)
 		cancel()
