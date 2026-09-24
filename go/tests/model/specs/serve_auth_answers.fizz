@@ -1,0 +1,356 @@
+---
+deadlock_detection: false
+---
+
+# The token that guards serve's /api, and answers the page does not
+# expect.
+#
+# serve.Guard (internal/serve/auth.go) lets an /api request through only
+# with the per-install token (serveclient.LoadToken, ~/.bough/serve.token)
+# as a Bearer header or as the bough_serve_token cookie, which GET / sets
+# for a loopback Host or the one --host name a proxy forwards. An unknown
+# Host is refused 403 before anything, the page included; a non-loopback
+# bind (--insecure) drops the Host check but never sets the cookie. The
+# page (web/src) reads the API through api.ts req(), useCatalogue
+# (app.tsx) and one EventSource per open session (api.ts subscribe).
+# Children (plugins/workers) call serve with a Bearer that
+# serveclient.Addr re-reads from the token file on every call.
+#
+# This spec is the behaviour serve and the page OWE, not the code as it
+# stands. Each constant below names a design choice the claims depend
+# on; flipping it to False is the code as it is today (except REFRESH,
+# which already holds), and is also the mutation that shows the claim
+# guarding it can fail:
+#
+#   PORT_SCOPED  the cookie a tab sends is set only by its own serve.
+#                Today the name is one global "bough_serve_token", and a
+#                browser does not scope cookies by port: loading a second
+#                serve's page on the same host (a fixture-HOME preview on
+#                another port) overwrites the first serve's cookie and
+#                every /api call of the first tab then answers 401; a
+#                Reload of the first breaks the second the same way.
+#   REAUTH_401   a 401 is shown as "reload to re-authorize". Today the
+#                list shows the raw "serve: missing or wrong token" as if
+#                it were any other failure.
+#   STREAM_401   an event stream refused 401 says so. Today EventSource
+#                gives up on a non-stream answer and subscribe() has no
+#                onerror: the transcript silently stops updating.
+#   CHECK_OK     every fetch checks res.ok before using the body as data.
+#                Today useCatalogue stores a 401/5xx {"error"} body as
+#                the catalogue and Controls' cat?.providers.flatMap
+#                throws in render. (An HTML 502 is caught: r.json()
+#                throws. ContextPage reads c.providers?. and is safe.)
+#   WAIT_TOKEN   a LoadToken inside another's O_EXCL-create-then-write
+#                window returns the creator's token. Today it fails
+#                "serveclient: token file ... is empty".
+#   REFRESH      a child re-reads the token file on every call. True
+#                today, so the suspected "a child's cached token is never
+#                refreshed" does not hold; False shows why it matters.
+#
+# Tokens are abstract and relative to the running serve A:
+#   fresh  the token serve A holds now
+#   stale  a token of serve A before a restart that minted a new one
+#   other  serve B's token (another serve on another port)
+#   none   nothing
+#
+# Fields:
+#   via      how tab A reached serve A: none (not loaded) | loopback |
+#            proxy (the --host name, tailscale serve) | unknown (a Host
+#            serve does not answer to) | remote (a non-loopback bind)
+#   proxy    the reverse proxy in front of serve (via proxy): up | down
+#            | back. It drops at most once: a proxy that is up exactly
+#            while serve is down, forever, starves any recovery.
+#   serve    up | starting (restarted with no token file: LoadToken is
+#            creating it and serve is not listening yet)
+#   disk     the token file: ok | missing | empty (created, not written)
+#   jar_a    the cookie tab A sends to serve A
+#   other    a tab on serve B, same host, another port, is loaded
+#   jar_b    the cookie that tab sends to serve B
+#   got      the last /api answer tab A read: "" | ok | 401 | 403 |
+#            net (connection refused) | html502 (the proxy's own page)
+#   shown    what tab A says: blank | ok | reauth ("reload to
+#            re-authorize") | down (serve unreachable) | refused (the
+#            Host 403 body) | crash (render threw)
+#   stream   tab A's open session's EventSource: none | open | dropped
+#            (serve went away; EventSource retries) | closed (refused)
+#   cat      the model picker's catalogue: none | ok | failed
+#   child    a running child session's Bearer: fresh (serve's token) |
+#            stale (an older one, not used since a rotation) |
+#            refused_intact (its last call was 401 although the token
+#            file was there to read)
+#   loader   a second LoadToken (another serve starting, a CLI) inside
+#            the create-then-write window: none | error
+#
+# Corrections to the mapped model, from the code:
+# - "ClientCachedStale" is only reachable when the token file is gone
+#   and serve holds a token nobody can read (see child); Addr refreshes
+#   the cache on every call otherwise.
+# - OpenContext is not a separate answer: ContextPage uses optional
+#   chaining and never throws; the model picker is the fetch that does.
+# - The catalogue read is one step (open + answer): nothing the page
+#   shows moves while it is out.
+
+PORT_SCOPED = True
+REAUTH_401 = True
+STREAM_401 = True
+CHECK_OK = True
+WAIT_TOKEN = True
+REFRESH = True
+
+# Vias whose GET / hands the page a cookie: a Reload re-authorizes.
+REAUTHORIZABLE = ["loopback", "proxy"]
+# Vias on which the app itself is on screen (unknown gets the 403 body).
+APP = ["loopback", "proxy", "remote"]
+
+# What an /api request from tab A gets back right now.
+def answer(r):
+    if r.via == "unknown":
+        return "403"
+    if r.via == "proxy" and r.proxy == "down":
+        return "net"
+    if r.serve != "up":
+        # tailscale serve answers its own HTML 502 for a backend that is
+        # not listening; a direct request is refused.
+        if r.via == "proxy":
+            return "html502"
+        return "net"
+    if r.jar_a != "fresh":
+        return "401"
+    return "ok"
+
+def page_for(a):
+    if a == "ok":
+        return "ok"
+    if a == "401":
+        if REAUTH_401:
+            return "reauth"
+        return "down"
+    if a == "403":
+        return "refused"
+    return "down"
+
+role Room:
+    action Init:
+        self.via = "none"
+        self.proxy = "up"
+        self.serve = "up"
+        self.disk = "ok"
+        self.jar_a = "none"
+        self.other = False
+        self.jar_b = "none"
+        self.got = ""
+        self.shown = "blank"
+        self.stream = "none"
+        self.cat = "none"
+        # A child session already running under serve, holding the token
+        # it read at its first call.
+        self.child = "fresh"
+        self.loader = "none"
+
+    # GET / on via v, then the page's first list read. The cookie comes
+    # only from a loopback or --host request.
+    atomic func load(v):
+        self.via = v
+        if v in REAUTHORIZABLE:
+            self.jar_a = "fresh"
+            if not PORT_SCOPED and self.other:
+                self.jar_b = "other"
+        self.stream = "none"
+        self.cat = "none"
+        self.got = answer(self)
+        self.shown = page_for(self.got)
+
+    atomic action LoadShellLoopback:
+        require self.via == "none"
+        self.load("loopback")
+
+    atomic action LoadShellProxy:
+        require self.via == "none"
+        self.load("proxy")
+
+    atomic action LoadShellUnknownHost:
+        require self.via == "none"
+        self.load("unknown")
+
+    atomic action LoadShellRemote:
+        require self.via == "none"
+        self.load("remote")
+
+    # The person reloads tab A. Strongly fair: a page that says "reload"
+    # is eventually reloaded, even across restarts that disable it for a
+    # moment again and again.
+    atomic fair<strong> action Reload:
+        require self.via != "none" and self.serve == "up"
+        require self.via != "proxy" or self.proxy != "down"
+        self.load(self.via)
+
+    # The list poll (4 s timer): GET /api/sessions.
+    atomic fair<strong> action ListPoll:
+        require self.via in APP
+        self.got = answer(self)
+        self.shown = page_for(self.got)
+
+    # Opening a session: EventSource /api/sessions/{id}/events.
+    atomic action Subscribe:
+        require self.shown == "ok" and self.stream == "none"
+        a = answer(self)
+        if a == "ok":
+            self.got = a
+            self.stream = "open"
+        elif a == "401":
+            self.stream = "closed"
+            if STREAM_401:
+                self.got = a
+                self.shown = page_for(a)
+        else:
+            self.got = a
+            self.shown = page_for(a)
+
+    # EventSource reconnects by itself once serve listens again.
+    atomic fair<strong> action StreamReconnect:
+        require self.stream == "dropped" and self.serve == "up"
+        require self.via != "proxy" or self.proxy != "down"
+        a = answer(self)
+        if a == "ok":
+            self.stream = "open"
+        elif a == "401":
+            self.stream = "closed"
+            # Today the page never reads this answer: no onerror.
+            if STREAM_401:
+                self.got = a
+                self.shown = page_for(a)
+
+    # Opening the model picker: useCatalogue reads GET /api/models, and
+    # the answer is whatever /api answers now.
+    atomic action OpenModelPicker:
+        require self.shown == "ok" and self.cat != "ok"
+        a = answer(self)
+        self.catalogue(a)
+
+    # The same read when serve's /api/models itself fails: 500 {"error"}.
+    atomic action OpenModelPicker5xx:
+        require self.shown == "ok" and self.cat != "ok"
+        require answer(self) == "ok"
+        self.catalogue("5xx")
+
+    atomic func catalogue(a):
+        if a == "ok":
+            self.cat = "ok"
+            return
+        if a != "5xx":
+            self.got = a
+        if a in ["net", "html502"] or CHECK_OK:
+            self.cat = "failed"
+            if a != "5xx":
+                self.shown = page_for(a)
+        else:
+            # A JSON {"error"} body stored as the catalogue.
+            self.shown = "crash"
+
+    # A preview serve on another port of the same host, with its own
+    # fixture HOME and token, opened in another tab.
+    atomic action OpenOtherServe:
+        require self.via == "loopback" and not self.other
+        self.other = True
+        self.jar_b = "fresh"
+        if not PORT_SCOPED:
+            self.jar_a = "other"
+
+    atomic action DeleteTokenFile:
+        require self.disk == "ok"
+        self.disk = "missing"
+
+    # bough serve restarts; its open streams end. With the token file in
+    # place it keeps the token; without one LoadToken creates the file
+    # (O_EXCL) and writes a new token before serve listens.
+    atomic action ServeRestart:
+        require self.serve == "up"
+        if self.stream == "open":
+            self.stream = "dropped"
+        if self.disk == "missing":
+            self.disk = "empty"
+            self.serve = "starting"
+
+    atomic fair<strong> action TokenWritten:
+        require self.disk == "empty"
+        self.disk = "ok"
+        self.serve = "up"
+        if self.jar_a == "fresh":
+            self.jar_a = "stale"
+        if self.child == "fresh":
+            self.child = "stale"
+
+    # A second LoadToken inside the create-then-write window. Owed: it
+    # waits for the write and returns that token, which changes nothing
+    # here (a waiting state only doubled the graph around the window).
+    atomic action ConcurrentLoadToken:
+        require self.disk == "empty" and self.loader == "none"
+        if not WAIT_TOKEN:
+            self.loader = "error"
+
+    # A child session calls serve (tools.spawn background) with the
+    # Bearer serveclient holds; Addr re-reads the token file first. Only
+    # with the file in place: without it Addr keeps the Bearer it had,
+    # which is the running serve's own token unless serve rotated since
+    # the child's last call (see the flow notes).
+    atomic action ChildCall:
+        require self.serve == "up" and self.disk == "ok"
+        if REFRESH:
+            self.child = "fresh"
+        elif self.child != "fresh":
+            self.child = "refused_intact"
+
+    atomic action ProxyDown:
+        require self.via == "proxy" and self.proxy == "up"
+        self.proxy = "down"
+
+    atomic fair<strong> action ProxyUp:
+        require self.via == "proxy" and self.proxy == "down"
+        self.proxy = "back"
+
+action Init:
+    room = Room()
+
+# A cookie a tab sends to its serve was set by that serve: opening a
+# second serve never silently breaks the first tab, nor reloading the
+# first the second.
+always assertion NoForeignCookie:
+    return room.jar_a != "other" and room.jar_b != "other"
+
+# A 401 is "reload to re-authorize", never an outage or a crash.
+always assertion Unauthorized401IsReauth:
+    return room.got != "401" or room.shown == "reauth"
+
+# "Serve is unreachable" is said only for an answer that did not come
+# from serve's API: refused, or the proxy's own page.
+always assertion DownOnlyWhenUnreachable:
+    return room.shown != "down" or room.got in ["net", "html502"]
+
+# A refused stream is on screen, never a transcript that silently stops
+# under a page that still says all is well. (A later poll may say the
+# proxy is down instead: that is on screen too.)
+always assertion ClosedStreamSaysSo:
+    return room.stream != "closed" or room.shown != "ok"
+
+# A wrong-shaped answer never throws in render.
+always assertion NeverCrashes:
+    return room.shown != "crash"
+
+# A LoadToken racing the creator returns the one token on disk.
+always assertion ConcurrentLoadGetsTheToken:
+    return room.loader != "error"
+
+# A child with the token file to read is never refused.
+always assertion ChildAuthWhenFileIntact:
+    return room.child != "refused_intact"
+
+# hasToken: no cookie is no token (Guard refuses an empty one), so a
+# page that was never handed a cookie (a remote bind) never reads data.
+always assertion NoCookieNoApi:
+    return room.jar_a != "none" or room.got != "ok"
+
+# From a reauth, a clobbered cookie, a restart onto a new token or a
+# proxy outage, the tab comes back to ok, as long as it reached serve
+# on a name that hands it a cookie.
+always eventually assertion PageRecovers:
+    return room.via not in REAUTHORIZABLE or room.shown == "ok"
