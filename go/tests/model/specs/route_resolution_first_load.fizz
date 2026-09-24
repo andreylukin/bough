@@ -1,0 +1,425 @@
+# Deep links and the first load (web/src/app.tsx: the "Where you are lives
+# in the URL" effect, its write-back, the session lookup effect and the
+# arrival pick; wiki.tsx parseWikiHash/wikiHash; project.tsx ProjectView's
+# load and its stale-thread effect). navigation_routes_palette abstracts
+# the hash to seven values and runs arrival only against a quiet overview;
+# this spec is about what one tab does with the hashes it is handed on
+# load, on a typed link, on Back and on Reload, while the first list read,
+# a session lookup and a project read are still out.
+#
+# One desktop tab. The server lists one session S (recent: the one the
+# arrival pick opens) and not X; project a exists, project b exists and
+# holds thread T but not thread Z.
+#
+# hash (location.hash):
+#   home       #/
+#   s          #/s/S                     S's transcript
+#   other      #/s/X                     looked up on its own
+#   changes_q  #/s/S/changes?turn=N      S's Changes, filtered to turn N
+#   wiki_odd   #/wiki/p/<a page whose path holds a space, % and ~>
+#   projects   #/projects (a typed #/projects/ lands here too)
+#   unknown    #/nope                    "Nothing at this address"
+#   pa         #/projects/a
+#   pb_t       #/projects/b/t/T          a thread b holds
+#   pb_z       #/projects/b/t/Z          a thread b does not hold
+#
+# page is what the main pane shows: overview, loading ("Loading
+# session…"), session, other_session (X's transcript), missing ("Session
+# not found"), loadfail ("Couldn't load this session", Retry), changes,
+# wiki_page, projects, lost ("Nothing at this address"), project.
+# list is the first GET /api/sessions of this load: pending, ok, failed
+# (the overview says so, with Retry; the 4 s poll retries too). arrived is
+# the arrival decision (App's arrived ref) and acted whether the person
+# did anything since this load; both are the adapter's to track. overlay
+# is the palette (pal) or nothing. back is where one Back lands (Forward
+# is not modelled). detail is the project read on screen ("" before one
+# lands; a, b, missing (404), error), pend_a / pend_b whether a read of
+# that project is still out, shown the thread b's page shows (T, or
+# "note": a deep-linked thread b does not hold, said on the page).
+#
+# Left out, each on purpose:
+#   - the welcome on an empty server and the phone layout (the arrival
+#     pick never runs on a phone): a different server and viewport, so a
+#     different Init; they are their own flow.
+#   - a session this tab is starting (404 within 2 min of create retries
+#     each second): no link reaches it, only New does (session_create).
+#   - the 4 s project poll: it only re-reads, and the spec already drops
+#     a stale read, which is what the poll papers over.
+#   - #/s/S?turn=N (no sub-page): the write-back drops the query, but
+#     nothing reads ?turn= off a bare session link (changes.tsx reads it
+#     only on the Changes page), so nothing the link carried is lost.
+#
+# Where this spec is ahead of the product (2026-09-24; later stages are
+# expected to go red here until it is fixed):
+#   OpenOddWikiPage  wikiHash writes the path raw: a '%' makes
+#                    decodeURIComponent throw in read() (a reload is a
+#                    blank page, Back leaves the old page up), and a '~'
+#                    is split as a citation, so the link reads as lost
+#   OpenSlashLink    #/projects/ (and #/hooks/, #/wiki/) is "Nothing at
+#                    this address"
+#   FollowToB/Z,     ProjectView.load has no slug guard: a's read landing
+#   DetailA          after the slug moved to b puts a's detail under
+#                    #/projects/b, and its loadedAt makes the stale-thread
+#                    effect clear T and rewrite the URL to #/projects/b
+#   DetailB* on pb_z a thread b does not hold is dropped silently and the
+#                    URL rewritten; nothing says so
+#   OpenPalette,     neither sets arrived: the pick opens S under an open
+#   NavProjects+     palette, or over the overview the person went back
+#   GoHome           to (a pushState nav fires no hashchange)
+
+# What a fresh read of a hash puts in the main pane.
+def landing(h, list):
+    if h == "home":
+        return "overview"
+    if h == "s":
+        return "session" if list == "ok" else "loading"
+    if h == "changes_q":
+        return "changes" if list == "ok" else "loading"
+    if h == "other":
+        return "loading"
+    if h == "wiki_odd":
+        return "wiki_page"
+    if h == "projects":
+        return "projects"
+    if h in ("pa", "pb_t", "pb_z"):
+        return "project"
+    return "lost"
+
+# The pages a hash may show while it is in the URL.
+def allowed(h):
+    if h == "home":
+        return ("overview",)
+    if h == "s":
+        return ("loading", "session", "loadfail")
+    if h == "changes_q":
+        return ("loading", "changes", "loadfail")
+    if h == "other":
+        return ("loading", "other_session", "missing", "loadfail")
+    if h == "wiki_odd":
+        return ("wiki_page",)
+    if h == "projects":
+        return ("projects",)
+    if h == "unknown":
+        return ("lost",)
+    if h in ("pa", "pb_t", "pb_z"):
+        return ("project",)
+    return ()
+
+# The project a hash names ("" for none).
+def slug(h):
+    if h == "pa":
+        return "a"
+    if h in ("pb_t", "pb_z"):
+        return "b"
+    return ""
+
+# What a transcript read (lookup 200, or the list holding S) resolves.
+def resolved(h):
+    if h == "s":
+        return "session"
+    if h == "changes_q":
+        return "changes"
+    return "other_session"
+
+role Route:
+    action Init:
+        self.hash = "home"
+        self.page = "overview"
+        self.list = "pending"
+        self.arrived = False
+        self.acted = False
+        self.overlay = "none"
+        self.back = "none"
+        self.detail = ""
+        self.pend_a = False
+        self.pend_b = False
+        self.shown = ""
+
+    # Every arrival at a hash by a read (typed link, Back, Reload): the
+    # page it lands on, and the project read it starts. Leaving the
+    # project pages unmounts ProjectView, so reads still out are dropped.
+    atomic func go(h):
+        self.hash = h
+        self.page = landing(h, self.list)
+        if slug(h) == "":
+            self.detail = ""
+            self.pend_a = False
+            self.pend_b = False
+        else:
+            self.detail = ""
+            if slug(h) == "a":
+                self.pend_a = True
+            else:
+                self.pend_b = True
+        self.shown = ""
+
+    # A person's move before the list answered decides the arrival: it is
+    # never overridden by the pick.
+    atomic func touch():
+        self.acted = True
+        self.arrived = True
+
+    # --- system: the first list read ---
+
+    # It answered within 400 ms of mount. On #/, with nothing done yet,
+    # the pick opens S in place (replaceState: back is untouched).
+    atomic fair action ListFast:
+        require self.list == "pending"
+        self.list = "ok"
+        if not self.arrived and self.hash == "home" and self.overlay == "none" and self.page == "overview":
+            self.hash = "s"
+            self.page = "session"
+        self.arrived = True
+        if self.page in ("loading", "loadfail") and self.hash in ("s", "changes_q"):
+            self.page = resolved(self.hash)
+
+    # It answered late (after a failure it always is): nothing moves, but
+    # a link to S resolves from the list.
+    atomic fair action ListLate:
+        require self.list in ("pending", "failed")
+        self.list = "ok"
+        self.arrived = True
+        if self.page in ("loading", "loadfail") and self.hash in ("s", "changes_q"):
+            self.page = resolved(self.hash)
+
+    # The first read failed: the overview shows Retry and the arrival
+    # waits for a read that answers.
+    atomic fair action ListFail:
+        require self.list == "pending"
+        self.list = "failed"
+
+    # --- system: GET /api/sessions/{id} for the session in the URL ---
+
+    atomic fair action Found:
+        require self.page == "loading"
+        self.page = resolved(self.hash)
+
+    atomic fair action NotFound:
+        require self.page == "loading" and self.hash == "other"
+        self.page = "missing"
+
+    atomic fair action LookupError:
+        require self.page == "loading"
+        self.page = "loadfail"
+
+    # --- system: GET /api/projects/{slug} ---
+
+    # A read of a that lands after the URL moved to b is not b's detail.
+    atomic fair action DetailA:
+        require self.pend_a
+        self.pend_a = False
+        if self.hash == "pa":
+            self.detail = "a"
+
+    atomic fair action DetailB:
+        require self.pend_b
+        self.pend_b = False
+        if slug(self.hash) == "b":
+            self.detail = "b"
+            self.shown = "T" if self.hash == "pb_t" else "note"
+
+    atomic fair action DetailBMissing:
+        require self.pend_b
+        self.pend_b = False
+        if slug(self.hash) == "b":
+            self.detail = "missing"
+
+    atomic fair action DetailBError:
+        require self.pend_b
+        self.pend_b = False
+        if slug(self.hash) == "b":
+            self.detail = "error"
+
+    # --- the person: a link typed or pasted (hashchange, a new entry) ---
+
+    atomic action OpenSessionLink:
+        require self.overlay == "none" and self.back == "none" and self.hash != "s"
+        self.back = self.hash
+        self.go("s")
+        self.touch()
+
+    atomic action OpenOtherLink:
+        require self.overlay == "none" and self.back == "none" and self.hash != "other"
+        self.back = self.hash
+        self.go("other")
+        self.touch()
+
+    atomic action OpenChangesLink:
+        require self.overlay == "none" and self.back == "none" and self.hash != "changes_q"
+        self.back = self.hash
+        self.go("changes_q")
+        self.touch()
+
+    # #/projects/ is the projects page, and the write-back names it
+    # #/projects: the slash carried nothing.
+    atomic action OpenSlashLink:
+        require self.overlay == "none" and self.back == "none" and self.hash != "projects"
+        self.back = self.hash
+        self.go("projects")
+        self.touch()
+
+    atomic action OpenUnknownLink:
+        require self.overlay == "none" and self.back == "none" and self.hash != "unknown"
+        self.back = self.hash
+        self.go("unknown")
+        self.touch()
+
+    atomic action OpenProjectLink:
+        require self.overlay == "none" and self.back == "none" and self.hash == "home"
+        self.back = self.hash
+        self.go("pa")
+        self.touch()
+
+    # From a's page, a link to a thread of b, or to one b does not hold,
+    # possibly before a's read landed.
+    atomic action FollowToB:
+        require self.overlay == "none" and self.hash == "pa" and self.back == "home"
+        self.back = self.hash
+        self.go("pb_t")
+        self.touch()
+
+    atomic action FollowToZ:
+        require self.overlay == "none" and self.hash == "pa" and self.back == "home"
+        self.back = self.hash
+        self.go("pb_z")
+        self.touch()
+
+    # --- the person: pushState navigation (no hashchange fires) ---
+
+    # A wiki page whose path holds a space, a % and a ~ (goWiki pushes
+    # wikiHash of it). Reading that hash back is what Back and Reload do.
+    atomic action OpenOddWikiPage:
+        require self.overlay == "none" and self.back == "none" and self.page == "overview"
+        self.back = self.hash
+        self.hash = "wiki_odd"
+        self.page = "wiki_page"
+        self.touch()
+
+    # The Projects nav link, from the overview or from a failed lookup
+    # (whose selection the projects page leaves in place: Back to the
+    # link must still read it again).
+    atomic action NavProjects:
+        require self.overlay == "none" and ((self.back == "none" and self.page == "overview") or self.page in ("missing", "loadfail"))
+        self.back = self.hash
+        self.go("projects")
+        self.touch()
+
+    # "Show all sessions" (goList) from a page the person pushed to, or
+    # from under a lookup that failed.
+    atomic action GoHome:
+        require self.overlay == "none" and ((self.back == "home" and self.hash in ("projects", "wiki_odd")) or self.page in ("missing", "loadfail"))
+        self.back = self.hash
+        self.go("home")
+        self.touch()
+
+    # "Retry" under "Couldn't load this session".
+    atomic action Retry:
+        require self.overlay == "none" and self.page == "loadfail"
+        self.page = "loading"
+
+    # --- the palette (⌘K), opened on the overview ---
+
+    atomic action OpenPalette:
+        require self.overlay == "none" and self.page == "overview"
+        self.overlay = "pal"
+        self.touch()
+
+    atomic action ClosePalette:
+        require self.overlay == "pal"
+        self.overlay = "none"
+
+    # --- the browser ---
+
+    atomic action Back:
+        require self.overlay == "none" and self.back != "none"
+        h = self.back
+        self.back = "none"
+        self.go(h)
+        self.touch()
+
+    # The same URL read again on a fresh page: a new first load.
+    atomic action Reload:
+        require self.overlay == "none"
+        self.list = "pending"
+        self.arrived = False
+        self.acted = False
+        self.go(self.hash)
+
+action Init:
+    route = Route()
+
+# Every hash renders its page, a lookup in flight, or an explicit
+# not-found/error; reading a hash never throws and never falls through
+# to "Nothing at this address" for a route the app has.
+always assertion HashRendersItsPage:
+    return route.page in allowed(route.hash)
+
+# A page this tab wrote to the URL reads back as the same page: the odd
+# wiki path survives wikiHash then parseWikiHash.
+always assertion WikiLinkReadsBack:
+    return route.hash != "wiki_odd" or route.page == "wiki_page"
+
+# The write-back never drops what a link carried: Changes is on screen
+# only with its ?turn= still in the URL.
+always assertion WriteBackKeepsTheQuery:
+    return route.page != "changes" or route.hash == "changes_q"
+
+# The project detail on screen is the URL's project (or says it is
+# missing, or failed); a thread only shows under b's own detail.
+always assertion DetailIsTheURLsProject:
+    s = slug(route.hash)
+    if route.page != "project":
+        return route.detail == "" and route.shown == ""
+    if route.detail in ("", s):
+        return route.shown == "" or route.detail == "b"
+    return s == "b" and route.detail in ("missing", "error") and route.shown == ""
+
+# Once b's detail is read, a deep-linked thread it holds is shown and
+# stays in the URL; one it does not hold is said on the page.
+always assertion ThreadLinkResolves:
+    if route.page != "project" or route.detail != "b":
+        return True
+    return (route.hash == "pb_t" and route.shown == "T") or (route.hash == "pb_z" and route.shown == "note")
+
+# A failed first read keeps the arrival open until a read answers,
+# unless the person has already decided it.
+always assertion FailedFirstReadDefersArrival:
+    return route.list != "failed" or route.acted or not route.arrived
+
+# A failure on screen is the answer of a read made for it: coming back to
+# a link that failed once reads it again.
+transition assertion FailureIsFresh(before, after):
+    b = before.route
+    a = after.route
+    if a.page not in ("missing", "loadfail") or a.page == b.page:
+        return True
+    return b.page == "loading"
+
+# The arrival pick (#/ → #/s/S in place) only happens on a quiet
+# overview: nothing done since load, no palette, not decided yet.
+transition assertion PickOnlyUntouched(before, after):
+    b = before.route
+    a = after.route
+    if not (b.hash == "home" and a.hash == "s" and a.back == b.back):
+        return True
+    return not b.arrived and not b.acted and b.overlay == "none" and b.page == "overview" and b.list == "pending"
+
+# The arrival is decided once per load: it is only undone by a reload.
+transition assertion ArrivalOnce(before, after):
+    b = before.route
+    a = after.route
+    if not b.arrived or a.arrived:
+        return True
+    return a.list == "pending" and not a.acted and a.hash == b.hash
+
+# A lookup never leaves "Loading session…" up for good.
+always eventually assertion LookupSettles:
+    return route.page != "loading"
+
+# A slug change settles on that project's detail, missing, or error.
+always eventually assertion ProjectSettles:
+    return route.page != "project" or route.detail != ""
+
+# The first list read is always decided (arrival or not).
+always eventually assertion ArrivalDecided:
+    return route.arrived
