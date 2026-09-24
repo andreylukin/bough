@@ -23,14 +23,15 @@
 #        idle and still owns the orb (a headless child waits on stdin)
 #   xo   the process died with the turn open (history reads interrupted)
 #        and the parent has not been told: a report is owed
-#   t    the parent has been told of the turn and no process holds the
-#        agent: it finished (done), or it was cut and reported
-#        (interrupted), or A finished and was killed idle. The row's
+#   t    the parent has been told of the turn and no turn runs: it
+#        finished (done; B's or C's process may still wait idle on
+#        stdin), or it was cut and reported (interrupted), or A finished
+#        and was killed idle. The row's
 #        status tells these apart; no claim here does, and keeping them
 #        apart doubled the graph.
 # A normal finish reports from its closing event and lands in about a
-# poll: folded into Finish, as in background_agents.fizz. A kill's report
-# is what a restart can cut, so it is its own step (Report*).
+# poll: folded into Finish, as in background_agents.fizz. A turn a
+# restart cut is reported by the next boot (Boot).
 #
 # Orb fields (A's orb; its owner is A's process, alive iff a in r, i):
 #   file  state.json status: building | starting | running | stopped
@@ -40,33 +41,32 @@
 #         later rebuild replaced (old); meaningless while missing
 #
 # serve: up | closing | down. closing is inside sup.Close after the
-# kills: the report goroutines each exit event started are in flight and
-# the process has not exited yet (serveForeground returns right after
-# Close). Nothing answers HTTP there (srv.Shutdown ran first); it exists
-# so a report may land before the exit, or not.
+# kills, before the process exits (serveForeground returns right after
+# Close). Nothing answers HTTP there (srv.Shutdown ran first).
 #
-# THE SPEC SAYS WHAT A RESTART PROMISES. Where main (5471918e) differs,
-# the step is marked CODE, and each is a finding for the Go MBT stage:
-#   1. Boot drain: requeueLocked keeps meta.Task but maxRunning is in
-#      memory only, so NewSupervisor's drainQueue runs with
-#      defaultMaxRunning (16) and starts B and C together (a later spawn
-#      sets the cap again). Here the cap survives (ServeStartsWithinCap).
-#   2. Reports cut by the exit: childEventLocked starts `go report` on
-#      each killed child's exit event and Close returns without waiting;
-#      the process then exits. Nothing at boot compares a child's last
-#      turn with meta.Reported, so a cut report is never sent (and
-#      report saves Reported before notifyFrom writes, so an exit
-#      between the two loses it with Reported already advanced). Here
-#      Report stays enabled after the next boot (ReportsLand).
-#   3. Close never calls stopKilledOrb (Kill does): every restart leaves
-#      the project VMs of killed children running. Here Close stops them
-#      (CloseStopsOrbs).
-#   4. orbState derives stopped for a dead owner only from running and
-#      starting: an orphan "building" shows building forever. Here the
-#      row reads stopped (NoLiveRowWithoutOwner).
-#   5. The reaper considers only running and failed state.json, so a
-#      container left up under "starting" (killed in resume.sh) is never
-#      stopped. Here Reap takes any orphan container (OrphansStopped).
+# THE SPEC SAYS WHAT A RESTART PROMISES. Main (5471918e) differed in five
+# places, each found by the Go MBT stage (mbt/serve_close_children_orbs_
+# test.go) and fixed on the branch that added it:
+#   1. Boot drain: maxRunning was in memory only, so NewSupervisor's
+#      drainQueue ran with defaultMaxRunning (16) and started B and C
+#      together. meta.json now keeps the cap (ServeStartsWithinCap).
+#   2. Reports cut by the exit: Close started `go report` on each killed
+#      child's exit event and returned without waiting; the process then
+#      exited, and a parent Close was killing could be written a report
+#      on its stdin as it died. Nothing at boot compared a child's last
+#      turn with meta.Reported, so a cut report was lost for good. Now
+#      no report is sent while closing, and the next boot reports every
+#      turn a child owes (ReportsLand): Boot turns every xo into t. A
+#      boot reports before it answers anything, so no state has serve up
+#      with a report owed.
+#   3. Close never called stopKilledOrb (Kill does): every restart left
+#      the project VMs of killed children running (CloseStopsOrbs).
+#   4. orbState derived stopped for a dead owner only from running and
+#      starting: an orphan "building" showed building forever
+#      (NoLiveRowWithoutOwner).
+#   5. The reaper considered only running and failed state.json, so a
+#      container left up under "starting" (killed in resume.sh) was never
+#      stopped. Reap takes any orphan container (OrphansStopped).
 #
 # Checked and NOT a finding: requeueLocked sorts by id, and ids are
 # history.NewID (time-ordered, minted at create); a child is queued only
@@ -76,9 +76,10 @@
 # the reaper stopping a live owner's idle orb (orb_lifecycle.fizz), a
 # spawn after the restart (under this spec the cap was never lost, so it
 # changes nothing), and a resume of A before its cut turn is reported
-# (ResumeA waits for it: at main the new turn's report is keyed past
-# the cut one's, so a resume first would swallow it; a finding to map
-# separately).
+# (ResumeA waits for it: the new turn's report is keyed past the cut
+# one's, so a resume first would swallow it; a finding to map
+# separately). Since a boot reports first, that resume cannot happen
+# through serve.
 
 MAX_RUNNING = 1
 
@@ -155,8 +156,9 @@ role Room:
 
     # SIGINT/SIGTERM: srv.Shutdown, then sup.Close: closed and the
     # in-memory queue dropped first (meta.json keeps B's and C's tasks),
-    # every child killed and reaped. Each kill mid-turn owes a report.
-    # CODE (3): at main there is no stopKilledOrb here; the orb stays up.
+    # every child killed and reaped, and each killed child's running
+    # container stopped (stopKilledOrb, as Kill). Each kill mid-turn owes
+    # a report, which the next boot sends.
     atomic action Close:
         require self.serve == "up"
         self.serve = "closing"
@@ -165,9 +167,7 @@ role Room:
             self.ctr = "stopped"
         self.cut()
 
-    # Close returned and serveForeground exits: whatever report
-    # goroutine had not written is gone with the process. CODE (2): at
-    # main that report is lost for good.
+    # Close returned and serveForeground exits.
     atomic fair action Exit:
         require self.serve == "closing"
         self.serve = "down"
@@ -179,34 +179,24 @@ role Room:
         self.serve = "down"
         self.cut()
 
-    # launchd KeepAlive starts serve again: loadMeta, requeueLocked (B
-    # before C: id order), and the drain, with nothing running.
-    # CODE (1): at main the drain uses defaultMaxRunning and starts both.
+    # launchd KeepAlive starts serve again: loadMeta (the cap with it),
+    # requeueLocked (B before C: id order), every owed report sent to its
+    # parent, and the drain, with nothing running.
     atomic fair action Boot:
         require self.serve == "down"
         self.serve = "up"
+        if self.a == "xo":
+            self.a = "t"
+        if self.b == "xo":
+            self.b = "t"
+        if self.c == "xo":
+            self.c = "t"
         self.drain()
 
     # --- what serve owes after the fact ---
 
-    # A killed child's report reaches the parent: from the exit event's
-    # goroutine before the process exits, or (the promise) from a
-    # reconcile after the next boot. CODE (2): at main only the first.
-    atomic fair<strong> action ReportA:
-        require self.serve in ("up", "closing") and self.a == "xo"
-        self.a = "t"
-
-    atomic fair<strong> action ReportB:
-        require self.serve in ("up", "closing") and self.b == "xo"
-        self.b = "t"
-
-    atomic fair<strong> action ReportC:
-        require self.serve in ("up", "closing") and self.c == "xo"
-        self.c = "t"
-
     # The reaper: a container whose owner is gone is stopped (and
     # state.json marked stopped), whatever state.json says.
-    # CODE (5): at main only under running or failed.
     atomic fair<strong> action Reap:
         require self.serve == "up" and self.ctr == "running" and self.a not in ("r", "i")
         self.ctr = "stopped"
@@ -246,7 +236,7 @@ def owner_alive(r):
     return r.a in ("r", "i")
 
 # serve's orbState: the status A's row shows. A dead owner's state.json
-# claims nothing live. (CODE (4): at main building is shown as is.)
+# claims nothing live.
 def orb_view(r):
     if r.file in ("building", "starting", "running") and not owner_alive(r):
         return "stopped"

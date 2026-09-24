@@ -329,6 +329,12 @@ func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 		}
 		// Not "error": the loop writes it MID-turn, several per turn.
 		delete(s.running, id)
+		if s.closed {
+			// Serve is going down: a report sent now dies with the
+			// process half written, or lands on the stdin of a parent
+			// this Close is killing. The next boot sends it (reportOwed).
+			return
+		}
 		go s.report(id, m.SpawnedBy, kind)
 		go s.drainQueue()
 	}
@@ -433,6 +439,51 @@ func (s *Supervisor) report(id, parent, trigger string) {
 	s.mu.Unlock()
 	// A parent that cannot be told (deleted file) has nobody to tell.
 	_ = s.notifyFrom(parent, id, reportText(id, s.childTitle(id), word, failText(word, t)))
+}
+
+// reportOwedWithin bounds how old a turn reportOwed still reports: a
+// file from before meta.Reported existed reads as never reported, and
+// its parent has long stopped waiting.
+const reportOwedWithin = 7 * 24 * time.Hour
+
+// reportOwed sends, once at boot, every report a past serve owed and
+// never sent: a turn its Close or its crash cut (the process died with
+// it open), or one that closed just before and whose report died with
+// serve. Without it a parent waited forever on an agent a restart had
+// killed. report keys each on its turn, so one already sent is not sent
+// again, and a child that is live again reports through its own events.
+func (s *Supervisor) reportOwed() {
+	type owed struct{ id, parent string }
+	var todo []owed
+	s.mu.Lock()
+	for id, m := range s.meta {
+		if m.SpawnedBy != "" && m.Task == nil {
+			todo = append(todo, owed{id, m.SpawnedBy})
+		}
+	}
+	s.mu.Unlock()
+	sort.Slice(todo, func(i, j int) bool { return todo[i].id < todo[j].id })
+	for _, o := range todo {
+		s.mu.Lock()
+		closed := s.closed
+		s.mu.Unlock()
+		if closed {
+			return // the next boot owes them still
+		}
+		entries, err := s.Entries(o.id)
+		if err != nil || s.Live(o.id) {
+			continue
+		}
+		t := lastTurn(entries)
+		key := t.input
+		if t.closing != nil && (t.input == nil || t.closing.Seq > t.input.Seq) {
+			key = t.closing
+		}
+		if key == nil || key.Seq <= s.Meta(o.id).Reported || time.Since(key.At) > reportOwedWithin {
+			continue
+		}
+		s.report(o.id, o.parent, "exit")
+	}
 }
 
 // failText is the notice body: a failure leads with its reason, since

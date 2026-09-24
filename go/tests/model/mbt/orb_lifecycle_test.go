@@ -71,7 +71,7 @@ func (o orbFields) state() map[string]any {
 // The spec's derived views, line for line.
 
 func (o orbFields) status() string {
-	if (o.file == "running" || o.file == "starting") && (o.owner == "none" || o.mark) {
+	if (o.file == "running" || o.file == "starting" || o.file == "building") && (o.owner == "none" || o.mark) {
 		return "stopped"
 	}
 	return o.file
@@ -95,7 +95,7 @@ func (o orbFields) up() bool {
 func (o orbFields) portalLive() bool { return o.portal && o.owner != "none" }
 
 func (o orbFields) buildLog() string {
-	if o.file == "building" {
+	if o.status() == "building" {
 		return "building"
 	}
 	return "done"

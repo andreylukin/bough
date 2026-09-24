@@ -86,7 +86,7 @@ async function call(b: Backend, route: string): Promise<{ state: State; error?: 
 
 function status(o: State): string {
   const f = o.file as string;
-  if (f === 'running' || f === 'starting') return o.owner === 'none' || o.mark ? 'stopped' : f;
+  if (f === 'running' || f === 'starting' || f === 'building') return o.owner === 'none' || o.mark ? 'stopped' : f;
   return f;
 }
 
@@ -111,7 +111,7 @@ function view(o: State): State {
     phase: s === 'starting' || s === 'building' ? o.phase : '',
     up: up(o),
     portal: !!o.portal && o.owner !== 'none',
-    buildLog: o.file === 'building' ? 'building' : 'done',
+    buildLog: s === 'building' ? 'building' : 'done',
   };
 }
 

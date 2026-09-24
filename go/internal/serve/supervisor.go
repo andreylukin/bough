@@ -259,6 +259,9 @@ type Supervisor struct {
 	// spawnArgs is the extra argv and env a Create asked for, per id, so
 	// a respawn through ensure starts the session the same way.
 	spawnArgs map[string]spawnSpec
+
+	// owed is the boot's reportOwed, which Close waits for.
+	owed sync.WaitGroup
 }
 
 type spawnSpec struct{ args, env []string }
@@ -328,6 +331,7 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 	if len(s.queue) > 0 {
 		go s.drainQueue()
 	}
+	s.owed.Go(s.reportOwed)
 	return s, nil
 }
 
@@ -1892,6 +1896,7 @@ func (s *Supervisor) loadMeta() error {
 		for slug, id := range f.Mains {
 			s.mains[slug] = id
 		}
+		s.maxRunning = f.MaxRunning
 		s.metaVersion = f.Version
 		s.legacy = f.Projects
 		s.requeueLocked()
@@ -1922,6 +1927,11 @@ type metaFile struct {
 	Sessions map[string]SessionMeta `json:"sessions,omitempty"`
 	// Mains is project slug -> main thread session id.
 	Mains map[string]string `json:"mains,omitempty"`
+	// MaxRunning is the background agents' running cap a spawn last
+	// asked for. Kept so the queue a restart finds drains under it: a
+	// boot drained with the default of 16 and started a whole queue at
+	// once (serve_close_children_orbs.fizz, ServeStartsWithinCap).
+	MaxRunning int `json:"maxRunning,omitempty"`
 	// Projects is the version-1 label table. It is read once, by
 	// migrateProjects, and never written again.
 	Projects map[string]oldProject `json:"projects,omitempty"`
@@ -1940,7 +1950,7 @@ func (s *Supervisor) saveMetaLocked() error {
 	if s.opt.MetaPath == "" {
 		return nil
 	}
-	b, err := json.MarshalIndent(metaFile{Version: metaVersion, Sessions: s.meta, Mains: s.mains}, "", "  ")
+	b, err := json.MarshalIndent(metaFile{Version: metaVersion, Sessions: s.meta, Mains: s.mains, MaxRunning: s.maxRunning}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: encode meta: %w", err)
 	}
@@ -1976,6 +1986,18 @@ func (s *Supervisor) Close() error {
 	for _, ch := range kids {
 		s.killChild(ch)
 	}
+	// As Kill does: SIGKILL skips the child's own orb stop, and every
+	// restart left the project VMs of the children it killed running
+	// (tests/model/specs/serve_close_children_orbs.fizz, CloseStopsOrbs).
+	// In parallel: each stop can take seconds, and launchd waits for all.
+	var wg sync.WaitGroup
+	for _, ch := range kids {
+		if ch.id != "" {
+			wg.Go(func() { s.stopKilledOrb(ch.id) })
+		}
+	}
+	wg.Wait()
+	s.owed.Wait()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -17,7 +17,8 @@ func TestSessionBuildLog(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
 	seedModeSession(t, f, "waiting", map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
-	writeState(t, f.home, orb.State{Session: "waiting", Project: "app", Status: orb.StatusBuilding, PID: 1 << 30, UpdatedAt: time.Now()})
+	// A live owner: a dead one's build reads stopped and its log interrupted.
+	writeState(t, f.home, orb.State{Session: "waiting", Project: "app", Status: orb.StatusBuilding, PID: os.Getpid(), UpdatedAt: time.Now()})
 	logPath := orb.ImageLogPath(f.home, "app")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		t.Fatal(err)
