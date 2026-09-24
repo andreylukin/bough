@@ -21,8 +21,10 @@ deadlock_detection: false
 #   internal/serve/web/src/app.tsx  TurnHooks (the chip and its red badge)
 #   internal/serve/web/src/hooks.tsx  the Hooks page's ledger
 #
-# THIS SPEC IS THE CONTRACT, NOT TODAY'S PRODUCT. Where they differ (as of
-# main 5471918e) the MBT stage is expected to go red:
+# THIS SPEC IS THE CONTRACT. Where main 5471918e differed, the MBT walk
+# went red in each place below; all five are fixed (hookmeta.Refusal is
+# the one reading of a refusal, FireApplying the applied keys, block on
+# pre-code-exec fails closed, TurnHooks badges blocked/denied):
 # 1. {deny: true}: decision() records "denied" and Fire stops the later
 #    hooks, but loop.go and PreTool refuse only a string, so the call RUNS.
 #    Here any deny that is a string or true refuses (reason "denied" when
