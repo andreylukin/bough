@@ -4246,6 +4246,8 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .me-title{flex:1 1 auto;min-width:0;margin:0;font:600 var(--fs-h2)/var(--lh-tight) var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me-sub{font-size:var(--fs-sm);color:var(--text-3);white-space:nowrap}
 .me-stale{color:var(--amber)}
+.me-job{font-size:var(--fs-sm);color:var(--text-3);white-space:nowrap}
+.me-err{margin:0 0 var(--s-3);font-size:var(--fs-sm);color:var(--red);overflow-wrap:anywhere}
 .me-body{flex:1 1 0%;padding:var(--s-4) var(--s-5) var(--s-6)}
 /* The brief and the rows share one column and one right edge. */
 .me-brief,.me-group,.me-none{max-width:80ch}

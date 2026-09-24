@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // seedWiki writes a one-page wiki under the fixture's home.
@@ -167,6 +168,45 @@ func TestMeReadsTheBriefAndRefreshStartsOne(t *testing.T) {
 	f.api.brief = func() error { ran++; return nil }
 	if code, _ := f.do(t, "POST", "/api/me/refresh", ""); code != http.StatusOK || ran != 1 {
 		t.Fatalf("refresh = %d ran=%d", code, ran)
+	}
+}
+
+// The Me page shows a brief job while it runs: its spinner is a fixed
+// timer, so without this a job still writing (or one that already
+// failed) looked the same as none. running counts the briefs this serve
+// started until each exits, the second one that loses the wiki lock
+// included.
+func TestMeSaysWhileABriefRuns(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.api.home = f.home
+	// The "brief" waits in the wiki dir (its cwd) for the test's go-ahead.
+	exe := filepath.Join(f.home, "fake-bough")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nwhile [ ! -e go ]; do sleep 0.02; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.sup.opt.Exe = exe
+	if _, body := f.do(t, "GET", "/api/me", ""); body["running"] == true {
+		t.Fatalf("running before any refresh: %v", body)
+	}
+	if code, body := f.do(t, "POST", "/api/me/refresh", ""); code != http.StatusOK {
+		t.Fatalf("refresh = %d %v", code, body)
+	}
+	if _, body := f.do(t, "GET", "/api/me", ""); body["running"] != true {
+		t.Fatalf("running after refresh = %v", body["running"])
+	}
+	if err := os.WriteFile(filepath.Join(f.home, ".bough", "wiki", "go"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, body := f.do(t, "GET", "/api/me", ""); body["running"] != true {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("running still true after the brief exited")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

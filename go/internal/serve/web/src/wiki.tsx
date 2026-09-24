@@ -180,6 +180,8 @@ export interface MeData {
   days: string[];
   /** What the person said about the rows: keys closed, keys pinned. */
   triage: MeTriage;
+  /** A brief this serve started is still running. */
+  running?: boolean;
 }
 export interface MeTriage { dismissed: Record<string, string>; pinned: string[] }
 export type TriageAction = "dismiss" | "undismiss" | "pin" | "unpin";

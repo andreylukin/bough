@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Back, ago } from "./app";
 import { EmptyState, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
@@ -166,8 +166,10 @@ function Steer({ onSteer }: { onSteer: (text: string) => Promise<string> }) {
   );
 }
 
-export function MePage({ data, error, rows = [], projectNames = {}, refreshing, onRefresh, onRetry, onOpenSession, onOpenProject, onOpenPage, onBack, onTriage, onSteer }: {
+export function MePage({ data, error, notice, rows = [], projectNames = {}, refreshing, onRefresh, onRetry, onOpenSession, onOpenProject, onOpenPage, onBack, onTriage, onSteer }: {
   data: MeData | null; error?: string; rows?: Row[]; projectNames?: Record<string, string>;
+  /** A request the page made that the server refused: said, not swallowed. */
+  notice?: string;
   refreshing?: boolean; onRefresh?: () => void; onRetry?: () => void;
   onOpenSession?: (id: string) => void; onOpenProject?: (slug: string) => void; onOpenPage?: (path: string) => void; onBack?: () => void;
   /** Pin or dismiss a row, with a rule for the profile when the dismissal should teach one. */
@@ -202,11 +204,13 @@ export function MePage({ data, error, rows = [], projectNames = {}, refreshing, 
               {data.stale ? <span className="me-stale">Last brief is from {day(data.path!.slice(-13, -3))} · </span> : null}as of {data.asOf ? ago(data.asOf) : "—"} ago
             </span>
           )}
+          {data.running && <span className="me-job" role="status">Brief running</span>}
           {standup && <button type="button" className="btn btn-sm" onClick={() => copy(standup)}>{copied ? "Copied" : "Copy standup"}</button>}
           {onRefresh && data.hasProfile && <button type="button" className="btn btn-sm btn-primary" disabled={refreshing} onClick={onRefresh}>{refreshing ? "Writing…" : "Refresh"}</button>}
         </header>
 
         <div className="scroll me-body">
+          {notice && <p className="me-err" role="alert">{notice}</p>}
           {!data.hasProfile && (
             <EmptyState title="Tell the brief whose work this is" primary={false}
                         action={onOpenPage ? { label: "Write your profile", onClick: () => onOpenPage("topics/me/profile.md") } : undefined}>
@@ -298,18 +302,33 @@ export function MeView({ rows, projectNames, onOpenSession, onOpenProject, onOpe
 }) {
   const me = useLoad(wikiApi.me, "me", 30_000);
   const [refreshing, setRefreshing] = useState(false);
+  const [notice, setNotice] = useState("");
+  const say = (what: string) => (e: unknown) => setNotice(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+  // The spinner is a fixed 20 s; the job itself shows from the read that
+  // follows the start, and a start the server refused ends it at once.
   const refresh = async () => {
-    setRefreshing(true);
-    try { await wikiApi.refreshMe(); } finally { setTimeout(() => { setRefreshing(false); void me.reload(); }, 20_000); }
+    setRefreshing(true); setNotice("");
+    try { await wikiApi.refreshMe(); }
+    catch (e) { setRefreshing(false); say("Couldn’t start the brief")(e); return; }
+    void me.reload();
+    setTimeout(() => { setRefreshing(false); void me.reload(); }, 20_000);
   };
+  // While a brief runs, read every 2 s: its end, and the brief it wrote,
+  // show when they happen rather than at the next 30 s poll.
+  useEffect(() => {
+    if (!me.data?.running) return;
+    const t = setTimeout(() => { void me.reload(); }, 2_000);
+    return () => clearTimeout(t);
+  }, [me.data]); // eslint-disable-line react-hooks/exhaustive-deps
   // Triage lands at once: the answer carries the new file, and the page
   // shows it before the next poll rather than after.
   const [triage, setTriage] = useState<MeTriage | null>(null);
   const data = me.data && triage ? { ...me.data, triage } : me.data;
   const onTriage = (action: TriageAction, s: MeSignal, rule?: string) => {
-    void wikiApi.triage(action, signalKey(s), rule).then(setTriage).then(() => me.reload());
+    wikiApi.triage(action, signalKey(s), rule).then((t) => { setTriage(t); setNotice(""); return me.reload(); })
+      .catch(say(`Couldn’t ${action} “${s.title}”`));
   };
-  return <MePage data={data} error={me.err} rows={rows} projectNames={projectNames} refreshing={refreshing}
+  return <MePage data={data} error={me.err} notice={notice} rows={rows} projectNames={projectNames} refreshing={refreshing}
                  onRefresh={() => { void refresh(); }} onRetry={me.retry} onTriage={onTriage}
                  onSteer={(text) => wikiApi.steer(text)}
                  onOpenSession={onOpenSession} onOpenProject={onOpenProject} onOpenPage={onOpenPage} onBack={onBack} />;
