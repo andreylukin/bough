@@ -28,6 +28,7 @@ import (
 	"time"
 
 	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
+	"golang.org/x/sys/unix"
 
 	"github.com/andreylukin/bough/internal/agentllm"
 	"github.com/andreylukin/bough/kernel"
@@ -116,6 +117,11 @@ func holdBoot(ctx *kernel.Context, dir string) error {
 	if isMain, _ := kernel.Get[bool](ctx, "session-main"); isMain {
 		role = "main"
 	}
+	// The pid first: a test that finds the session waiting can then
+	// tell whether this process outlives what serve did with it.
+	if err := os.WriteFile(filepath.Join(boot, id+".pid"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		return fmt.Errorf("llm-control: hold_boot: %w", err)
+	}
 	if err := os.WriteFile(filepath.Join(boot, id+".waiting"), []byte(role), 0o644); err != nil {
 		return fmt.Errorf("llm-control: hold_boot: %w", err)
 	}
@@ -123,12 +129,39 @@ func holdBoot(ctx *kernel.Context, dir string) error {
 	// rather than leaving a process behind.
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
+		// <id>.exit: the child dies before its history file, the way a
+		// crash in its first second would.
+		if _, err := os.Stat(filepath.Join(boot, id+".exit")); err == nil {
+			os.Exit(3)
+		}
 		if _, err := os.Stat(filepath.Join(boot, id+".release")); err == nil {
+			// <id>.nostdin: serve's write of the first prompt fails
+			// while the child lives on with its file.
+			if _, err := os.Stat(filepath.Join(boot, id+".nostdin")); err == nil {
+				if err := detachStdin(); err != nil {
+					return fmt.Errorf("llm-control: hold_boot: nostdin: %w", err)
+				}
+			}
 			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("llm-control: hold_boot: %s never released", id)
+}
+
+// detachStdin swaps fd 0 for a pipe this process keeps both ends of:
+// serve's end of the old stdin loses its only reader, so its next write
+// fails (EPIPE), and the child's own reads block instead of seeing an
+// EOF that would shut it down (and delete its file).
+func detachStdin() error {
+	var p [2]int
+	if err := unix.Pipe(p[:]); err != nil {
+		return err
+	}
+	if err := unix.Dup2(p[0], 0); err != nil {
+		return err
+	}
+	return unix.Close(p[0])
 }
 
 type controlLLM struct {

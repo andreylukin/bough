@@ -266,3 +266,46 @@ func ReleaseBoot(t testing.TB, dir, id string) {
 		t.Fatal(err)
 	}
 }
+
+// ExitBoot makes a session held at boot exit (status 3) before it
+// writes its history file.
+func ExitBoot(t testing.TB, dir, id string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(bootDir(dir), id+".exit"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// BreakStdinBoot makes a session held at boot drop its stdin as it is
+// released: it writes its history file and lives on, but serve's write
+// of the first prompt to it fails. Write it before ReleaseBoot.
+func BreakStdinBoot(t testing.TB, dir, id string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(bootDir(dir), id+".nostdin"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ForgetBoot clears what an earlier process held at boot as session id
+// left behind, so a new one started under the same id (a create that
+// is retried with its id) is held and reported afresh.
+func ForgetBoot(t testing.TB, dir, id string) {
+	t.Helper()
+	for _, ext := range []string{".waiting", ".release", ".exit", ".nostdin", ".pid"} {
+		if err := os.Remove(filepath.Join(bootDir(dir), id+ext)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+}
+
+// BootPID is the pid of the process held at boot as session id, 0 when
+// none was.
+func BootPID(dir, id string) int {
+	b, err := os.ReadFile(filepath.Join(bootDir(dir), id+".pid"))
+	if err != nil {
+		return 0
+	}
+	var pid int
+	fmt.Sscanf(string(b), "%d", &pid)
+	return pid
+}

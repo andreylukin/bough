@@ -29,7 +29,11 @@ project's main thread, else `session`) and waits for
 `boot/<id>.release` (`Booting`, `WaitBooting`, `ReleaseBoot`). serve's
 Create waits for that file, so a test can hold a session in
 "starting"; a restart or reload of a session that has a file is not
-held.
+held. The held process writes its pid to `boot/<id>.pid` (`BootPID`);
+`boot/<id>.exit` makes it exit 3 instead (`ExitBoot`), and
+`boot/<id>.nostdin`, written before the release (`BreakStdinBoot`),
+makes it drop serve's stdin pipe as it goes on, so serve's write of
+the first prompt fails while the child lives.
 
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
