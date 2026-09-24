@@ -1280,6 +1280,10 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
     cite ? `src:${cite.session}#${cite.seq}` : "src:");
   const [note, setNote] = useState("");
   const [ingestErr, setIngestErr] = useState("");
+  // Activity's note is about the click that just happened: WikiPage stays
+  // mounted across wiki routes, so without this a "Started" read as news
+  // on every later visit to Activity.
+  useEffect(() => setNote(""), [route.at]);
   // Stable, so the source pane's Escape listener is not rebound every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const closeSource = useCallback(() => onRoute({ at: "page", path }), [path]);
