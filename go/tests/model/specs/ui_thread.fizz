@@ -1,0 +1,416 @@
+# ui_thread: the client side of one open thread (#/s/<id>) as the person
+# sees it and can act on it. Recipe: go/tests/model/README.md.
+#
+# Checked against web/src/app.tsx: Thread (header status, Settings
+# popover, jump-to-latest, composer Send, the scroll memo), RuntimeStrip
+# (Context chip, Changes chip, the Details overflow and usePopovers),
+# ChangesChip, TurnView (the running "Working" fold, WorkSegmentRow),
+# NativeCall, TurnFooter/TurnFiles (the "N files" link), ErrorCard (Retry)
+# and the router's sub pages (#/s/<id>/changes, #/s/<id>/context).
+#
+# One session, fresh (no turns). A turn has at most one engine call;
+# that is enough for every rule below and keeps the graph walkable.
+#
+# Fields, each read off the DOM by the browser flow:
+#   viewport   "wide" | "phone" (<=720px: the strip folds every metric
+#              into Details, and the Changes chip is a link, not a popover)
+#   route      "thread" | "changes" | "context"; a sub page replaces the
+#              Thread, so coming back remounts it: popovers gone, rows on
+#              their defaults, the scroll memo and Working fold kept
+#   transcript the first read: "loading" | "ok" | "failed"
+#   status     the server's session status: "idle" | "running" | "done" |
+#              "error", crossed in only where it moves this surface (the
+#              header, the working row, the error card, the call row)
+#   sending    a send (or an error card's Retry) the server has not
+#              recorded yet: the "Sending…" prompt row
+#   streamed   the running turn's unrecorded reply preview is on screen
+#   call       the latest turn's call row: "none" | "running" | "ok" |
+#              "failed"
+#   callOpen   that row's <details> is open
+#   workOpen   the running turn's "Working" fold is open (a lone call row
+#              sits inside it until the turn ends, then stands bare)
+#   away       scrolled up from the end: the jump button is shown
+#   fresh      something was recorded since: it says "New activity"
+#   settings   the Settings popover (role=dialog) is open
+#   chg        the Changes chip's popover is open (wide only)
+#   details    the Details overflow is open (phone only)
+#   focus      "settings" (inside the Settings dialog) | "trigger" (the
+#              control that opened a popover: a strip summary while open,
+#              either trigger after Escape closed it) | "other"
+#   usage      a turn reported usage: the Context chip exists
+#   edits      a finished turn changed a file: its "N files" link exists,
+#              and the phone's Changes chip is a link
+#   errCard    a turn ended on an error: its card and Retry are on screen
+#
+# Pruned, because every transition is a browser path. Each pruned step
+# is one the page takes the same way from a walked state:
+# - The header's popovers and the sub pages are walked from a settled
+#   thread (read, nothing in flight, at the end, the call row closed); a
+#   popover opened over a running turn or an open row closes the same way.
+# - Server events land on an answered thread with nothing open: while
+#   the transcript loads or a sub page is up they only change what the
+#   next read returns.
+# - Turns run on the wide pane; the phone differs only in the header.
+# - The composer starts only the first turn; the error card's Retry
+#   starts the rest, and a retried turn makes no call (its call row would
+#   walk the first turn's again). A second turn from the composer is the
+#   first again.
+# - Scrolling away is walked in a running turn before its call, where it
+#   has something to miss; the jump button then says "New activity".
+# - A send that fails ("Not sent"), steering and queueing are
+#   steer_queue's; Stop is stop_interrupt's; the Changes page itself is
+#   changes_review's.
+# - The error card's Retry focusing itself on mount is left out: it waits
+#   for document.activeElement to be <body>, which a route change
+#   (focusAppOnRoute) never leaves it.
+# - Hover previews of call rows (useThinPop) and the Top button close on
+#   every scroll and hold no state.
+
+# The header's status: what the title row says. "" while the transcript
+# is not on screen (it names no status until read).
+def head(t):
+    if t.transcript != "ok":
+        return ""
+    # R3-D: the server's error wins over a send it has not started.
+    if t.status == "error":
+        return "error"
+    if t.sending or t.status == "running":
+        return "working"
+    return t.status
+
+# What the transcript says in place of turns: the read in flight, the
+# read that failed (with Retry), or "Nothing here yet".
+def note(t):
+    if t.transcript == "loading":
+        return "loading"
+    if t.transcript == "failed":
+        return "failed"
+    if t.status == "idle" and not t.sending:
+        return "empty"
+    return ""
+
+# The composer's Send, with a draft typed: disabled on a failed read and
+# while a send is on its way; a running turn makes it Steer (not here).
+def can_send(t):
+    return t.route == "thread" and t.transcript != "failed" and not t.sending and t.status != "running"
+
+# The running row: "Model is thinking" until anything comes back, then
+# "Working" (a streamed reply, or a call in flight, is something).
+def working(t):
+    if t.route != "thread" or t.transcript != "ok" or t.status != "running":
+        return ""
+    if t.streamed or t.call != "none":
+        return "Working"
+    return "Model is thinking"
+
+def pops(t):
+    n = 0
+    if t.settings:
+        n += 1
+    if t.chg:
+        n += 1
+    if t.details:
+        n += 1
+    return n
+
+# Read, nothing in flight, at the end, on the thread, no call row open.
+def settled(t):
+    return t.route == "thread" and t.transcript == "ok" and not t.sending and t.status != "running" and not t.away and not t.callOpen
+
+# An answered thread the server can move: nothing open over it.
+def live(t):
+    return t.route == "thread" and t.transcript == "ok" and pops(t) == 0
+
+role Thread:
+    action Init:
+        self.viewport = "wide"
+        self.route = "thread"
+        self.transcript = "loading"
+        self.status = "idle"
+        self.sending = False
+        self.streamed = False
+        self.call = "none"
+        self.callOpen = False
+        self.workOpen = False
+        self.away = False
+        self.fresh = False
+        self.settings = False
+        self.chg = False
+        self.details = False
+        self.focus = "other"
+        self.usage = False
+        self.edits = False
+        self.errCard = False
+
+    # --- the transcript read
+
+    atomic fair action Loaded:
+        require self.transcript == "loading"
+        self.transcript = "ok"
+
+    atomic action LoadFails:
+        require self.transcript == "loading"
+        self.transcript = "failed"
+
+    # The error note's Retry.
+    atomic action RetryLoad:
+        require self.route == "thread" and self.transcript == "failed"
+        self.transcript = "loading"
+
+    # --- the person, in the thread
+
+    # Type a task and press Send. What you send is followed into view.
+    atomic action Send:
+        require can_send(self) and settled(self) and pops(self) == 0 and self.viewport == "wide"
+        require not self.usage and not self.errCard
+        self.sending = True
+        self.focus = "other"
+
+    # The error card's Retry: the failed turn's prompt, sent again.
+    atomic action RetryTurn:
+        require settled(self) and pops(self) == 0 and self.viewport == "wide"
+        require self.status == "error" and self.errCard
+        self.sending = True
+        self.focus = "other"
+
+    # Opening or closing the call row. While its turn runs the row is
+    # inside the Working fold, so only an open fold shows it.
+    atomic action ToggleCall:
+        require live(self) and not self.away and self.call != "none"
+        require self.status != "running" or self.workOpen
+        self.callOpen = not self.callOpen
+        self.focus = "other"
+
+    atomic action ToggleWork:
+        require live(self) and not self.away and self.status == "running" and self.call != "none"
+        self.workOpen = not self.workOpen
+        self.focus = "other"
+
+    # Scrolling up a running turn's transcript, taller than the pane.
+    atomic action ScrollUp:
+        require live(self) and not self.away and self.status == "running" and self.call == "none"
+        self.away = True
+        self.fresh = False
+
+    # The jump button (↓ Latest / ↓ New activity), clicked: it goes with
+    # the scroll it undoes, so focus is left on nothing in particular.
+    atomic action JumpLatest:
+        require live(self) and self.away
+        self.away = False
+        self.fresh = False
+        self.focus = "other"
+
+    # The Settings button; focus moves into the popover. The mousedown
+    # is outside the strip, so a strip popover closes first.
+    atomic action OpenSettings:
+        require settled(self) and not self.settings
+        self.settings = True
+        self.chg = False
+        self.details = False
+        self.focus = "settings"
+
+    # The Changes chip's summary (wide). The strip's disclosures are one
+    # menu, and the mousedown is outside the Settings popover.
+    atomic action OpenChanges:
+        require settled(self) and self.viewport == "wide" and not self.chg
+        self.chg = True
+        self.settings = False
+        self.details = False
+        self.focus = "trigger"
+
+    # The phone's Details overflow: every metric folds behind it.
+    atomic action OpenDetails:
+        require settled(self) and self.viewport == "phone" and not self.details
+        self.details = True
+        self.settings = False
+        self.chg = False
+        self.focus = "trigger"
+
+    # Escape closes the open popover only (never the thread) and hands
+    # focus back to what opened it.
+    atomic action Escape:
+        require self.route == "thread" and pops(self) > 0
+        self.settings = False
+        self.chg = False
+        self.details = False
+        self.focus = "trigger"
+
+    # A click on the transcript's empty space: closed, no refocus.
+    atomic action ClickAway:
+        require self.route == "thread" and pops(self) > 0
+        self.settings = False
+        self.chg = False
+        self.details = False
+        self.focus = "other"
+
+    # To the Changes page: the popover's "Open full view" (wide), the
+    # phone's Changes chip under Details (a link only when there are
+    # edits), or a turn footer's "N files" link.
+    atomic action OpenFullChanges:
+        require settled(self)
+        require self.chg or (self.details and self.edits) or (self.edits and pops(self) == 0)
+        self.route = "changes"
+        self.settings = False
+        self.chg = False
+        self.details = False
+        self.focus = "other"
+
+    # The Context chip: in the strip (wide) or under Details (phone). It
+    # exists once a turn reported usage.
+    atomic action OpenContext:
+        require settled(self) and self.usage
+        require (self.viewport == "wide" and pops(self) == 0) or self.details
+        self.route = "context"
+        self.settings = False
+        self.chg = False
+        self.details = False
+        self.focus = "other"
+
+    # Esc (or Back) on a sub page: the Thread mounts again. A plain call
+    # row remounts on its default, which is open only for the failed call
+    # its turn ended on.
+    atomic action Back:
+        require self.route != "thread"
+        self.route = "thread"
+        self.focus = "other"
+        self.callOpen = self.call == "failed"
+
+    atomic action Resize:
+        require settled(self) and pops(self) == 0 and self.focus == "other"
+        if self.viewport == "wide":
+            self.viewport = "phone"
+        else:
+            self.viewport = "wide"
+
+    # --- the server, as the page hears it
+
+    # The send is recorded and its turn starts, with no call yet.
+    atomic fair action Take:
+        require live(self) and self.sending
+        self.sending = False
+        self.status = "running"
+        self.streamed = False
+        self.call = "none"
+        self.callOpen = False
+        self.workOpen = False
+
+    # The reply streams (unrecorded deltas): the preview replaces "Model
+    # is thinking". Not a record, so not "New activity".
+    atomic action Delta:
+        require live(self) and self.status == "running" and not self.streamed and self.call == "none"
+        self.streamed = True
+
+    # The engine starts a call: the reply so far is recorded and the call
+    # row appears, inside the Working fold (closed until opened).
+    atomic action CallStart:
+        require live(self) and self.status == "running" and self.call == "none" and not self.errCard
+        self.call = "running"
+        self.streamed = False
+        self.fresh = self.away
+
+    atomic action CallOk:
+        require live(self) and self.call == "running"
+        self.call = "ok"
+        self.fresh = self.away
+
+    atomic action CallFails:
+        require live(self) and self.call == "running"
+        self.call = "failed"
+        self.fresh = self.away
+
+    # The turn ends. The Working fold goes (a lone call is not wrapped),
+    # so the call row remounts bare, open only when the turn ended on it
+    # failing. A call that wrote leaves the footer's "N files" link.
+    atomic fair action Finish:
+        require live(self) and self.status == "running" and self.call != "running"
+        self.status = "done"
+        self.streamed = False
+        self.workOpen = False
+        self.callOpen = self.call == "failed"
+        self.usage = True
+        if self.call == "ok":
+            self.edits = True
+        self.fresh = self.away
+
+    # The turn ends on an error (a provider failure): the error card.
+    atomic action Fail:
+        require live(self) and self.status == "running" and self.call != "running"
+        self.status = "error"
+        self.streamed = False
+        self.workOpen = False
+        self.callOpen = self.call == "failed"
+        self.errCard = True
+        self.fresh = self.away
+
+action Init:
+    thread = Thread()
+
+# A status is always on screen: the header names one, or the transcript's
+# own note (loading, failed) stands in for it; the header never claims a
+# status over a transcript it has not read.
+always assertion StatusAlwaysVisible:
+    if thread.route != "thread":
+        return True
+    if thread.transcript != "ok":
+        return head(thread) == "" and note(thread) != ""
+    return head(thread) != ""
+
+# At most one popover: the strip's disclosures are one menu, and a
+# mousedown outside closes the Settings popover.
+always assertion OnePopover:
+    return pops(thread) <= 1
+
+# The Settings dialog holds focus exactly while it is open.
+always assertion SettingsHoldsFocus:
+    return thread.settings == (thread.focus == "settings")
+
+# A popover belongs to the thread's header: none outlives it.
+always assertion NoPopoverOffThread:
+    return thread.route == "thread" or pops(thread) == 0
+
+# Each popover opens only where its trigger exists.
+always assertion PopoverFitsViewport:
+    return not (thread.chg and thread.viewport != "wide") and not (thread.details and thread.viewport != "phone")
+
+# Send is never offered over a transcript that failed to load.
+always assertion NoSendOnFailedLoad:
+    return not can_send(thread) or thread.transcript != "failed"
+
+# The working row shows exactly while the turn runs on a read thread.
+always assertion WorkingOnlyWhileRunning:
+    w = working(thread)
+    if thread.route != "thread" or thread.transcript != "ok":
+        return w == ""
+    return (w != "") == (thread.status == "running")
+
+# The reply preview, a running call and the Working fold belong to a
+# running turn.
+always assertion LiveOnlyWhileRunning:
+    if thread.streamed or thread.call == "running" or thread.workOpen:
+        return thread.status == "running"
+    return True
+
+# The Working fold is only open over a call of the running turn.
+always assertion WorkFoldHasCall:
+    return not thread.workOpen or thread.call != "none"
+
+# An open call row is a call row.
+always assertion CallOpenHasCall:
+    return not thread.callOpen or thread.call != "none"
+
+# "New activity" only on the jump button, which only shows scrolled away.
+always assertion FreshOnlyAway:
+    return not thread.fresh or thread.away
+
+# An error status always has its card, and so its Retry.
+always assertion ErrorHasRetry:
+    return thread.status != "error" or thread.errCard
+
+# The Changes page only from a link that was on screen: on a phone, the
+# chip is plain text until there are edits.
+always assertion ChangesOnlyFromALink:
+    return thread.route != "changes" or thread.viewport == "wide" or thread.edits
+
+# The Context page only from a chip that exists.
+always assertion ContextOnlyWithUsage:
+    return thread.route != "context" or thread.usage
