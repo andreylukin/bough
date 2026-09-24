@@ -43,22 +43,30 @@ func New(pools ...string) *Skills { return &Skills{pools: pools} }
 // for the current directory. `bough serve` lists the same set, so the
 // web picker and the TUI never disagree about what exists.
 func Default(home string) *Skills {
-	work, err := os.Getwd()
-	if err != nil {
-		work = ""
+	// The repo pool stays relative here, so it follows the process's
+	// own cwd as it is when a scan runs.
+	s := DefaultFor(home, "")
+	if work, err := os.Getwd(); err == nil {
+		s.work = work
 	}
-	return DefaultFor(home, work)
+	return s
 }
 
 // DefaultFor is Default for a session working somewhere other than the
 // process's own directory — the user runs bough from home, so a
-// project-scoped plugin has to be judged against the path being worked
-// on, not against the cwd.
+// project-scoped plugin, and the repo's own .claude/skills, have to be
+// judged against the path being worked on, not against the cwd. serve
+// asked with a relative repo pool and listed its own cwd's skills for
+// every session.
 func DefaultFor(home, work string) *Skills {
+	repo := filepath.Join(".claude", "skills")
+	if work != "" {
+		repo = filepath.Join(work, repo)
+	}
 	s := New(
 		filepath.Join(home, ".claude", "skills"),
 		filepath.Join(home, ".bough", "skills"),
-		filepath.Join(".claude", "skills"),
+		repo,
 	)
 	s.home, s.work = home, work
 	return s

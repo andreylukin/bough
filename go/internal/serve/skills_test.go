@@ -4,8 +4,42 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// The pickers offer what the open session's child would run: its cwd's
+// .claude/skills (serve runs from HOME, not from the session's repo),
+// and nothing switched off, which the child never registers as a
+// command (tests/model/specs/skills_mentions.fizz, ListsSessionSkills).
+func TestSkillCatalogueIsTheSessions(t *testing.T) {
+	t.Parallel()
+	f := newHooksAPI(t)
+	seedSkill(t, f.home, "house", "---\ndescription: Everywhere.\n---\n")
+	seedSkill(t, f.home, "hushed", "---\ndescription: Switched off.\n---\n")
+	write(t, filepath.Join(f.home, ".bough", "off.yml"), "disabled:\n  - skill:hushed\n")
+	work := filepath.Join(f.home, "work")
+	write(t, filepath.Join(work, ".claude", "skills", "repo-only", "SKILL.md"), "---\ndescription: This repo's.\n---\n")
+	seedAt(t, f, "s1", work)
+
+	code, body := f.do(t, "GET", "/api/skills?session=s1", "")
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/skills?session=s1 = %d %v", code, body)
+	}
+	var names []string
+	list, _ := body["skills"].([]any)
+	for _, it := range list {
+		m, _ := it.(map[string]any)
+		name, _ := m["name"].(string)
+		names = append(names, name)
+	}
+	if got := strings.Join(names, ","); got != "house,repo-only" {
+		t.Errorf("skills = %s, want house,repo-only: the session's repo pool and home, minus off.yml", got)
+	}
+	if code, _ := f.do(t, "GET", "/api/skills?session=nope", ""); code != http.StatusNotFound {
+		t.Errorf("unknown session = %d, want 404", code)
+	}
+}
 
 // seedSkill writes a SKILL.md pool entry under the fixture's HOME.
 func seedSkill(t *testing.T, home, name, front string) {

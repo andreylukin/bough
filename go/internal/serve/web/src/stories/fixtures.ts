@@ -148,7 +148,7 @@ export function installFakeApi(): void {
   const real = globalThis.fetch.bind(globalThis);
   const routes: Record<string, unknown> = {
     "/api/models": models,
-    "/api/skills": { skills },
+    "/api/skills?session=s1": { skills },
     "/api/files?q=del&session=s1": { files: [
       { path: "internal/serve/deltas.go", dir: false },
       { path: "internal/serve/deltas_test.go", dir: false },

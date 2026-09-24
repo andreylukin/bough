@@ -7,7 +7,7 @@ const meta: Meta<typeof SkillPicker> = {
   title: "Composer/SkillPicker",
   component: SkillPicker,
   decorators: [(Story) => <div style={{ padding: "360px 32px 32px", display: "flex", justifyContent: "flex-end" }}><Story /></div>],
-  args: { onPick: () => {} },
+  args: { session: "s1", onPick: () => {} },
 };
 export default meta;
 type S = StoryObj<typeof SkillPicker>;

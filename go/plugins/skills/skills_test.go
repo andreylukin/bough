@@ -23,6 +23,18 @@ func addSkill(t *testing.T, pool, name, body string) {
 	}
 }
 
+// DefaultFor is how serve asks about a session that works somewhere
+// else: its repo pool is that path's .claude/skills, not the one under
+// whatever directory serve itself runs in.
+func TestDefaultForReadsTheWorkRepoPool(t *testing.T) {
+	t.Parallel()
+	home, work := t.TempDir(), t.TempDir()
+	addSkill(t, filepath.Join(work, ".claude", "skills"), "repo-only", "x")
+	if got := strings.Join(DefaultFor(home, work).Names(), ","); got != "repo-only" {
+		t.Errorf("Names() = %q, want repo-only from %s", got, work)
+	}
+}
+
 func TestInjectMatch(t *testing.T) {
 	pool := t.TempDir()
 	addSkill(t, pool, "restish", "restish skill body")

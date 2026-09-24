@@ -1,0 +1,213 @@
+# The composer's skill pickers (go/tests/model/README.md): the Skills
+# button (web/src/skills.tsx SkillPicker) and the / and @ mentions typed
+# in the composer (web/src/mention.tsx Mentions, triggerAt), for one open
+# web session.
+#
+# A skill runs when the message that names it is sent: the headless
+# child dispatches a lead "/name" as a command. Neither picker sends or
+# runs anything; they only rewrite the draft. That is what keeps one way
+# of running a skill instead of two to keep in step.
+#
+# Fields, all on the one Composer role:
+#   picker   the Skills button's popover: closed | loading | loaded | error.
+#            "loading" is the whole wait; the spinner only shows after 200 ms,
+#            which is a rendering detail, not a state.
+#   mention  the composer's mention popover: none | loading | open | error |
+#            dismissed. dismissed is Escape: shut until the token changes.
+#   kind     the mention's sigil: "" (none) | "/" (skills) | "@" (files).
+#   cached   the page holds the skill catalogue (mention.tsx `catalogue`):
+#            one module-wide promise both pickers share, so after one good
+#            read either opens straight onto results. A failed read clears it.
+#   listed   whose skills the catalogue is: "" with none held, "session" when
+#            it is the open session's (its cwd and the home pools, minus
+#            off.yml). See ListsSessionSkills.
+#   lead     the draft's lead word: none | skill (a known /name) | path
+#            (a leading path such as /tmp/x the person typed).
+#   hasPath  the draft still holds the leading path the person typed.
+#   typedPath the adapter's own record that the person typed one (client
+#            state, like example.fizz's viewing), cleared by Send.
+#   sent     the session received the draft as a message.
+#   ran      the session ran a skill.
+#
+# Scope, to keep the graph small enough that every path is one browser
+# test: "/" and "@" are modelled only as typed into a draft with no lead
+# skill or path (triggerAt opens either wherever a word starts; the file
+# picker does not care what leads the draft, and a "/" pick mid-sentence
+# does not make a lead skill), and one message is sent per walk.
+
+role Composer:
+    action Init:
+        self.picker = "closed"
+        self.mention = "none"
+        self.kind = ""
+        self.cached = False
+        self.listed = ""
+        self.lead = "none"
+        self.hasPath = False
+        self.typedPath = False
+        self.sent = False
+        self.ran = False
+
+    # --- the Skills button: GET /api/skills -------------------------------
+
+    # Opening it moves focus into its filter, so the composer blurs and any
+    # mention popover goes (app.tsx onBlur -> setTrigger(null)).
+    atomic action OpenPicker:
+        require self.picker == "closed" and not self.sent
+        self.mention = "none"
+        self.kind = ""
+        if self.cached:
+            self.picker = "loaded"
+        else:
+            self.picker = "loading"
+
+    atomic action ClosePicker:
+        require self.picker != "closed"
+        self.picker = "closed"
+
+    # Escape shuts a failed or loading picker too; Retry re-reads.
+    atomic action RetryPicker:
+        require self.picker == "error"
+        self.picker = "loading"
+
+    # Enter on the active row (or a click) puts "/name " at the front of the
+    # draft: it replaces a lead word only when that is a known skill, and
+    # keeps a leading path as the rest of the message. Nothing is sent.
+    atomic action PickSkill:
+        require self.picker == "loaded"
+        self.picker = "closed"
+        self.lead = "skill"
+
+    # --- the composer mentions: GET /api/skills | /api/files?session&q ----
+
+    # "/" at the start of an empty draft.
+    atomic action TypeSlash:
+        require self.picker == "closed" and self.mention == "none" and self.lead == "none" and not self.sent
+        self.kind = "/"
+        if self.cached:
+            self.mention = "open"
+        else:
+            self.mention = "loading"
+
+    # "@" starting a word. Files are never cached: the server searches.
+    atomic action TypeAt:
+        require self.picker == "closed" and self.mention == "none" and self.lead == "none" and not self.sent
+        self.kind = "@"
+        self.mention = "loading"
+
+    # Another letter of the token. Files re-ask for the new token (a reply
+    # to an older token is never shown); skills filter locally. A dismissed
+    # picker comes back because the token changed.
+    atomic action TypeToken:
+        require self.mention in ["open", "dismissed"]
+        if self.kind == "@":
+            self.mention = "loading"
+        elif self.cached:
+            self.mention = "open"
+        else:
+            self.mention = "loading"
+
+    atomic action Dismiss:
+        require self.mention in ["loading", "open", "error"]
+        self.mention = "dismissed"
+
+    atomic action RetryMention:
+        require self.mention == "error"
+        self.mention = "loading"
+
+    # Enter/Tab/click on a row replaces the token with the choice and a
+    # space; the popover closes. A lead "/" token becomes a lead skill.
+    atomic action PickMention:
+        require self.mention == "open"
+        if self.kind == "/":
+            self.lead = "skill"
+        self.mention = "none"
+        self.kind = ""
+
+    # Pasted text can end in "@foo" or "/bar"; the change it makes never
+    # opens a picker, and shuts one that was there.
+    atomic action Paste:
+        require self.picker == "closed"
+        self.mention = "none"
+        self.kind = ""
+
+    # --- the draft ---------------------------------------------------------
+
+    # The person types a leading path and a space ("/tmp/x "): triggerAt saw
+    # a "/" token while it was typed and the space ended it.
+    atomic action TypePath:
+        require self.picker == "closed" and self.mention == "none" and self.lead == "none" and not self.sent
+        self.lead = "path"
+        self.hasPath = True
+        self.typedPath = True
+
+    # Enter with no popover owning it. An open popover takes Enter, even
+    # loading, empty or failed, so a half-typed token is never sent.
+    atomic action Send:
+        require self.picker == "closed" and self.mention in ["none", "dismissed"] and self.lead != "none" and not self.sent
+        self.sent = True
+        self.ran = self.lead == "skill"
+        self.lead = "none"
+        self.hasPath = False
+        self.typedPath = False
+        self.mention = "none"
+        self.kind = ""
+
+    # --- the server answers ------------------------------------------------
+
+    # fair: a read that never answers is bounded (15 s) and becomes an error,
+    # so an opened picker always ends up with results or Retry.
+    atomic fair action PickerLoaded:
+        require self.picker == "loading"
+        self.picker = "loaded"
+        self.cached = True
+        self.listed = "session"
+
+    atomic fair action PickerFailed:
+        require self.picker == "loading"
+        self.picker = "error"
+        self.cached = False
+        self.listed = ""
+
+    atomic fair action MentionLoaded:
+        require self.mention == "loading"
+        self.mention = "open"
+        if self.kind == "/":
+            self.cached = True
+            self.listed = "session"
+
+    atomic fair action MentionFailed:
+        require self.mention == "loading"
+        self.mention = "error"
+        if self.kind == "/":
+            self.cached = False
+            self.listed = ""
+
+action Init:
+    composer = Composer()
+
+# A skill runs only because a message was sent with it as the lead word;
+# picking one (from either picker) only edits the draft.
+always assertion PickerOnlyEditsDraft:
+    return not composer.ran or composer.sent
+
+# A pick replaces a lead skill, never a leading path the person typed.
+always assertion PickKeepsLeadingPath:
+    return composer.hasPath == composer.typedPath
+
+# Whatever a picker lists is the open session's skills, never another
+# directory's (serve's own cwd) and never one switched off in off.yml.
+always assertion ListsSessionSkills:
+    return composer.listed in ["", "session"]
+
+# At most one popover: the Skills button's takes focus from the composer.
+always assertion OnePopover:
+    return composer.picker == "closed" or composer.mention == "none"
+
+# A mention popover always knows which picker it is.
+always assertion MentionHasKind:
+    return (composer.mention == "none") == (composer.kind == "")
+
+# An opened picker eventually shows results or an error with Retry.
+always eventually assertion PickerAnswers:
+    return composer.picker != "loading" and composer.mention != "loading"
