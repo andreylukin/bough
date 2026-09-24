@@ -1,0 +1,418 @@
+# A project session's orb between its failures, the idle reaper and the
+# person looking at why it failed. The child (the session's bough) starts
+# the orb step by step and runs background jobs in it; serve's reaper
+# stops an orb whose session has been quiet for BOUGH_ORB_IDLE; the
+# thread page's "Why?" view names the failed phase, shows its log and
+# offers its one fix (Rebuild image for a build, Edit resume.sh + Retry
+# for setup, a link to the project's orb page for anything else).
+# orb_lifecycle covers ownership, portals, Remove and the running
+# snapshot; this spec leaves those out and adds jobs, the history clock
+# and the failure-to-UI recovery loop.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - FailedAt has three answers, not five: build -> "build", resume.sh ->
+#     "setup", sync, worktree and container all -> "start"
+#     (internal/orb/state.go FailedAt). The child's start order is
+#     prepare (sync + worktree) -> build -> container -> resume.sh.
+#   - What a failure blocks depends on WHEN it happened, not on its
+#     phase: a failure inside the first start (Prepare/Start, any step
+#     before resume.sh) settles the row's handle with an error, and every
+#     later command fails with that error until a new child starts
+#     (plugins/orb/handle.go Command). A resume.sh failure settles the
+#     handle well (Start returns nil), and so does a restart's failure
+#     at "container" (ensureRunningLocked): the next command retries.
+#     `opened` carries that.
+#   - A job's output does not write history: only its start and its end
+#     do (plugins/tools/jobs.go recordJob). A long quiet job therefore
+#     does not keep its session from going idle.
+#   - Every stop a job can die of here goes through MarkStopped first, and
+#     StoppedSince also answers true when the container is simply not
+#     running, so a job killed by ANY serve stop is recorded as "stopped
+#     with the orb" and wakes nobody. The record is visible in the jobs
+#     list; the agent is never told (KNOWN GAPS: ReaperNeverKillsJobs).
+#   - Retry is a Stop orb (api.stopOrb) behind the failure view. Its
+#     promise ("restarts and reruns resume.sh on the session's next
+#     command") holds WITHOUT an owner as well: the next prompt makes
+#     serve start a child, whose fresh start runs resume.sh
+#     (RetryRerunsResume below). The suspected "no owner, nothing
+#     restarts" did not survive.
+#   - The prompt section for a build failure is failedPromptSection (the
+#     start's error, whose "full log:" names build.log); promptSection's
+#     "read resume.log" branch is reached only by a resume.sh failure,
+#     because only that failure lets Start return nil. That suspected
+#     bug did not survive either.
+#   - A reaper stop that the runtime refuses restores the exact previous
+#     state.json (orb.Restore) and changes nothing else: it is a
+#     stutter, left out. BOUGH_ORB_IDLE=0 (reaper off) is a constant of
+#     the serve, not a transition, and is left out too.
+#
+# Fields (role Orb):
+#   file      state.json status: none | starting | running | failed | stopped
+#   phase     state.json phase: prepare | build | container | resume ("" once ready)
+#   ctr       the container: missing | stopped | running
+#   owner     the session's child process lives
+#   opened    the child's orb handle settled well (a later command can
+#             restart the container); False while starting or after a
+#             first-start failure
+#   resuming  the child is inside resume.sh (it holds the orb's lock;
+#             serve can still overwrite state.json under it)
+#   idle      no history and no state.json write for BOUGH_ORB_IDLE
+#   job       a background job runs in the container: none | running
+#   jobend    how the last job ended, as the jobs list records it:
+#             "" | exit (its own end, or "killed when bough quit" as the
+#             child exits: recorded with its exit code) |
+#             user | reaper (killed by that stop: "stopped with the orb",
+#             no notice)
+#   stopper   who wrote the last "stopped": "" (the child wrote since) |
+#             user (Stop orb, Retry) | reaper | child (the session exited)
+#   fail      where the child's last attempt really failed, "" once a new
+#             attempt starts: the truth the page is checked against
+#   blamed    the last resume.sh failure was a stop killing it, not the
+#             script
+#   script_bad  resume.sh exits non-zero; EditResumeSh fixes it
+#   view      the thread's "Why?" view is toggled open (orbView "why");
+#             it shows only while the row's status is failed
+#   retry     a Retry was clicked and resume.sh has not rerun since
+
+role Orb:
+    action Init:
+        self.file = "none"
+        self.phase = ""
+        self.ctr = "missing"
+        self.owner = False
+        self.opened = False
+        self.resuming = False
+        self.idle = False
+        self.job = "none"
+        self.jobend = ""
+        self.stopper = ""
+        self.fail = ""
+        self.blamed = False
+        self.script_bad = True
+        self.view = False
+        self.retry = False
+
+    # --- the person and the session ---
+
+    # A prompt to a session with no live child: serve starts one, and its
+    # orb row runs a fresh start (Prepare writes starting(sync)).
+    atomic action Prompt:
+        require not self.owner
+        self.owner = True
+        self.opened = False
+        self.file = "starting"
+        self.phase = "prepare"
+        self.child_wrote()
+
+    # A turn writes history (a prompt to a live child, a command that ran
+    # or failed with the start's error): the session is not idle.
+    atomic action Activity:
+        require self.owner and self.idle
+        self.idle = False
+
+    # The agent's next command after the container stopped behind the
+    # child's back (Stop orb, Retry, the reaper) or after a restart
+    # failed: ensureRunningLocked starts it again and reruns resume.sh.
+    # A command while the container runs just runs (Activity): it does
+    # NOT rerun a failed resume.sh, which is why Retry stops the orb.
+    atomic action Command:
+        require self.owner and self.opened and not in_flight(self) and self.ctr != "running"
+        self.file = "starting"
+        self.phase = "container"
+        self.child_wrote()
+
+    # tools.bash with a limit: a job in the container. Its start and its
+    # end write history; its output does not.
+    atomic action JobStarts:
+        require self.owner and self.opened and not in_flight(self) and self.ctr == "running" and self.job == "none"
+        self.job = "running"
+        self.jobend = ""
+        self.idle = False
+
+    atomic action JobExits:
+        require self.job == "running"
+        self.job = "none"
+        self.jobend = "exit"
+        self.idle = False
+
+    # The session's child exits (idle timeout, archive's clean path). An
+    # open orb is stopped by the child itself (Orb.Stop writes stopped);
+    # a start that failed leaves state.json as it was. Jobs die with it.
+    atomic action OwnerExits:
+        require self.owner and not in_flight(self)
+        self.owner = False
+        if self.job == "running":
+            self.job = "none"
+            self.jobend = "exit"
+        if self.opened:
+            self.opened = False
+            self.file = "stopped"
+            if self.ctr == "running":
+                self.ctr = "stopped"
+            self.stopper = "child"
+            self.idle = False
+
+    atomic action EditResumeSh:
+        require self.script_bad
+        self.script_bad = False
+
+    # --- the child's start, step by step ---
+
+    atomic fair action Prepared:
+        require self.owner and self.file == "starting" and self.phase == "prepare"
+        self.phase = "build"
+        self.child_wrote()
+
+    atomic fair action Built:
+        require self.owner and self.file == "starting" and self.phase == "build"
+        self.phase = "container"
+        self.child_wrote()
+
+    # A step before resume.sh fails: state.json failed at that phase.
+    atomic action StartFails:
+        require self.owner and self.file == "starting" and self.phase in ("prepare", "build", "container")
+        self.file = "failed"
+        self.fail = self.phase
+        self.child_wrote()
+
+    atomic fair action ContainerUp:
+        require self.owner and self.file == "starting" and self.phase == "container"
+        self.ctr = "running"
+        self.phase = "resume"
+        self.resuming = True
+        self.retry = False
+        self.child_wrote()
+
+    # resume.sh passed: running, and the handle is open.
+    atomic fair action ResumeOk:
+        require self.resuming and not self.script_bad and self.ctr == "running"
+        self.resuming = False
+        self.opened = True
+        self.file = "running"
+        self.phase = ""
+        self.child_wrote()
+
+    # resume.sh exited non-zero, or was killed because the container
+    # stopped under it: either way the child writes failed at resume.sh,
+    # over whatever serve wrote meanwhile, and the handle is open.
+    atomic fair action ResumeFails:
+        require self.resuming and (self.script_bad or self.ctr != "running")
+        self.blamed = self.ctr != "running"
+        self.resuming = False
+        self.opened = True
+        self.file = "failed"
+        self.phase = "resume"
+        self.fail = "resume"
+        self.child_wrote()
+
+    # --- serve ---
+
+    # Time passes with nothing written.
+    atomic action GoIdle:
+        require not self.idle and self.file in ("running", "failed")
+        self.idle = True
+
+    # The reaper: state.json running or failed and quiet for the limit,
+    # whatever the jobs, the owner or the container (a missing one counts
+    # as stopped).
+    atomic fair action Reap:
+        require self.idle and self.file in ("running", "failed")
+        self.serve_stop("reaper")
+
+    # Stop orb in the header, offered while the row is up. The confirm
+    # it asks when jobs run is the page's, not a state.
+    atomic action StopOrb:
+        require orb_up(self)
+        self.serve_stop("user")
+
+    # --- the thread page's failure view ---
+
+    atomic action OpenWhy:
+        require status(self) == "failed" and not self.view
+        self.view = True
+
+    atomic action CloseWhy:
+        require self.view
+        self.view = False
+
+    # Rebuild image (build failures only) rebuilds the project's image
+    # for the NEXT start; this session's handle keeps its error.
+    atomic action ClickRebuild:
+        require shown(self) and failed_at(self) == "build"
+        self.view = self.view
+
+    # Retry (setup failures only): Stop orb behind the view.
+    atomic action ClickRetry:
+        require shown(self) and failed_at(self) == "setup"
+        self.retry = True
+        self.serve_stop("user")
+
+    # Helpers are `atomic func` so a helper is never a yield point.
+    # Every child write moves updatedAt: the idle clock restarts and the
+    # last "stopped" is no longer serve's.
+    atomic func child_wrote():
+        self.idle = False
+        self.stopper = ""
+        if self.file == "starting":
+            self.fail = ""
+            self.blamed = False
+
+    # Supervisor.stopOrb: MarkStopped (a write), stop the container, and
+    # any job in it dies; its exit checks StoppedSince, which is true, so
+    # it is recorded "stopped with the orb" and notifies nobody.
+    atomic func serve_stop(who):
+        if self.file != "none":
+            self.file = "stopped"
+        if self.ctr == "running":
+            self.ctr = "stopped"
+        if self.job == "running":
+            self.job = "none"
+            self.jobend = who
+        self.stopper = who
+        self.idle = False
+
+# The child is mid-start: state.json starting, or inside resume.sh under
+# a status serve overwrote.
+def in_flight(o):
+    return o.file == "starting" or o.resuming
+
+# serve's orbState: running/starting need a live owner; failed and
+# stopped are what the file says.
+def status(o):
+    if o.file in ("running", "starting") and not o.owner:
+        return "stopped"
+    return o.file
+
+# orbUp on the page: the row says up (running trusts state.json; failed
+# and starting ask the runtime, whose snapshot is taken as fresh here).
+def orb_up(o):
+    s = status(o)
+    if s == "running":
+        return True
+    if o.file in ("running", "starting", "failed"):
+        return o.ctr == "running"
+    return False
+
+# orb.FailedAt of state.json.
+def failed_at(o):
+    if o.file != "failed":
+        return ""
+    if o.phase == "build":
+        return "build"
+    if o.phase == "resume":
+        return "setup"
+    return "start"
+
+# orb.LogFor: build.log for a build failure, else resume.log.
+def log_for(o):
+    if failed_at(o) == "build":
+        return "build.log"
+    return "resume.log"
+
+# OrbFailureBody's buttons for a phase.
+def fix_for(o):
+    p = failed_at(o)
+    if p == "build":
+        return "rebuild"
+    if p == "setup":
+        return "retry"
+    return "link"
+
+# The failure view is on screen.
+def shown(o):
+    return o.view and status(o) == "failed"
+
+# What a real failure at a step needs: its FailedAt word, the log that
+# explains it and its fix.
+def truth_phase(step):
+    if step == "build":
+        return "build"
+    if step == "resume":
+        return "setup"
+    return "start"
+
+def truth_log(step):
+    if step == "build":
+        return "build.log"
+    return "resume.log"
+
+def truth_fix(step):
+    if step == "build":
+        return "rebuild"
+    if step == "resume":
+        return "retry"
+    return "link"
+
+action Init:
+    orb = Orb()
+
+# The view names the phase the child really failed in, shows the log that
+# explains it (build.log for a build) and offers only that phase's fix.
+always assertion ViewMatchesFailure:
+    return not shown(orb) or (orb.fail != ""
+        and failed_at(orb) == truth_phase(orb.fail)
+        and log_for(orb) == truth_log(orb.fail)
+        and fix_for(orb) == truth_fix(orb.fail))
+
+# Retry's promise: after it, the orb never shows running again without
+# resume.sh having run again — whether the next command reaches the
+# child that failed or a new one serve starts for the next prompt.
+always assertion RetryRerunsResume:
+    return not (orb.retry and orb.file == "running")
+
+# Only a stop hides a failure: nothing the child or the page does turns a
+# failed orb into anything but failed until a new attempt starts. (Which
+# stop is allowed to is the KNOWN GAP ReapKeepsFailure.)
+always assertion OnlyAStopHidesAFailure:
+    return orb.fail == "" or orb.file == "failed" or orb.stopper != ""
+
+# No job outlives the container it ran in: every stop ends the jobs in
+# it and records how (the jobs list's "stopped with the orb"), so a
+# reaped job is never simply gone. (That nobody is told is the KNOWN GAP
+# ReaperNeverKillsJobs.)
+always assertion NoJobOutlivesItsContainer:
+    return orb.job == "none" or orb.ctr == "running"
+
+# A child's start never hangs: every step ends in running or failed.
+always eventually assertion StartsSettle:
+    return not in_flight(orb)
+
+# Every idle running or failed orb is eventually stopped.
+always eventually assertion IdleOrbsReaped:
+    return not (orb.idle and orb.file in ("running", "failed"))
+
+# KNOWN GAPS (not asserted; each was added to a copy of this spec and
+# fizz failed it on the trace shown).
+#
+# ReaperNeverKillsJobs: the reaper has no guard for running jobs (the
+# page's Stop orb asks first; reapIdleOrbs does not look), a job's output
+# does not count as activity, and the job's end is recorded "stopped with
+# the orb" with no notice, so the agent never learns a four-hour build or
+# a dev server died:
+#   always assertion ReaperNeverKillsJobs:
+#       return orb.jobend != "reaper"
+# fizz: Prompt, Prepared, Built, ContainerUp, ResumeFails, JobStarts,
+# GoIdle, Reap (a job in a setup-failed orb; a running one is the same).
+#
+# ReapKeepsFailure: reaping a failed orb runs MarkStopped: status
+# "stopped", FailedAt "", LogFor falls back to resume.log and the failure
+# view disappears. After a first-start failure (sync, worktree, build or
+# container) the session is then shown "stopped" although its next
+# command fails with the old error and nothing restarts it:
+#   always assertion ReapKeepsFailure:
+#       return orb.fail == "" or orb.file == "failed" or orb.stopper in ("user", "child")
+# fizz: Prompt, StartFails (at prepare), GoIdle, Reap.
+#
+# StopNeverBlamedOnResume: Stop orb is offered while resume.sh runs (the
+# container is up), and the child then records the killed script as a
+# resume.sh failure over serve's "stopped": the page says "Setup failed"
+# and offers Retry for a stop the person made:
+#   always assertion StopNeverBlamedOnResume:
+#       return not (orb.file == "failed" and orb.phase == "resume" and orb.blamed)
+# fizz: Prompt, Prepared, Built, ContainerUp, StopOrb, ResumeFails.
+#
+# Not modelled, seen in the code: for a "start" failure (sync, worktree,
+# container) the view's "Full resume.log" is resume.log, which that
+# failure never wrote (it is empty or a previous start's); and the
+# "Stopped. The orb restarts…" note after Retry unmounts with the view as
+# soon as the list poll reads the stopped status.
