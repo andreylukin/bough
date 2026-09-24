@@ -37,6 +37,11 @@ export interface Flow<C> {
   status(c: C): ReturnType<Page['locator']>;
   /** Sessions whose transcripts go to $MODEL_TRACE_DIR for the history check. */
   sessions(c: C): string[];
+  /** Console errors the walk expects: the browser logs "Failed to load
+   *  resource" for every non-2xx answer, including the 404s and 409s a spec
+   *  reaches on purpose (a missing page, a stale write). Match those lines
+   *  only; anything else logged still fails the node. */
+  expectedErrors?: RegExp;
   /** Let anything still held (a blocked turn) go before serve stops. */
   cleanup?(c: C): Promise<void>;
 }
@@ -70,7 +75,7 @@ export function modelTests<C>(flow: Flow<C>): void {
       const walk = trace.slice(1).map((s) => s.action.slice(flow.role.length + 1)).join(' → ');
       test(`path ${i}: ${walk}`, async ({ serve, page }, info) => {
         const errors: string[] = [];
-        page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('console', (m) => { if (m.type() === 'error' && !flow.expectedErrors?.test(m.text())) errors.push(m.text()); });
         page.on('pageerror', (e) => errors.push(String(e)));
 
         // The page's timers run on a clock the walk can move: a row the
