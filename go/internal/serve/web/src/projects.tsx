@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { OrbDetail, OrbFile, Project, Row } from "./types";
 import { api } from "./api";
 import { ProjectOrb, confirmStopOrb, removeOrbQuestion } from "./orb";
@@ -184,8 +184,8 @@ function Chevron() {
 }
 
 /** A group's rarer actions behind one button; destructive ones never sit inline. */
-function GroupMenu({ name, items }: { name: string; items: { label: string; danger?: boolean; run: () => void }[] }) {
-  const [open, setOpen] = useState(false);
+function GroupMenu({ name, items, defaultOpen = false }: { name: string; items: { label: string; danger?: boolean; run: () => void }[]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -237,7 +237,7 @@ export function suggestName(repos: string[]): string {
   return useful.length > 0 ? useful.join("-") : "";
 }
 
-export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {}, onNewSession }: {
+export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {}, onNewSession, openMenu }: {
   projects: Project[]; rows: Row[];
   /** The project whose orb section is expanded (#/projects/<slug>/orb). */
   orbOpen?: string;
@@ -254,6 +254,8 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   onDelete: (id: string) => void;
   /** Starts a session in the project's orb (the palette's "New session in <project>"). */
   onNewSession?: (project: Project) => void;
+  /** The project whose ⋯ menu starts open: a static render of that state. */
+  openMenu?: string;
 }) {
   const [filter, setFilter] = useState("");
   // The page's one selection, whichever list or repo it was ticked from.
@@ -362,7 +364,12 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     return true;
   };
 
-  const createProject = async () => {
+  // Which New project… button asked. The list going empty (or not)
+  // while the dialog is up swaps that button for a fresh element, which
+  // the dialog cannot hand focus back to: the one now in its place takes it.
+  const newHead = useRef<HTMLButtonElement>(null);
+  const newEmpty = useRef<HTMLButtonElement>(null);
+  const createProject = async (from?: RefObject<HTMLButtonElement | null>) => {
     made.current = null;
     await askText("New project", { placeholder: "What is this work?", action: "Create",
       onSubmit: async (name) => {
@@ -373,6 +380,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
       } });
     // Done or cancelled, the next creation is a new project.
     made.current = null;
+    requestAnimationFrame(() => { if (document.activeElement === document.body) from?.current?.focus(); });
   };
 
   // Explicit: names the project after the repo, asks first, and files only that repo's unassigned sessions.
@@ -431,7 +439,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         {(projects.length > 0 || needle) && (
           <div className="head-side">
             {upTotal > 0 && <OrbUp n={upTotal} />}
-            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
+            <button ref={newHead} className="btn btn-primary" onClick={() => { void createProject(newHead); }}>New project…</button>
           </div>
         )}
       </header>
@@ -449,7 +457,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         {projects.length === 0 && !needle && (
           <div className="proj-empty-row">
             <p><b>No projects yet.</b> Group sessions from any repo under one name; moving a session doesn’t change it.</p>
-            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
+            <button ref={newEmpty} className="btn btn-primary" onClick={() => { void createProject(newEmpty); }}>New project…</button>
           </div>
         )}
 
@@ -474,7 +482,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                 <a className="btn btn-sm" href={`#/projects/${p.slug}`}>Open</a>
                 {onNewSession && <button className="btn btn-sm" onClick={() => onNewSession(p)}>New session</button>}
                 <button className="btn btn-sm proj-orb-btn" aria-expanded={orbId === p.slug} onClick={() => toggleOrb(p.slug)}>Orb</button>
-                <GroupMenu name={p.name} items={[
+                <GroupMenu name={p.name} defaultOpen={openMenu === p.slug} items={[
                   { label: "Rename…", run: () => { void askText("Rename project", { initial: p.name, action: "Rename", onSubmit: (name) => onRename(p.slug, name) }); } },
                   // Typed, not clicked: this deletes hand-written files
                   // (the scripts, MEMORY.md) that are committed nowhere.

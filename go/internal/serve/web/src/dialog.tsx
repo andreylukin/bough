@@ -11,6 +11,7 @@ import { BINDINGS, keyChips } from "./keys";
  * voice. One host is mounted in the app; askText and askConfirm return
  * promises, so a call site reads as plainly as prompt() did.
  */
+export type DialogReq = Req;
 export type Req =
   | { kind: "text"; title: string; body?: string; initial: string; placeholder?: string; action: string; allowEmpty: boolean;
       danger?: boolean; onSubmit?: (v: string) => Promise<void>; resolve: (v: string | null) => void }
@@ -172,10 +173,7 @@ export function DialogHost({ seed }: { seed?: { req: Req; text: string } } = {})
     else if (r.kind === "keys") r.resolve();
     else r.resolve(result as string | null);
   };
-  // Blank is allowed where it means something (a session title handed
-  // back); the same text again is not a change worth a request.
-  const blocked = req.kind === "text" && (
-    (!req.allowEmpty && !text.trim()) || (text.trim() === req.initial.trim() && text.trim() !== ""));
+  const blocked = textBlocked(req, text);
   const submit = async () => {
     if (blocked || saving) return;
     if (req.kind === "confirm") { finish(true); return; }
@@ -191,6 +189,36 @@ export function DialogHost({ seed }: { seed?: { req: Req; text: string } } = {})
   };
 
   return createPortal(
+    <DialogView req={req} text={text} saving={saving} failed={failed} onText={setText} onSubmit={submit}
+                onDismiss={dismiss} onFinish={finish} refs={{ box, input, ok, cancel }} />,
+    document.body,
+  );
+}
+
+/**
+ * Blank is allowed where it means something (a session title handed
+ * back); the same text again is not a change worth a request.
+ */
+export function textBlocked(req: Req, text: string): boolean {
+  return req.kind === "text" && (
+    (!req.allowEmpty && !text.trim()) || (text.trim() === req.initial.trim() && text.trim() !== ""));
+}
+
+/**
+ * The dialog as the host's state draws it, without the portal, the
+ * focus moves or the inert page behind: any state of it renders
+ * statically (test/model-projects.test.tsx renders every one the
+ * Projects page can reach).
+ */
+export function DialogView({ req, text, saving, failed, onText: setText, onSubmit: submit, onDismiss: dismiss,
+  onFinish: finish = () => {}, refs: { box, input, ok, cancel } = {} }: {
+  req: Req; text: string; saving: boolean; failed: string;
+  onText: (v: string) => void; onSubmit: () => void; onDismiss: () => void; onFinish?: (v: string) => void;
+  refs?: { box?: RefObject<HTMLDivElement | null>; input?: RefObject<HTMLInputElement | null>;
+           ok?: RefObject<HTMLButtonElement | null>; cancel?: RefObject<HTMLButtonElement | null> };
+}) {
+  const blocked = textBlocked(req, text);
+  return (
     <div className="dlg-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) dismiss(); }}>
       <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-busy={saving || undefined}
            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }}>
@@ -239,7 +267,6 @@ export function DialogHost({ seed }: { seed?: { req: Req; text: string } } = {})
           </button>}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import { providerError } from "../src/loading";
+import { ErrorToast, providerError } from "../src/loading";
 import { WikiPageView } from "../src/wiki";
 
 test("MB-ERR: providerError names the provider and status, and lifts the JSON message", () => {
@@ -14,12 +14,17 @@ test("MB-ERR: providerError names the provider and status, and lifts the JSON me
 });
 
 test("MB-ERR: the toast speaks humanError and leaves Escape to the turn", () => {
-  const src = readFileSync(new URL("../src/app.tsx", import.meta.url), "utf8");
-  const toast = src.slice(src.indexOf('<div className="toast"'), src.indexOf("</div>\n      ) : null}", src.indexOf('<div className="toast"')));
+  // The app draws its toast with ErrorToast (loading.tsx).
+  expect(readFileSync(new URL("../src/app.tsx", import.meta.url), "utf8")).toContain("<ErrorToast toast={toast}");
+  const src = readFileSync(new URL("../src/loading.tsx", import.meta.url), "utf8");
+  const toast = src.slice(src.indexOf("export function ErrorToast"));
   expect(toast).toContain("{humanError(toast.msg)}");
   expect(toast).not.toContain("— {err.msg}");
-  expect(toast).toContain('aria-label="Dismiss"');
   expect(toast).not.toMatch(/Escape|onKeyDown/);
+  const html = renderToStaticMarkup(<ErrorToast toast={{ label: "delete the project", msg: "wiki: not found", retry: () => {} }} busy={false} onDismiss={() => {}} />);
+  expect(html).toContain("It could not be found");
+  expect(html).not.toContain("wiki: not found");
+  expect(html).toContain('aria-label="Dismiss"');
 });
 
 test("MB-ERR: a missing wiki page is a neutral fact: no red glyph, no details, Search the wiki", () => {
