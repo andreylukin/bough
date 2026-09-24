@@ -702,7 +702,13 @@ func (a *actorState) steer(text string) bool {
 		return true
 	}
 	id := newInputID()
-	a.r.d.History.Append("input", map[string]any{"text": msg, "steer": true, "input_id": id})
+	data := map[string]any{"text": msg, "steer": true, "input_id": id}
+	// As startTurn: the transcript and Edit show what was typed, not the
+	// view_image pointers and @file blocks admit added for the model.
+	if msg != text {
+		data["typed"] = text
+	}
+	a.r.d.History.Append("input", data)
 	a.steerOrQueue(queued{id: id, payload: msg}, &a.steerQ)
 	return true
 }

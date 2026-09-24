@@ -218,6 +218,36 @@ func TestSteer(t *testing.T) {
 	fake.AssertAppendOnly(t, r.fake.Requests())
 }
 
+// A steered image goes to the model with its view_image pointer, but the
+// transcript and Edit show what was typed, as for a submitted one. The
+// web composer's Enter on a running turn is a steer, so an image pasted
+// then showed the pointer as the person's message (attachments_paste MBT).
+func TestSteerRecordsTyped(t *testing.T) {
+	t.Parallel()
+	hold := make(chan struct{})
+	r := newRig(t,
+		fake.Step{Want: "look", Hold: hold, Output: []ullmItem{fake.Text("looking")}},
+		fake.Step{Want: "the user attached", Output: []ullmItem{fake.Text("a cat")}},
+	)
+	r.rt.Submit("look at this")
+	r.waitRequests(1)
+	typed := "[Image #1: /tmp/shot.png]"
+	if !r.rt.Steer(typed) {
+		t.Fatal("steer refused mid-turn")
+	}
+	close(hold)
+	r.waitDone(1)
+	for _, e := range r.entries() {
+		if e.Kind == "input" && e.Data["steer"] == true {
+			if got := history.Prompt(e); got != typed {
+				t.Fatalf("steer recorded as typed %q, want %q\n%s", got, typed, r.dump())
+			}
+			return
+		}
+	}
+	t.Fatalf("no steer input entry\n%s", r.dump())
+}
+
 // Close and reopen: the next input continues the same harness session,
 // with the earlier turn in context and no reseed.
 func TestResume(t *testing.T) {
