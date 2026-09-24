@@ -48,6 +48,14 @@ failed run's trace with `npx playwright show-trace <trace.zip>`.
 - `helpers/fixtures.ts` — the `launchBough` fixture kills every
   spawned process at test end and attaches the full captured
   stdout+stderr to the report when the test failed.
+- `helpers/serve.ts` — a real `bough serve` on an isolated HOME. `serve`
+  is one process per test (`test.use({ serveOpts: { home, config } })`
+  seeds files and `~/.bough/bough.yml`, llm-echo by default);
+  `sharedServe` is one per worker (`workerServeOpts`), and a test using
+  it touches only the sessions it made with `newSession()`. Both sign
+  the page in before the first navigation, give `api` (bearer + Origin
+  preset), and attach the server log when a test fails.
+  `specs/serve-fixture.spec.ts` shows both.
 - `helpers/term.ts` — screen reading goes through the sip client's
   `window.sipTerm.term.buffer.active` (xterm.js-compatible buffer API;
   `getLine(i).translateToString(true)` per row). The renderer draws to

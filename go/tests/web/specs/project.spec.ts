@@ -9,12 +9,9 @@
 // test fulfils the message POST and patches the project read exactly the
 // way serve answers once a main exists; Go's TestMessageProjectStarts-
 // AndFeedsMain covers the creation itself.
-import { spawn } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
-import { test as base, expect } from '../helpers/fixtures';
-import { boughBin, freePort } from '../helpers/bough';
+import { test, expect } from '../helpers/serve';
 
 const MAIN = '2026-09-19T08-00-00-00001';
 const ERRED = '2026-09-19T08-10-00-00002';
@@ -52,47 +49,10 @@ const seed: Record<string, string> = {
   }, null, 2) + '\n',
 };
 
-interface Serve { url: string; home: string; token: string }
+test.use({ serveOpts: { home: seed } });
 
-const test = base.extend<{ serve: Serve }>({
-  serve: async ({ request }, use) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bough-prj-'));
-    for (const [rel, text] of Object.entries(seed)) {
-      const p = path.join(home, rel);
-      fs.mkdirSync(path.dirname(p), { recursive: true });
-      fs.writeFileSync(p, text);
-    }
-    const addr = `127.0.0.1:${await freePort()}`;
-    const child = spawn(boughBin, ['serve', '--run', addr], {
-      cwd: home, env: { ...process.env, HOME: home }, stdio: 'ignore',
-    });
-    let token = '';
-    try {
-      await expect.poll(async () => {
-        try {
-          token = fs.readFileSync(path.join(home, '.bough', 'serve.token'), 'utf8').trim();
-          return (await request.get(`http://${addr}/api/health`, { headers: { Authorization: `Bearer ${token}` } })).status();
-        } catch { return 0; }
-      }).toBe(200);
-      await use({ url: `http://${addr}`, home, token });
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
-          child.once('exit', () => { clearTimeout(timer); resolve(); });
-          child.kill('SIGTERM');
-        });
-      }
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  },
-});
-
-test('a project created through the API is a directory, and its page asks for the first message', async ({ serve, page, request }) => {
-  const res = await request.post(serve.url + '/api/projects', {
-    headers: { Authorization: `Bearer ${serve.token}`, Origin: serve.url },
-    data: { name: 'Ship it' },
-  });
+test('a project created through the API is a directory, and its page asks for the first message', async ({ serve, page }) => {
+  const res = await serve.api.post('/api/projects', { data: { name: 'Ship it' } });
   expect(res.status()).toBe(200);
   expect((await res.json()).project.slug).toBe('ship-it');
   // The directory IS the project: nothing else records that it exists.
