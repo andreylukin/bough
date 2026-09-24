@@ -186,6 +186,11 @@ type child struct {
 	// exits without the turn ever starting.
 	unread, held bool
 	holdGen      int // which hold a hold-limit timer belongs to
+	// signalled: a SIGINT reached the process. The child exits on it
+	// (main.go: cancel, AwaitCancelled, unmount), so it is never handed
+	// another prompt: one written in that gap was lost, or opened a turn
+	// the exit then cancelled. ensure waits for the reap and respawns.
+	signalled bool
 	// inTurn: the child took an input and has not ended that turn. A
 	// line sent then is a steer that lands only at the next boundary,
 	// so an interrupt must go straight through, not wait for it.
@@ -584,8 +589,13 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 		return nil, fmt.Errorf("serve: supervisor: closed")
 	}
 	if ch, ok := s.kids[id]; ok {
+		if !ch.signalled {
+			s.mu.Unlock()
+			return ch, nil
+		}
 		s.mu.Unlock()
-		return ch, nil
+		s.awaitExit(ch)
+		return s.ensure(id)
 	}
 	// Send and Adopt check the flag too, but without the lock: one that
 	// read it just before SetArchived set it would spawn right after the
@@ -611,6 +621,21 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 		return nil, err
 	}
 	return ch, nil
+}
+
+// exitWait bounds how long ensure waits for a signalled child to exit
+// on its own before killing it: main.go's SIGINT path takes up to 3 s
+// to record the cancelled turn, then unmounts.
+var exitWait = 10 * time.Second
+
+// awaitExit waits for a signalled child's reap, killing it if it
+// outlives exitWait, so its lease is free when this returns.
+func (s *Supervisor) awaitExit(ch *child) {
+	select {
+	case <-ch.done:
+	case <-time.After(exitWait):
+		s.killChild(ch)
+	}
 }
 
 // adoptDir is the directory the session was started in, so relative
@@ -1125,6 +1150,7 @@ func (s *Supervisor) Interrupt(id string) error {
 		})
 		return nil
 	}
+	ch.signalled = true
 	s.mu.Unlock()
 	if err := ch.cmd.Process.Signal(os.Interrupt); err != nil {
 		return fmt.Errorf("serve: supervisor: interrupt %s: %w", id, err)
@@ -1138,6 +1164,7 @@ func (s *Supervisor) releaseLocked(ch *child) {
 		return
 	}
 	ch.held = false
+	ch.signalled = true
 	_ = ch.cmd.Process.Signal(os.Interrupt)
 }
 

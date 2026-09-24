@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,11 @@ const (
 	// thinking" activity line, which is all the real child prints while
 	// its first model request is in flight.
 	envThinking = "BOUGH_FAKE_THINKING"
+	// envLinger makes the slow-signal fake outlive its cancelled turn
+	// the way the real child does (main.go: AwaitCancelled, then the
+	// unmount): a line read in that gap still opens a turn, which the
+	// exit then cancels.
+	envLinger = "BOUGH_FAKE_LINGER"
 )
 
 func TestMain(m *testing.M) {
@@ -166,6 +172,15 @@ func fakeSlowSigChild() {
 			case <-sig:
 				say(map[string]any{"kind": "cancelled"})
 				say(map[string]any{"kind": "done"})
+				if os.Getenv(envLinger) != "" {
+					select {
+					case line := <-lines:
+						say(map[string]any{"kind": "input", "text": line})
+						say(map[string]any{"kind": "cancelled"})
+						say(map[string]any{"kind": "done"})
+					case <-time.After(time.Second):
+					}
+				}
 				os.Exit(130)
 			case <-lines: // a steer lands only at the next boundary, none yet
 				<-sig
@@ -761,6 +776,46 @@ func TestSupervisorInterruptWhileModelThinks(t *testing.T) {
 	}
 	if !hasKind(f.sup.Recent(id), "cancelled") {
 		t.Fatalf("Stop while the model thinks was held, not sent: %v", kinds(f.sup.Recent(id)))
+	}
+}
+
+// A prompt sent right after a Stop ended the turn must run: the child
+// the Stop signalled is on its way out, and a line written to it was
+// either lost or opened a turn its exit then cancelled (CI:
+// TestSteerQueuePaths saw an input followed by a cancel nobody asked for).
+func TestSupervisorSendAfterInterruptRuns(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envSlowSig+"=1", envLinger+"=1")
+	id := "sess-after-stop"
+	f.seed(t, id)
+	if err := f.sup.Send(id, "tell a long story"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitFor(t, "the turn", func() bool { return hasKind(f.sup.Recent(id), "input") })
+	if err := f.sup.Interrupt(id); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	waitFor(t, "the cancel", func() bool { return hasKind(f.sup.Recent(id), "cancelled") })
+	if err := f.sup.Send(id, "next one"); err != nil {
+		t.Fatalf("Send after Stop: %v", err)
+	}
+	waitFor(t, "the next prompt's reply", func() bool {
+		for _, e := range f.sup.Recent(id) {
+			if e.Kind == "assistant" && e.Text == "echo next one" {
+				return true
+			}
+		}
+		return false
+	})
+	evs := f.sup.Recent(id)
+	var after []string
+	for i, e := range evs {
+		if e.Kind == "input" && e.Text == "next one" {
+			after = kinds(evs[i:])
+		}
+	}
+	if slices.Contains(after, "cancelled") {
+		t.Errorf("the prompt sent after Stop was cancelled: %v", kinds(evs))
 	}
 }
 
