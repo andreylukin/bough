@@ -92,10 +92,12 @@ const mbtPort = 50051
 // lockMBT serialises MBT runs across every process on the machine: the
 // runner's server port is fixed, so two runs at once would walk each
 // other's graphs. The flock is released when the test ends, or when
-// the process dies.
+// the process dies. It lives in /tmp, not os.TempDir(): the port is
+// machine-wide, and a runner that gives each run its own TMPDIR made
+// the lock per-run, so two runs raced for the port anyway.
 func lockMBT(t *testing.T) {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(os.TempDir(), "bough-fizz-mbt-50051.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile("/tmp/bough-fizz-mbt-50051.lock", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +117,18 @@ func startGraphServer(t *testing.T, runDir string) {
 	t.Helper()
 	_, server := fizzTools(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", mbtPort)
-	if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
+	// A checkout whose lockMBT still lives in its own TMPDIR does not see
+	// this lock, so a taken port is waited out rather than failed on.
+	for wait := time.Now().Add(5 * time.Minute); ; {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			break
+		}
 		c.Close()
-		t.Fatalf("port %d is already taken by something that is not holding the MBT lock", mbtPort)
+		if time.Now().After(wait) {
+			t.Fatalf("port %d is still taken after 5m by something that is not holding the MBT lock", mbtPort)
+		}
+		time.Sleep(time.Second)
 	}
 	var out bytes.Buffer
 	cmd := exec.Command(server, "--port", fmt.Sprint(mbtPort), "--states_file", runDir+"/")
@@ -170,7 +181,33 @@ func runMBT(t *testing.T, spec string, model fmbt.Model, actions map[string]map[
 	runDir := fizzCheck(t, spec)
 	lockMBT(t)
 	startGraphServer(t, runDir)
+	defer shortTempDir(t)()
 	return fmbt.RunTests(t, model, actions, opts)
+}
+
+// shortTempDir points TMPDIR at a short symlink to os.TempDir() while the
+// lib runs, and returns the restore. fmbt.RunTests binds its plugin
+// socket at $TMPDIR/fizzbee-mbt-<n>/plugin.sock, and a unix socket path
+// is capped at 104 bytes on darwin: under a long TMPDIR every random run
+// failed with "bind: invalid argument" before it took a step. The link
+// keeps the files where they were; only the name is shorter. Callers
+// hold the MBT lock, so no two runs swap TMPDIR at once.
+func shortTempDir(t *testing.T) func() {
+	t.Helper()
+	long := os.TempDir()
+	if len(long)+len("/fizzbee-mbt-4294967295/plugin.sock") < 100 {
+		return func() {}
+	}
+	link := fmt.Sprintf("/tmp/bough-mbt-%d", os.Getpid())
+	os.Remove(link)
+	if err := os.Symlink(long, link); err != nil {
+		t.Fatal(err)
+	}
+	os.Setenv("TMPDIR", link)
+	return func() {
+		os.Setenv("TMPDIR", long)
+		os.Remove(link)
+	}
 }
 
 // sessionHistory reads a serve session's transcript off disk: the
