@@ -12,7 +12,11 @@ const repoRoot = path.resolve(__dirname, '..', '..', '..');
 export const boughBin = process.env.BOUGH_BIN ?? path.join(repoRoot, 'bough');
 
 export interface LaunchOpts {
-  /** Extra --set overrides ("id.key=value"). llm.plugin=llm-echo is always applied first. */
+  /**
+   * Extra --set overrides ("id.key=value"), applied after the defaults
+   * llm.plugin=llm-echo and loop.plugin=loop, so a test can override
+   * either (e.g. "loop.plugin=engine-unreal" with a scripted llm row).
+   */
   sets?: string[];
   /** Extra CLI args (e.g. ["-c"] or ["-r"]), appended before --web. */
   args?: string[];
@@ -103,13 +107,17 @@ export async function launch(opts: LaunchOpts = {}): Promise<Bough> {
   if (opts.cwd) writeTree(cwd, opts.cwd);
 
   const port = await freePort();
-  const sets = ['llm.plugin=llm-echo', ...(opts.sets ?? [])];
+  // loop.plugin=loop because the default engine-unreal loop refuses
+  // llm-echo (it has no agent adapter); the Go e2e suites pin it too.
+  const sets = ['llm.plugin=llm-echo', 'loop.plugin=loop', ...(opts.sets ?? [])];
   const args = ['--config', 'bough.yml'];
   for (const s of sets) args.push('--set', s);
   args.push(...(opts.args ?? []));
   args.push('--web', `127.0.0.1:${port}`);
 
-  const env = { ...process.env, HOME: home };
+  // The web row defaults to 127.0.0.1:7683, the user's live serve: an
+  // ephemeral port keeps each test off it (and off each other).
+  const env = { ...process.env, HOME: home, BOUGH_WEB_ADDR: '127.0.0.1:0' };
   const proc = spawn(boughBin, args, { cwd, env });
   const chunks: string[] = [];
   proc.stdout?.on('data', (d) => chunks.push(String(d)));
