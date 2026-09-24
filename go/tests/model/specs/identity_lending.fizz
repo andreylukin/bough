@@ -1,0 +1,216 @@
+# Identity lending, the $HOME dirs: a project's definition lists a dir
+# (projectdef.Def.Identity), a session's orb mounts it into its container,
+# and the definition changes under it (the editor, `bough project
+# add-identity|remove-identity`, the same command relayed from a guest,
+# or the guest writing project.yml through the mounted project dir). The
+# gh token half is identity_lending_gh.fizz: the two are independent, and
+# one spec over both is past 1500 states.
+#
+# What the code does, and so what the spec says:
+#   - CheckIdentity (on every Parse, so on Load too) refuses the deny
+#     list by exact top dir: .ssh, .gnupg, .bough, Library, .local,
+#     .docker, and .config itself or its shell/git/gh dirs (AddDenied).
+#   - CheckHost (on every WriteFile of project.yml, so on every `bough
+#     project` mutation) refuses a listed dir that does not exist on the
+#     host. A guest that writes project.yml through the project dir
+#     mounted into its container skips it (GuestWritesYaml).
+#   - identityMounts (at Prepare) mounts each listed dir that exists on
+#     the host, and skips a missing one silently.
+#   - Start reuses the existing container when state.json's image equals
+#     the tag, and ImageHash leaves identity out, so a restart of a
+#     stopped container keeps the mounts it was created with. Apple's
+#     Start of a stopped container is `container start`: the spec is not
+#     looked at again. Only RemoveOrb (DELETE orb) or a setup/base change
+#     (a new tag, not modelled) gives a container the current mounts.
+#   - A running session never reloads its mounts: ensureRunningLocked
+#     restarts the same container (ExecRestarts).
+#
+# Where the mapped model was corrected:
+#   - "Def_lists_dir_ro/rw" is one value, ok: ro and rw take the same
+#     paths; the mode only matters for a host-exec dir, which is hazard.
+#   - hazard is every entry CheckIdentity accepts that still lends a key
+#     store or a dir the host runs code from: a case variant on APFS
+#     (.SSH, library, .Bough:rw), a $HOME symlink to ~/.ssh (os.Stat
+#     follows it), or a host-exec dir not on the list (.cargo/bin:rw,
+#     go/bin:rw, .bun:rw, .nvm:rw). The spec does not tell them apart.
+#   - The deny-list refusal is not only the editor's: Load's Parse runs
+#     CheckIdentity too, so a guest-written ".ssh" makes the project fail
+#     to load rather than mount (not modelled; AddDenied stands for it).
+#
+# Design gaps this model exposes (reachable here on purpose, not
+# asserted away; the intended forms are in the notes at the bottom):
+#   - hazard entries are accepted and mounted (m == "hazard").
+#   - a restart reuses a stopped container with the mounts of an older
+#     definition (stale): remove-identity is not applied by a restart.
+#   - the relay runs `bough project ...` for any slug (other).
+#
+# Fields (role Lend):
+#   d      the definition's dir entry: none | ok | hazard
+#   host   the dir the entry names (or would name) exists on the host
+#   live   a session of the project runs (its child bough)
+#   ctr    the session container: missing | stopped | running
+#   m      what the container has mounted for that entry: none | ok |
+#          hazard (fixed when the container was created)
+#   drift  the definition or the host dir changed what should be mounted
+#          after this container was created
+#   stale  this session started on a container whose mounts were not
+#          its definition's at that start
+#   other  a guest changed another project's definition through the relay
+
+role Lend:
+    action Init:
+        self.d = "none"
+        self.host = True
+        self.live = False
+        self.ctr = "missing"
+        self.m = "none"
+        self.drift = False
+        self.stale = False
+        self.other = False
+
+    # --- the definition ---
+
+    # add-identity <slug> .aws (or .aws:rw), from the editor, the CLI or
+    # relayed from a guest: CheckIdentity, then CheckHost.
+    atomic action AddDir:
+        require self.d == "none" and self.host
+        self.set_d("ok")
+
+    # add-identity .SSH | a symlink to ~/.ssh | .cargo/bin:rw: both
+    # checks pass (see the notes at the top).
+    atomic action AddHazard:
+        require self.d == "none" and self.host
+        self.set_d("hazard")
+
+    # add-identity .ssh | Library/LaunchAgents | .local/bin:rw: refused
+    # by CheckIdentity, the definition is unchanged.
+    atomic action AddDenied:
+        require self.d == "none"
+        self.d = "none"
+
+    # The guest edits project.yml through the mounted project dir: no
+    # WriteFile, so no CheckHost; a missing dir is listed anyway.
+    atomic action GuestWritesYaml:
+        require self.live and self.d == "none"
+        self.set_d("ok")
+
+    # remove-identity: the definition no longer lists it (CheckHost is
+    # run on what is left, so it passes even with the dir gone).
+    atomic action RemoveDir:
+        require self.d != "none"
+        self.set_d("none")
+
+    # --- the host ---
+
+    atomic action HostDeletesDir:
+        require self.host
+        old = want(self)
+        self.host = False
+        self.changed(old)
+
+    atomic action HostCreatesDir:
+        require not self.host
+        old = want(self)
+        self.host = True
+        self.changed(old)
+
+    # --- the orb ---
+
+    # A session starts or resumes (Prepare + Start). A missing container
+    # is created with the current definition's mounts; a stopped one is
+    # reused as it is, because the image tag, which leaves identity out,
+    # still matches state.json's.
+    atomic action StartOrb:
+        require not self.live
+        self.live = True
+        if self.ctr == "missing":
+            self.m = want(self)
+            self.drift = False
+            self.stale = False
+        else:
+            self.stale = self.m != want(self)
+        self.ctr = "running"
+
+    # serve's Stop orb while the session lives.
+    atomic action StopOrb:
+        require self.live and self.ctr == "running"
+        self.ctr = "stopped"
+
+    # The session's next exec finds the container stopped and starts the
+    # same one (ensureRunningLocked): the mounts are not looked at.
+    atomic action ExecRestarts:
+        require self.live and self.ctr == "stopped"
+        self.ctr = "running"
+
+    # The session exits (or serve restarts it): Orb.Stop stops the
+    # container, which stays for the next start.
+    atomic action Exit:
+        require self.live
+        self.live = False
+        self.ctr = "stopped"
+        self.stale = False
+
+    # DELETE orb, offered only while the session is down.
+    atomic action RemoveOrb:
+        require not self.live and self.ctr == "stopped"
+        self.ctr = "missing"
+        self.m = "none"
+        self.drift = False
+
+    # The guest runs `bough project add-identity <another slug> ...`
+    # through the relay, which forwards any `bough project` argv.
+    atomic action RelayOtherSlug:
+        require self.live and self.ctr == "running" and not self.other
+        self.other = True
+
+    # Helpers are atomic funcs: a plain func call is a yield point.
+    atomic func set_d(v):
+        old = want(self)
+        self.d = v
+        self.changed(old)
+
+    atomic func changed(old):
+        if self.ctr != "missing" and want(self) != old:
+            self.drift = True
+
+# What identityMounts would mount for the entry now.
+def want(l):
+    if l.d == "none" or not l.host:
+        return "none"
+    return l.d
+
+action Init:
+    lend = Lend()
+
+# The exact deny list is never listed, so never mounted.
+always assertion DeniedNeverListed:
+    return lend.d != "denied" and lend.m != "denied"
+
+# A container's mounts are the definition's unless the definition or
+# the host dir changed after the container was created.
+always assertion MountsDivergeOnlyAfterDrift:
+    return lend.ctr == "missing" or lend.m == want(lend) or lend.drift
+
+# A session starts on stale mounts only by reusing a container created
+# before a change.
+always assertion StaleOnlyAfterDrift:
+    return not lend.stale or lend.drift
+
+# Nothing is mounted without a container; a live session has one.
+always assertion MountsLiveInAContainer:
+    return (lend.ctr != "missing" or lend.m == "none") and (not lend.live or lend.ctr != "missing")
+
+# Intended, and false today (the gaps above; fizz's counterexamples are
+# in the branch's report). Each was checked by adding it here:
+#   always assertion NoHazardMounted:
+#       return lend.m != "hazard"
+#   always assertion RestartAppliesDefinition:
+#       return not lend.stale
+#   always assertion GuestKeepsToItsProject:
+#       return not lend.other
+#   always eventually assertion RemovedDirEventuallyUnmounted:
+#       return lend.d != "none" or lend.m == "none"
+#     (checked with StartOrb fair: a live session keeps its mounts, and
+#     every later start reuses the container, so only a person's
+#     RemoveOrb ever unmounts it. add-identity is not applied by a
+#     restart either: the reused container lacks the new dir.)
