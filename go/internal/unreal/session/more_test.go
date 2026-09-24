@@ -89,6 +89,45 @@ func TestDoneCountsOlderJobs(t *testing.T) {
 	})
 }
 
+// A job that finishes while a later turn is open reports into that
+// turn; when the turn is then cancelled, its news waits for the next
+// input like the turn's other unseen results. It woke the model into a
+// turn of its own right after the cancel: a Stopped background agent
+// ran again before its process could exit.
+func TestCancelParksAJobThatEndedInTheTurn(t *testing.T) {
+	t.Parallel()
+	hold := make(chan struct{})
+	r := newRigWith(t, []rigOpt{settle(200 * time.Millisecond)},
+		fake.Step{Want: "serve", Output: []ullmItem{fake.Call("h1", "hold", `{"text":"npm run dev"}`)}},
+		fake.Step{Want: "again", Hold: hold, Output: []ullmItem{fake.Text("never")}},
+		fake.Step{Want: "held and released", Output: []ullmItem{fake.Text("the news, with the next input")}},
+	)
+	r.rt.Submit("serve it")
+	r.waitDone(1)
+	r.rt.Submit("again")
+	r.waitRequests(2)
+	close(r.kit.release)
+	r.waitFor("the job's end", func() bool {
+		for _, e := range r.entries() {
+			if e.Kind == "job" && e.Data["event"] == "finished" {
+				return true
+			}
+		}
+		return false
+	})
+	r.rt.Cancel()
+	r.waitFor("the cancel", func() bool { return r.count("cancelled") == 1 })
+	time.Sleep(500 * time.Millisecond)
+	if n := r.count("input"); n != 2 {
+		t.Fatalf("%d inputs after the cancel, want 2 (no wake turn)\n%s", n, r.dump())
+	}
+	r.rt.Submit("next")
+	r.waitDone(3)
+	if len(r.fake.Requests()) != 3 {
+		t.Fatalf("requests %d\n%s", len(r.fake.Requests()), r.dump())
+	}
+}
+
 // A provider error is a turn-level failure: error then done{stop:error},
 // and Run survives it, so the next input works.
 func TestProviderErrorKeepsRunAlive(t *testing.T) {
