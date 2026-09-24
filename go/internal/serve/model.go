@@ -23,6 +23,15 @@ func (a *API) ReapIdleOrbs(ctx context.Context, idle time.Duration, now time.Tim
 	return a.reapIdleOrbs(ctx, idle, now)
 }
 
+// StoppedAt is when this serve last stopped the session's container, the
+// time orbState compares state.json's updatedAt with.
+func (a *API) StoppedAt(session string) (time.Time, bool) {
+	a.sup.mu.Lock()
+	defer a.sup.mu.Unlock()
+	at, ok := a.sup.stoppedAt[session]
+	return at, ok
+}
+
 // SetRunningTTL sets how long a running snapshot answers for. A browser
 // walk is slower than runningTTL, and a snapshot that expired mid-walk
 // is a Refresh the spec did not take; the walk takes it with
