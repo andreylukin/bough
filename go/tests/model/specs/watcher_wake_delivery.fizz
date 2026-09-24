@@ -1,0 +1,225 @@
+# Watchers: a ~/.bough/watchers/*.js file names a shell command and a
+# check; when the check says the command's output is news, serve wakes
+# a session with it. One watcher, one thread it wakes, and the serve
+# process around them.
+#
+# Code: go/internal/serve/watch/watch.go (Load, Tick, poll, deliver),
+# go/internal/serve/watchers.go (StartWatchers, supWaker Wake/Idle/
+# target), go/internal/serve/supervisor.go Send/ensure, and the shutdown
+# order in go/cmd/bough/serve.go serveForeground.
+#
+# The watcher the flow assumes wakes on "the output changed and says
+# there is news": {wake: "news " + now} when now != prev and now > 0.
+# world is the news counter the command prints (0 = nothing yet), prev
+# is the last output the engine handed the check (-1 = none since Load),
+# last_text the last wake text it queued (dedupe), cool whether the last
+# delivered wake is still inside MinGap (rate limit).
+#
+# What the code does, and so what the spec says:
+#
+# - Tick = poll every due watcher, then deliver. They are two steps
+#   here because deliver is not atomic with anything: it asks Idle once,
+#   empties the queue into a local list, and only then calls Wake (a
+#   supervisor Send) for each item. IdleCheck is that first half, Send
+#   one Wake call. A poll with no deliver after it is a real window too
+#   (a person's prompt can land between them), so Poll is its own step.
+# - Poll updates prev before it decides anything, so a wake dropped by
+#   the rate limit is gone: the next poll sees no change. Dedupe
+#   compares with last_text, which only a queued wake sets.
+# - Idle is false with no target (the only session archived) and while
+#   the target is running or waiting on an ask: the queue waits.
+# - Send refuses an archived session and one with an armed ask
+#   (PendingAsk), writes into a running turn as a steer, and otherwise
+#   spawns a child through ensure if none holds the session. A refused
+#   Wake marks the watcher failing and the text is not requeued; its
+#   last_text stays set, so the same news is never queued again in this
+#   serve's life. SendFail is every other error (spawn, pipe).
+# - The engine's memory (prev, last_text, queue, lastWoke) is in
+#   process only. Shutdown: a signal (Signal) runs srv.Shutdown, which
+#   waits up to 5 s for requests while the watcher goroutine keeps
+#   ticking and delivering; the deferred stopWatch then sup.Close
+#   (Close) end it and kill every child. Restart loads the watcher
+#   files again from nothing (Load), which is also the only time an
+#   edited watcher file is read: the engine never reloads.
+# - The person's own turns: Prompt opens one (the API is closed from
+#   Signal on), Finish ends it, Ask arms tools.ask, Answer answers it.
+#
+# Not modelled: the target is "the most recently modified unarchived
+# session" (supWaker.target), so a background agent or any newer
+# session gets the wake instead; with one session there is no choice.
+# EditWatcherFile has no effect until Restart, so it is not a step.
+# RunCommand's timeout (60 s) is a failure like any other (PollFail).
+#
+# The claims below are the ones the code keeps. The mapped model's
+# stronger claims (a queued wake is never dropped; a wake never lands in
+# a running turn; the same news wakes at most once across restarts; no
+# child is spawned once shutdown began; the rate limit bounds wakes)
+# each fail on this model: they are the findings, with their fizz
+# counterexamples, in the stage report, not assertions here.
+
+MAX_NEWS = 2
+
+role Watch:
+    action Init:
+        self.serve = "up"
+        self.world = 0
+        self.prev = -1
+        self.last_text = -1
+        self.cool = False
+        self.failing = False
+        self.queued = []
+        self.pending = []
+        self.woken = []
+        self.status = "idle"
+        self.archived = False
+        self.kid = False
+
+    # Something outside changes: the watched command now prints the
+    # next piece of news.
+    atomic action News:
+        require self.world < MAX_NEWS
+        self.world += 1
+
+    # The watcher is due, its command exits 0 and the check runs.
+    atomic fair action Poll:
+        require self.serve != "down"
+        self.failing = False
+        changed = self.world != self.prev
+        self.prev = self.world
+        if changed and self.world > 0:
+            if self.world == self.last_text:
+                pass
+            elif self.cool:
+                pass
+            else:
+                self.last_text = self.world
+                self.queued = self.queued + [self.world]
+
+    # The command fails or times out, or the check throws: the watcher
+    # is failing and prev is kept.
+    atomic action PollFail:
+        require self.serve != "down"
+        self.failing = True
+
+    # deliver: the target is idle, so the whole queue is taken at once.
+    atomic fair<strong> action IdleCheck:
+        require self.serve != "down" and len(self.pending) == 0 and len(self.queued) > 0
+        require not self.archived and self.status == "idle"
+        self.pending = self.queued
+        self.queued = []
+
+    # One Wake call from deliver's list, against the session as it is
+    # now, not as it was at IdleCheck.
+    atomic fair action Send:
+        require len(self.pending) > 0
+        text = self.pending[0]
+        self.pending = self.pending[1:]
+        if self.archived or self.status == "needs-you":
+            self.failing = True
+        else:
+            if self.status == "idle":
+                self.kid = True
+                self.status = "running"
+            self.woken = self.woken + [text]
+            self.cool = True
+
+    # Any other Wake error: the text is dropped, the watcher failing.
+    atomic action SendFail:
+        require len(self.pending) > 0
+        self.pending = self.pending[1:]
+        self.failing = True
+
+    # MinGap passes since the last delivered wake.
+    atomic fair action Cooldown:
+        require self.cool
+        self.cool = False
+
+    atomic action Prompt:
+        require self.serve == "up" and not self.archived and self.status == "idle"
+        self.kid = True
+        self.status = "running"
+
+    # A turn ends: strongly fair, or a person asking and answering
+    # forever would keep every wake queued.
+    atomic fair<strong> action Finish:
+        require self.status == "running"
+        self.status = "idle"
+
+    atomic action Ask:
+        require self.status == "running"
+        self.status = "needs-you"
+
+    atomic fair action Answer:
+        require self.status == "needs-you"
+        self.status = "running"
+
+    # Archiving kills the child; the open turn reads interrupted, which
+    # Idle does not count as busy.
+    atomic action Archive:
+        require self.serve == "up" and not self.archived
+        self.archived = True
+        self.kid = False
+        self.status = "idle"
+
+    atomic action Unarchive:
+        require self.serve == "up" and self.archived
+        self.archived = False
+
+    # SIGINT/SIGTERM: srv.Shutdown drains the API; the watcher runs on.
+    atomic action Signal:
+        require self.serve == "up"
+        self.serve = "stopping"
+
+    # stopWatch then sup.Close: the engine and its memory go, every
+    # child is killed, and a turn left open reads interrupted.
+    atomic fair action Close:
+        require self.serve == "stopping"
+        self.serve = "down"
+        self.queued = []
+        self.pending = []
+        self.kid = False
+        self.status = "idle"
+
+    # The same binary starts again: Load from nothing.
+    atomic action Restart:
+        require self.serve == "down"
+        self.serve = "up"
+        self.prev = -1
+        self.last_text = -1
+        self.cool = False
+        self.failing = False
+        self.woken = []
+
+action Init:
+    watch = Watch()
+
+# Busy is never interrupted at the check: nothing is taken off the queue
+# unless the target was idle, and a queue exists only while serve does.
+always assertion NoQueueWithoutServe:
+    return watch.serve != "down" or (len(watch.queued) == 0 and len(watch.pending) == 0)
+
+# Within one serve's life the same news wakes at most once (dedupe).
+always assertion OnceWithinLife:
+    return len(watch.woken) == len(set(watch.woken))
+
+# Nothing is woken that the world has not said.
+always assertion WokenIsNews:
+    return all([t > 0 and t <= watch.world for t in watch.woken + watch.queued + watch.pending])
+
+# A closed serve leaves no child behind, a watcher's included.
+always assertion NoChildWithoutServe:
+    return watch.serve != "down" or not watch.kid
+
+# An ask or a turn needs the child that runs it.
+always assertion BusyHasChild:
+    return watch.status == "idle" or watch.kid
+
+# A wake is never queued twice while it waits.
+always assertion QueueHasNoRepeats:
+    q = watch.queued + watch.pending
+    return len(q) == len(set(q))
+
+# A queued wake does not wait forever: once the session is idle and
+# unarchived it is taken and sent (or refused and dropped, see above).
+always eventually assertion QueueDrains:
+    return (len(watch.queued) == 0 and len(watch.pending) == 0) or watch.archived
