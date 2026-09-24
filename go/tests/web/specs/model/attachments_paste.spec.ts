@@ -31,7 +31,12 @@ interface Ctx {
   seen: Seen;     // the thread's fields as last read off the page
   otherSeen: Tag; // the other session's composer, as last read
   refused: number; // uploads UploadFail had the serve refuse, whose log line is not the page's error
+  gave: Gave | null; // where the last message given went, if one was
 }
+
+// The element the last Send or Queue made: the at-th prompt bubble, or
+// the at-th queued row (a prompt bubble once the queue is flushed).
+interface Gave { kind: 'send' | 'queue'; at: number }
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==';
 const LONG = Array.from({ length: 20 }, (_, i) => `pasted line ${i}`).join('\n');
@@ -67,10 +72,18 @@ async function composerTag(page: Page): Promise<Tag> {
 // page got for it: the picture loaded ("image"), "Image unavailable"
 // ("refused"), or a file named by its path with nothing fetching it
 // ("refused": only a link to /api/attachments would serve it).
-async function lastSent(page: Page): Promise<{ sent: string; served: string }> {
-  return page.evaluate(() => {
-    const all = [...document.querySelectorAll('.prompt-bubble, .queued-row')];
-    const el = all[all.length - 1] as HTMLElement | undefined;
+// Document order is not the order given once a message is queued: the
+// queued row stays below the transcript, so a steer given after it sits
+// above it, and when the turn ends the flushed queue lands after the
+// steer. So the element read is the one the last Send or Queue made.
+async function lastSent(page: Page, gave: Gave | null): Promise<{ sent: string; served: string }> {
+  return page.evaluate((gave) => {
+    const bubbles = [...document.querySelectorAll('.prompt-bubble')];
+    const queued = [...document.querySelectorAll('.queued-row')];
+    let el: HTMLElement | undefined;
+    if (gave?.kind === 'send') el = bubbles[gave.at] as HTMLElement | undefined;
+    else if (gave?.kind === 'queue' && queued.length > gave.at) el = queued[gave.at] as HTMLElement;
+    else el = [...bubbles, ...queued].pop() as HTMLElement | undefined;
     if (!el) return { sent: 'none', served: 'none' };
     const text = el.innerText;
     const img = el.querySelector('img[alt^="Image #"]') as HTMLImageElement | null;
@@ -85,7 +98,14 @@ async function lastSent(page: Page): Promise<{ sent: string; served: string }> {
     else if (gone) served = 'refused';
     else if (sent === 'file') served = el.querySelector('a[href*="/api/attachments"]') ? 'file' : 'refused';
     return { sent, served };
-  });
+  }, gave);
+}
+
+// Where the Send or Queue about to be clicked will put its message.
+async function giving(c: Ctx, kind: Gave['kind']): Promise<void> {
+  // A failed tag is refused: nothing is given.
+  if (c.seen.tag === 'failed') return;
+  c.gave = { kind, at: await c.page.locator(kind === 'send' ? '.prompt-bubble' : '.queued-row').count() };
 }
 
 // The session's state word is on its sidebar row, whichever session is
@@ -107,7 +127,7 @@ async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
   const hash = await c.page.evaluate(() => window.location.hash);
   const viewing = hash === `#/s/${c.id}` && (await row(c).getAttribute('aria-current')) === 'true';
   if (viewing) {
-    c.seen = { tag: await composerTag(c.page), can_send: await sendButton(c).isEnabled(), ...(await lastSent(c.page)) };
+    c.seen = { tag: await composerTag(c.page), can_send: await sendButton(c).isEnabled(), ...(await lastSent(c.page, c.gave)) };
   } else if (hash === `#/s/${c.other}`) {
     c.otherSeen = await composerTag(c.page);
   }
@@ -164,6 +184,7 @@ async function settle(c: Ctx, ok: boolean): Promise<void> {
 // Send and the Queue button end the draft the same way; a Send while
 // nothing runs starts a turn, which the model holds until Finish.
 async function send(c: Ctx): Promise<void> {
+  await giving(c, 'send');
   if (c.held) { await sendButton(c).click(); return; }
   const name = `t${String(++c.turn).padStart(4, '0')}`;
   const dir = controlDir(c.serve.home);
@@ -181,7 +202,7 @@ modelTests<Ctx>({
   async init(page, serve) {
     const c: Ctx = {
       page, serve, id: await serve.newSession(), other: await serve.newSession(), turn: 0, held: '', upload: null,
-      seen: { tag: 'none', can_send: false, sent: 'none', served: 'none' }, otherSeen: 'none', refused: 0,
+      seen: { tag: 'none', can_send: false, sent: 'none', served: 'none' }, otherSeen: 'none', refused: 0, gave: null,
     };
     // Chromium logs every 4xx a fetch gets as a console error, so the
     // refusal UploadFail asks for would fail the harness's "no console
@@ -220,7 +241,10 @@ modelTests<Ctx>({
       await composer(c).fill(draft.replace(TAG_RE, '').trim());
     },
     Send: send,
-    Queue: (c) => c.page.getByRole('button', { name: 'Queue', exact: true }).click(),
+    async Queue(c) {
+      await giving(c, 'queue');
+      await c.page.getByRole('button', { name: 'Queue', exact: true }).click();
+    },
     async Finish(c) {
       release(controlDir(c.serve.home), c.held);
       c.held = '';
