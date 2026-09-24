@@ -109,7 +109,6 @@ const POLL_STEP_MS = 5_000;
  * still gate every push. Remove a flow once its walks pass.
  */
 export const QUARANTINED: Record<string, string> = {
-  ask_answer: 'after Exit the page no longer shows how many questions were asked (asked reads 0)',
   steer_queue: 'Stop leaves the queued message sending, and the draft is not cleared',
   ui_composer: 'a second Skills click shows the cached list; the spec expects loading',
   navigation_routes_palette: 'Back lands in the wrong state; a session never finishes',
