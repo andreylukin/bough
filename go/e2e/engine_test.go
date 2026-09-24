@@ -349,15 +349,26 @@ func TestEngineParallelFanOut(t *testing.T) {
 // reads the late result and answers, all inside one bough turn.
 func TestEngineInProgressThenFinal(t *testing.T) {
 	t.Parallel()
+	// The slow call finishes when the test says so, once the model has
+	// read its placeholder, rather than after a sleep long enough to
+	// outlast the grace on a loaded machine. The loop is bounded so a
+	// failed test's killed bough leaves no shell spinning.
+	release := filepath.Join(t.TempDir(), "release")
+	slow, _ := json.Marshal(map[string]string{"command": fmt.Sprintf(
+		`for i in $(seq 1500); do [ -e %s ] && break; sleep 0.02; done; echo LATE_2`, release)})
 	script := tape(t,
 		`{"want": "slow please", "calls": [
 			{"id": "fast", "name": "bash", "args": {"command": "echo FAST_1"}},
-			{"id": "slow", "name": "bash", "args": {"command": "sleep 3; echo LATE_2"}}]}`,
+			{"id": "slow", "name": "bash", "args": `+string(slow)+`}]}`,
 		`{"want": "still running", "text": "FAST_1 is in; waiting on the slow one"}`,
 		`{"want": "LATE_2", "text": "final: LATE_2 arrived"}`,
 	)
 	b := launchEngine(t, script, launchOpts{})
 	b.send("slow please")
+	b.waitFor("[assistant] FAST_1 is in; waiting on the slow one")
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	out := b.finish()
 	inOrder(t, out, "[assistant] FAST_1 is in; waiting on the slow one", "[assistant] final: LATE_2 arrived", "[done]")
 	if n := strings.Count(out, "[done]"); n != 1 {
@@ -404,17 +415,21 @@ func TestEngineAsk(t *testing.T) {
 // asked again, and the turn still ends in exactly one done.
 func TestEngineSteer(t *testing.T) {
 	t.Parallel()
+	// llm-script streams a step's deltas before it holds, so the last
+	// delta (printed only under --json) proves the request is in
+	// flight, and the hold is only the margin for the steer to land.
 	script := tape(t,
-		`{"want": "first", "hold_ms": 4000, "text": "reply one"}`,
+		`{"want": "first", "hold_ms": 1500, "text": "reply one"}`,
 		`{"want": "second", "text": "reply two"}`,
 	)
-	b := launchEngine(t, script, launchOpts{})
+	b := launchEngine(t, script, launchOpts{args: []string{"--json"}})
 	b.send("first")
-	time.Sleep(700 * time.Millisecond) // inside the held request
+	b.waitFor(`{"kind":"assistant-delta","text":"one"}`)
 	b.send("second")
 	out := b.finish()
-	inOrder(t, out, "[steer] second", "[assistant] reply one", "[assistant] reply two", "[done]")
-	if n := strings.Count(out, "[done]"); n != 1 {
+	inOrder(t, out, `{"kind":"steer","text":"second"}`, `{"kind":"assistant","text":"reply one"}`,
+		`{"kind":"assistant","text":"reply two"}`, `{"kind":"done"`)
+	if n := strings.Count(out, `{"kind":"done"`); n != 1 {
 		t.Fatalf("[done] printed %d times, want 1:\n%s", n, out)
 	}
 	es := readEntries(t, onlySession(t, b.home))
