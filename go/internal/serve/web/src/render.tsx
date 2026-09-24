@@ -501,14 +501,19 @@ const TOOL = new Set(["code", "result", "job", "call"]);
 export function groupTools(items: Item[], codes: string[]): Item[] {
   const out: Item[] = [];
   let run: Line[] = [];
+  // Lines that landed while a program in the run still ran: shown after
+  // the run, in their order (see below).
+  let held: Item[] = [];
   const flush = () => {
     // Even a single call is emitted as a run: the renderer pairs a call
     // with its output, and only wraps runs of two or more in a header.
     if (run.some((l) => l.kind === "code" || isNativeCall(l))) out.push({ kind: "tools", seq: run[0].seq, lines: run });
     else for (const l of run) out.push({ kind: "line", seq: l.seq, line: l });
     run = [];
+    out.push(...held);
+    held = [];
   };
-  for (const it of items) {
+  for (const [i, it] of items.entries()) {
     // A background agent's finish note is not part of the work around it.
     if (it.kind === "line" && isAgentNotice(it.line)) { flush(); out.push(it); continue; }
     if (it.kind === "line" && TOOL.has(it.line.kind)) { run.push(it.line); continue; }
@@ -519,6 +524,15 @@ export function groupTools(items: Item[], codes: string[]): Item[] {
     // An ask sits between the call that asked and that call's result; it
     // renders as its own card, so it must not split the pair or the run.
     if (it.kind === "line" && it.line.kind === "ask") continue;
+    // On the engine a reply's calls run in parallel: an answer to the ask
+    // beside a program, a steer or a provider error is recorded before the
+    // program's result. Splitting the run there parted the program from
+    // its result, and it read "Running" for good.
+    const open = run.filter((l) => l.kind === "code").length > run.filter((l) => l.kind === "result").length;
+    if (open && it.kind === "line" && items.slice(i + 1).some((x) => x.kind === "line" && x.line.kind === "result")) {
+      held.push(it);
+      continue;
+    }
     flush();
     out.push(it);
   }
