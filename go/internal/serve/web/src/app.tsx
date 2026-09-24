@@ -1461,7 +1461,7 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
             <path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21" />
           </svg>
         </span>
-        <p className="prompt-bubble steer-bubble"><PromptWords text={line.text} /></p>
+        <p className="prompt-bubble steer-bubble"><PromptWords text={line.text} /><SentImages text={line.text} /></p>
       </div>
     );
   }
@@ -2038,6 +2038,14 @@ function Thumb({ path, n }: { path: string; n: number }) {
       )}
     </a>
   );
+}
+
+/** The pictures a message carries, as its recorded prompt shows them: a
+ *  steer, a send still on its way and a queued message would otherwise
+ *  show a bare "[Image #N]", which reads as an image that never went. */
+function SentImages({ text }: { text: string }) {
+  const { images } = parsePrompt(text);
+  return images.length ? <span className="prompt-images">{images.map((p, i) => <Thumb key={i} path={p} n={i + 1} />)}</span> : null;
 }
 
 /** A result's text minus the code history prefixes onto it. */
@@ -3633,6 +3641,7 @@ function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onT
       <div className="prompt">
         <div className="prompt-text prompt-bubble">
           <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}><PromptWords text={p.text} /></p>
+          <SentImages text={p.text} />
           {clipped && <button className="link" onClick={onToggle}>{clamp ? "Show full prompt" : "Show less"}</button>}
         </div>
         {/* The recorded prompt's action row keeps its height here, so the body does not drop when it lands. */}
@@ -4696,7 +4705,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><circle cx="6" cy="6" r="4.75" /><path d="M6 3.5V6l1.75 1.25" strokeLinecap="round" /></svg>
                   <span className="visually-hidden">Queued</span>
                 </span>
-                <span className="queued-text">{m.text}</span>
+                <span className="queued-text"><PromptWords text={m.text} /></span>
+                <SentImages text={m.text} />
                 {/* Edit never lands on a newer draft, as with a failed send. */}
                 <button className="link composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
                   onClick={() => { toDraft(m.text); setQueued((q) => q.filter((x) => x.id !== m.id)); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
