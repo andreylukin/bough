@@ -1,0 +1,265 @@
+# The control room's modal dialogs, as the person sees them
+# (go/tests/model/README.md): archive confirm, new session, delete
+# project and the ? shortcut sheet, with the focus trap and where focus
+# goes back to. Client-side state; the server enters only through the
+# answers to the requests the dialogs make, and through `archived`, the
+# one session status that changes this surface (an archived session
+# offers Unarchive, never the archive confirm).
+#
+# The web code this follows (go/internal/serve/web/src):
+#   dialog.tsx   DialogHost: askConfirm / askText / showShortcuts; useModal
+#                (Tab cycles inside, the rest of <body> inert); the opener
+#                is document.activeElement when the dialog is pushed and
+#                gets focus back on close if it is still connected.
+#   palette.tsx  the palette, which is the new-session dialog in "new"
+#                mode; a picked command nulls its opener (the command
+#                decides where focus goes), Esc gives focus back.
+#   app.tsx      archiveRow (askConfirm with safe: Cancel focused), start
+#                ("Starting a session..." status), the ? and Alt+N handlers.
+#   projects.tsx GroupMenu's Delete... (askText: type the slug).
+#   keys.ts      sheetKey: ? never while typing in a field.
+#
+# What each field is:
+#   route    "session" (one session open) or "projects" (the list page).
+#   dialog   the modal up: "none", "archive" (askConfirm "Archive this
+#            session?"), "keys" (Keyboard shortcuts), "delete" (askText
+#            "Delete <project>?") or "new" (the palette in "new" mode).
+#            Everything else on the page is inert while it is up, so no
+#            action of the person's but the dialog's own is enabled then.
+#   focus    what document.activeElement is: "body" (nothing: a fresh
+#            load, or focus dropped), "page" (a nav link or button the
+#            person clicked), "settings" (the session's Settings button),
+#            "field" (a dialog's text field), "cancel" (Cancel, or the
+#            sheet's Close) or "ok" (the dialog's primary button).
+#   opener   where focus goes when the dialog closes, "none" with no
+#            dialog up. Delete... is a menu item that unmounts as its
+#            menu closes, so the opener it leaves is already
+#            disconnected: focus is dropped to "body".
+#   typed    delete's input: "empty", "wrong" (anything but the slug) or
+#            "slug".
+#   failed   delete's "Not saved: type <slug> to confirm" line: the error
+#            state of this surface.
+#   archived the open session's meta.Archived, as its row says.
+#   project  the one project still exists.
+#   creating a create is in flight: the "Starting a session..." status.
+#
+# Left out, each for a reason: the viewport class (a phone draws the same
+# DialogHost, sized to the visible viewport; nothing here branches on it);
+# the archive choice (Stop and archive | Archive only) when the session
+# counts agents, which archive_unarchive.fizz covers; rename, the same
+# askText as delete with an awaited onSubmit (title_rename.fizz);
+# Shift+Tab, the mirror of Tab; and a request the server fails (archive,
+# unarchive, delete, create): nothing offline makes serve fail them, and
+# each only raises act's "Couldn't ..." toast. Archive and delete answer
+# within their one request, so each is one step here; only a create has
+# a status of its own while it runs, so its answer is a step of its own.
+
+role Page:
+    action Init:
+        self.route = "session"
+        self.dialog = "none"
+        self.focus = "body"
+        self.opener = "none"
+        self.typed = "empty"
+        self.failed = False
+        self.archived = False
+        self.project = True
+        self.creating = False
+
+    # Sidebar or nav: Sessions / Projects, clicked. Inert behind a dialog.
+    atomic action GoProjects:
+        require self.dialog == "none" and self.route == "session" and not self.creating
+        self.route = "projects"
+        self.focus = "page"
+
+    atomic action GoSession:
+        require self.dialog == "none" and self.route == "projects" and not self.creating
+        self.route = "session"
+        self.focus = "page"
+
+    # Settings > Archive...: closeMore(true) puts focus back on Settings
+    # before askConfirm reads the opener. A safe confirm starts on Cancel,
+    # so Enter alone never archives.
+    atomic action ArchiveMenu:
+        require self.dialog == "none" and self.route == "session" and not self.archived and not self.creating
+        self.dialog = "archive"
+        self.opener = "settings"
+        self.focus = "cancel"
+
+    # The composer note's Unarchive: no dialog, one request. The note and
+    # its button go with the flag, so the focus on it is dropped.
+    atomic action Unarchive:
+        require self.dialog == "none" and self.route == "session" and self.archived and not self.creating
+        self.archived = False
+        self.focus = "body"
+
+    # ? from anywhere not taking typing; showShortcuts no-ops while any
+    # aria-modal is up. Its only control is Close, focused.
+    atomic action Shortcuts:
+        require self.dialog == "none" and self.focus != "field"
+        self.dialog = "keys"
+        self.opener = self.focus
+        self.focus = "cancel"
+
+    # Alt+N (or New): the palette in "new" mode, its field focused. Alt+N
+    # is ignored while a DialogHost dialog (.dlg-scrim) is up. The model
+    # starts one create at a time.
+    atomic action NewSession:
+        require self.dialog == "none" and not self.creating
+        self.dialog = "new"
+        self.opener = self.focus
+        self.focus = "field"
+
+    # A project's ... > Delete...: typed confirmation, field focused.
+    atomic action DeleteMenu:
+        require self.dialog == "none" and self.route == "projects" and self.project and not self.creating
+        self.dialog = "delete"
+        self.opener = "body"
+        self.focus = "field"
+        self.typed = "empty"
+        self.failed = False
+
+    atomic action TypeWrong:
+        require self.dialog == "delete" and self.focus == "field" and self.typed != "wrong"
+        self.typed = "wrong"
+
+    atomic action TypeSlug:
+        require self.dialog == "delete" and self.focus == "field" and self.typed != "slug"
+        self.typed = "slug"
+
+    # useModal's trap: Tab goes to the next enabled control and wraps.
+    # The sheet has only Close and the palette keeps focus in its field,
+    # so Tab moves nothing there.
+    atomic action Tab:
+        require self.dialog in ("archive", "delete")
+        if self.dialog == "archive":
+            if self.focus == "cancel":
+                self.focus = "ok"
+            else:
+                self.focus = "cancel"
+        elif self.focus == "field":
+            self.focus = "cancel"
+        elif self.focus == "cancel" and self.typed != "empty":
+            self.focus = "ok"
+        else:
+            self.focus = "field"
+
+    # Esc, Cancel / Close, or a click on the scrim: nothing is asked of
+    # the server, and focus goes back to the opener.
+    atomic action Dismiss:
+        require self.dialog != "none"
+        self.dialog = "none"
+        self.focus = self.opener
+        self.opener = "none"
+        self.failed = False
+
+    # Enter, or a click, on the primary action. Enter on Cancel is
+    # Dismiss; Enter in delete's field submits as the button does.
+    atomic action Confirm:
+        require self.dialog in ("archive", "delete", "new") and self.focus != "cancel"
+        if self.dialog == "archive":
+            self.archived = True
+            self.dialog = "none"
+            self.focus = self.opener
+            self.opener = "none"
+        elif self.dialog == "new":
+            # A Start command: the palette closes with its opener nulled.
+            self.creating = True
+            self.dialog = "none"
+            self.focus = "body"
+            self.opener = "none"
+        else:
+            # Blocked while empty; onSubmit throws on anything but the
+            # slug and the dialog stays with the reason; the slug closes
+            # it (onDelete is not awaited) and the project goes.
+            require self.typed != "empty"
+            if self.typed == "wrong":
+                self.failed = True
+            else:
+                self.project = False
+                self.dialog = "none"
+                self.focus = self.opener
+                self.opener = "none"
+                self.failed = False
+
+    # The create's answer: openSession shows the new session, not
+    # archived, whatever is up (it does not look for a dialog). While it
+    # runs the model lets the person only wait or press ?: the answer
+    # landing under an archive or delete dialog opened meanwhile is left
+    # out. The page would then show the new session behind a dialog still
+    # about the old session (archiveRow holds its row), or a project's
+    # delete dialog over a session page.
+    atomic action Created:
+        require self.creating and self.dialog in ("none", "keys")
+        self.creating = False
+        self.route = "session"
+        self.archived = False
+
+action Init:
+    page = Page()
+
+# Exactly one place has focus, and while a dialog is up it is inside that
+# dialog, on a control the dialog has.
+always assertion FocusInsideDialog:
+    d = page.dialog
+    if d == "none":
+        return page.focus not in ("field", "cancel", "ok")
+    if d == "archive":
+        return page.focus in ("cancel", "ok")
+    if d == "keys":
+        return page.focus == "cancel"
+    if d == "new":
+        return page.focus == "field"
+    return page.focus in ("field", "cancel", "ok")
+
+# A dialog always knows where focus goes back to; none is kept after.
+always assertion OpenerWhileOpen:
+    return (page.dialog == "none") == (page.opener == "none")
+
+# No control is focused that would fail: delete's button is disabled
+# while the field is empty, and Tab skips it.
+always assertion NoFocusOnDisabledDelete:
+    return not (page.dialog == "delete" and page.typed == "empty" and page.focus == "ok")
+
+# Only what can be done is offered: an archived session has no archive
+# confirm, a deleted project no delete dialog.
+always assertion DialogsMatchServer:
+    if page.dialog == "archive":
+        return not page.archived and page.route == "session"
+    if page.dialog == "delete":
+        return page.project and page.route == "projects"
+    return True
+
+# "Not saved" belongs to the delete dialog only.
+always assertion FailedOnlyInDelete:
+    return not page.failed or page.dialog == "delete"
+
+# A create in flight shows its status, and no second palette asks for one.
+always assertion CreatingHasNoPalette:
+    return not (page.creating and page.dialog == "new")
+
+# The safe confirm opens on Cancel: Enter alone never archives.
+transition assertion ArchiveOpensOnCancel(before, after):
+    if before.page.dialog != "archive" and after.page.dialog == "archive":
+        return after.page.focus == "cancel"
+    return True
+
+# Closing a DialogHost dialog, however, puts focus back on its opener.
+transition assertion FocusRestored(before, after):
+    if before.page.dialog in ("archive", "keys", "delete") and after.page.dialog == "none":
+        return after.page.focus == before.page.opener
+    return True
+
+# Nothing the person does moves the page behind a dialog. The one thing
+# that does is the server: a create answered while the shortcut sheet is
+# up opens the new session under it, and the sheet stays.
+transition assertion BackgroundInert(before, after):
+    if before.page.dialog != "none" and after.page.dialog != "none" and after.page.route != before.page.route:
+        return before.page.creating and not after.page.creating
+    return True
+
+# Closing without a request, the palette's Esc included, gives focus back.
+transition assertion DismissRestoresFocus(before, after):
+    if before.page.dialog != "none" and after.page.dialog == "none" and not after.page.creating:
+        return after.page.focus == before.page.opener
+    return True
