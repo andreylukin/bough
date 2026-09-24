@@ -5539,6 +5539,9 @@ export default function App() {
       if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0, at: new Date().toISOString() }] }));
       if (mode?.mode === "project" && mode.project) goProject(mode.project, created.id);
       else openSession(created.id);
+      // The route moved by pushState, which fires no hashchange: a palette
+      // opened while this was starting would stay up over the new session.
+      closePalette();
     } finally { setCreating(false); }
   }, "start a session");
   // New starts where the open session works, and the new session's header
@@ -5548,6 +5551,11 @@ export default function App() {
   // at that folder, and typing a prompt there starts the session. A click
   // alone used to leave an empty session behind every time.
   const [palCwd, setPalCwd] = useState("");
+  // One function for the life of the page: the palette resubscribes its
+  // close-on-navigate listeners whenever onClose changes, and a fresh
+  // (max-width:720px) query made after the viewport crossed it never
+  // fires, so a resize past 720 px left the palette up.
+  const closePalette = useCallback(() => { setPalette(false); setPalQuery(""); setPalCwd(""); setPalMode("all"); }, []);
   // A project session's cwd is its orb worktree: never a folder to start a host session in.
   const rowDir = row?.orb ? home : row?.cwd;
   const newSession = () => { setPalCwd(rowDir ?? ""); setPalMode("new"); setPalette(true); };
@@ -5718,12 +5726,12 @@ export default function App() {
           <button className="skip-link" onClick={() => document.getElementById("composer")?.focus()}>Skip to composer</button>
         </div>
       )}
-      <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); setPalCwd(""); setPalMode("all"); }} rows={rows} mode={palMode} visited={visited}
+      <Palette open={palette} onClose={closePalette} rows={rows} mode={palMode} visited={visited}
                commands={commands} onOpenSession={(id, seq, q) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, q, at: Date.now() }); }} initialQuery={palQuery} current={selected}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
                onStartIn={(path) => { setPalCwd(path); setPalette(true); }}
-               startIn={palCwd ? palCwd.split("/").filter(Boolean).pop() || palCwd : undefined} />
+               startIn={palCwd ? (palCwd === home ? "home" : palCwd.split("/").filter(Boolean).pop() || palCwd) : undefined} />
       <Sidebar rows={visible} projects={projects} selected={sidebarSelected(view, lost, selected, lastId)} active={pane === "list"}
                onSelect={(id) => {
                  openSession(id);

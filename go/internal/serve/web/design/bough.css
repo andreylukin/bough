@@ -2709,6 +2709,7 @@ kbd,.keys-row kbd,.ov-empty-keys kbd,.mention-foot kbd{display:inline-grid;place
 .pal-field{display:block;width:100%;height:48px;box-sizing:border-box;padding:0 16px 0 44px;background:transparent;border:0;
   font:15px var(--sans);color:var(--text-1);caret-color:var(--accent)}
 .pal-field-tag{padding-inline-end:88px}
+.pal-aim{max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;line-height:20px}
 .pal-mode{position:absolute;right:12px;top:50%;translate:0 -50%;display:inline-flex;align-items:center;height:20px;padding:0 8px;
   border-radius:var(--r-pill);background:var(--sel);font:500 11px/1 var(--sans);color:var(--text-3)}
 .pal-ops{flex-shrink:0;display:flex;align-items:center;gap:6px;height:28px;padding:0 16px;border-bottom:1px solid var(--line);overflow:hidden}
@@ -2720,7 +2721,7 @@ button.pal-op{cursor:pointer}
 button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .pal-list{padding:8px}
 .pal-group{display:flex;align-items:flex-end;gap:6px;height:28px;box-sizing:border-box;margin:8px 0 0;padding:0 8px 4px}
-.pal-list>div:first-child>.pal-group,.pal-none+div>.pal-group{margin-top:0}
+.pal-list>[role=listbox]:first-child>div:first-child>.pal-group,.pal-none+[role=listbox]>div:first-child>.pal-group{margin-top:0}
 .pal-group-n{font:500 11px/1.2 var(--sans);letter-spacing:0;color:var(--text-3);opacity:.7}
 .pal-item{align-items:center;gap:12px;min-height:36px;padding:0 8px;transition:background-color var(--dur-fast) var(--ease)}
 .pal-glyph{display:inline-flex;flex:0 0 16px;justify-content:center}
