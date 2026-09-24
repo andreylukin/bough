@@ -12,7 +12,7 @@
 #   children read EOF on stdin and the headless ui row interrupts them.
 #   So Stop is one step that leaves no child and no serve. It stands
 #   for all three: the mapped model's ShuttingDown state is inside it
-#   (see NOTE on Close below for why that is an assumption).
+#   (see NOTE on Close below).
 # - A session's status is derived (internal/serve/status.go StatusOf):
 #   an open turn with a live child is running, without one it is
 #   interrupted; an ask only waits on you while the child that asked it
@@ -54,12 +54,12 @@
 # - Dismissing the banner is final (watchBuild asks once), so a second
 #   update never re-shows it; Dismiss is not modelled.
 #
-# NOTE on Close: it kills the children it snapshotted and only then sets
-# closed. A killed background agent's exit event frees its running slot
-# and starts `go drainQueue()`, which checks closed (still false),
-# persists the next queued task as started (Task = nil) and launches a
-# child Close never kills. Stop being one atomic step is the product's
-# intent, not what Close guarantees.
+# NOTE on Close: it used to kill the children it snapshotted and only
+# then set closed. A killed background agent's exit event freed its
+# running slot and started `go drainQueue()`, which saw closed still
+# false, persisted the next queued task as started (Task = nil) and
+# launched a child Close never killed. The Go MBT run caught it (Stop
+# left task "started", not "queued"); Close now sets closed first.
 
 role Room:
     action Init:
@@ -90,6 +90,10 @@ role Room:
         self.page = "live"
         if self.build == "new":
             self.banner = True
+        # NewSupervisor re-queues the persisted task and drains at once:
+        # the cap is free after a restart, so no step sees it queued.
+        if self.task == "queued":
+            self.task = "started"
 
     # bough update: the new binary comes up.
     atomic action StartNew:
@@ -98,9 +102,12 @@ role Room:
         self.page = "live"
         self.build = "new"
         self.banner = True
+        if self.task == "queued":
+            self.task = "started"
 
-    # NewSupervisor's drainQueue, or a slot freeing later, starts the
-    # persisted queued agent.
+    # The agent holding the running slot finishes, and the drain it
+    # triggers starts the queued agent. (A restart's drain is part of
+    # Start: the MBT run saw the task started as soon as serve answered.)
     atomic fair<strong> action Drain:
         require self.serve == "up" and self.task == "queued"
         self.task = "started"
