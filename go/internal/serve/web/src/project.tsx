@@ -597,7 +597,7 @@ export function ProjectPage({
             <button type="button" className="btn btn-ghost btn-sm prj-drawer-close" onClick={() => setPanel(false)}>Close</button>
           </div>
           <section className="prj-sec">
-            <h3 className="prj-sec-h eyebrow">Orbs</h3>
+            <h2 className="prj-sec-h eyebrow">Orbs</h2>
             <OrbLine orb={detail.mainOrb} messaged={Boolean(detail.main) || threads.length > 0} onStop={() => detail.main && onStopOrb(detail.main)} />
             <details className="prj-orbs">
               {/* The fold line carries the state, so a failed orb is not hidden under a bare count. Stopping one container stops one thread; the others keep theirs. */}
@@ -723,7 +723,9 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
     <ProjectPage
       detail={detail} files={files} error={err} missing={missing} filesError={filesErr} conversation={conversation} mainRow={mainRow}
       open={open} onOpen={setOpen} onBack={onBack} onOpenSession={onOpenSession} titles={titles}
-      onRetry={() => { void load(); void loadFiles(); }}
+      // A retry is said as one: the error gives way to the pending line
+      // until the reads answer, or the button looked like it did nothing.
+      onRetry={() => { setErr(""); setFilesErr(""); void load(); void loadFiles(); }}
       onSeen={onSeen ? (id) => { void onSeen(id).then(() => load()); } : undefined}
       onNewThread={onNewThread ? newThread : undefined}
       // The list reloads so the new thread shows beside main at once; main stays on screen, it is where the reply lands.
