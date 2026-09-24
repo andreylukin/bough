@@ -1,0 +1,254 @@
+---
+# Every behaviour ends with each child finished or stopped and the queue
+# empty: nothing left to do is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# serve's running cap, shared by every parent at once: two ordinary
+# sessions (A, B) whose bough.yml says different max_running, their
+# agents queued, drained, stopped mid-drain and messaged past the cap.
+# The project main thread's live budget and the page's threads are the
+# sibling flow agent_running_caps_main (one spec with both was 105,944
+# states).
+#
+# Code: go/internal/serve/children.go (CreateChild, launch,
+# drainQueue, childEventLocked, stopChild), supervisor.go Send,
+# plugins/workers/background.go startAgent (sends max_running and
+# max_per_session from bough.yml with every create).
+#
+# Children:
+#   a1, a2  A's agents, spawned with A's max_running CAP_A
+#   b1      B's agent, spawned with B's lower max_running CAP_B
+#
+# st[c] is serve's view of each child:
+#   none     no meta row (never spawned, or a queued child that was
+#            stopped: stopChild deletes its meta)
+#   queued   in s.queue, meta.Task persisted, no process
+#   booting  drainQueue popped it and reserved its slot; launch has not
+#            written the prompt yet (listed by startingIDs). A Stop here
+#            sets stopReq, and launch kills instead of prompting.
+#   running  a turn is open
+#   idle     its last turn closed (done)
+#   stopped  interrupted, or killed while booting
+# slots is s.running (sorted), queue s.queue (FIFO), cap s.maxRunning
+# (0 = never set: drainQueue then uses the default, 16). drain is a
+# drainQueue goroutine started and not yet done looking at the queue.
+# born is the order the children were created in (ids are
+# time-ordered). over counts serve's own starts (spawn, drain) made
+# while s.running was already at the cap in force.
+#
+# Folded into one step, because a client cannot hold serve between them:
+#   - A spawn's launch: CreateChild returns after launch wrote the
+#     prompt, so a spawned child is "running" at once. Only a drained
+#     child has a booting state (drainQueue runs off the request, and
+#     its child is listed as starting while it boots).
+#   - A turn's close frees its slot and starts a drain in the same
+#     childEventLocked call.
+#
+# Scope cuts (every path is one browser walk): one drain goroutine is
+# modelled, and it pops the next child only once the last one it popped
+# has launched (the code's loop does the same; a second goroutine from a
+# concurrent close pops under the same lock and check). A2 and B spawn
+# only once a1 exists; only a1 is messaged, once; only b1 is stopped,
+# once. A Stop between launch clearing booting and writing the prompt
+# (one exec wide) is not modelled. abandon (a process that never
+# started) frees its slot like a close and is not modelled apart.
+#
+# Where this spec says what the flow promises and the code (as of main
+# 5471918e) does otherwise, the code is the finding:
+#   - A spawn does not start ahead of an older queued child. CreateChild
+#     starts a child whenever len(s.running) < s.maxRunning, without
+#     looking at s.queue, and a raised cap starts no drain: after B
+#     lowered the cap and queued b1, A's next spawn raises it back and
+#     starts at once while b1 waits. Here such a spawn queues behind and
+#     starts a drain. Mutation: spawn without the queue check breaks
+#     QueueIsFifo.
+# Kept as the code has it, a design gap rather than a violation:
+#   - The cap is serve-wide and the LAST request's max_running wins: B
+#     lowering it holds A's agents back and A's next spawn raises it
+#     again (and a New thread from the web resets it to 16, see
+#     agent_running_caps_main). Lowering never preempts: s.running can
+#     stay above the cap in force.
+#   - A message to an idle child takes a slot without looking at the
+#     cap (Send), so messages can hold a queued child back as long as
+#     they keep coming; bounded here (one) so the queue still drains.
+
+CAP_A = 2
+CAP_B = 1
+CAP_DEFAULT = 16
+
+KIDS = ("a1", "a2", "b1")
+
+def eff(cap):
+    if cap <= 0:
+        return CAP_DEFAULT
+    return cap
+
+def with_slot(slots, c):
+    return sorted(slots + [c])
+
+def without(xs, c):
+    return [x for x in xs if x != c]
+
+def booting(st):
+    return [c for c in KIDS if st[c] == "booting"]
+
+role Serve:
+    action Init:
+        self.cap = 0
+        self.st = {"a1": "none", "a2": "none", "b1": "none"}
+        self.queue = []
+        self.slots = []
+        self.born = []
+        self.drain = False
+        self.stop_b1 = False
+        self.msgs = 0
+        self.over = 0
+
+    # A start of serve's own, checked against the cap in force.
+    atomic func count_start():
+        if len(self.slots) >= eff(self.cap):
+            self.over += 1
+
+    # CreateChild past its depth and budget checks: the request's cap
+    # becomes serve's, then queue or start.
+    atomic func spawn(c, cap):
+        self.cap = cap
+        self.born = self.born + [c]
+        if len(self.queue) > 0 or len(self.slots) >= eff(self.cap):
+            self.st[c] = "queued"
+            self.queue = self.queue + [c]
+            if len(self.slots) < eff(self.cap):
+                # A raised cap with children still queued: drain them,
+                # oldest first.
+                self.drain = True
+        else:
+            self.count_start()
+            self.st[c] = "running"
+            self.slots = with_slot(self.slots, c)
+
+    # childEventLocked on done/cancelled/exit: slot freed, drain started.
+    atomic func close(c, how):
+        self.st[c] = how
+        self.slots = without(self.slots, c)
+        self.drain = True
+
+    # agent(A): tools.spawn({background}) with A's max_running.
+    atomic action SpawnA1:
+        require self.st["a1"] == "none"
+        self.spawn("a1", CAP_A)
+
+    atomic action SpawnA2:
+        require self.st["a1"] != "none" and self.st["a2"] == "none"
+        self.spawn("a2", CAP_A)
+
+    # agent(B): the same with a lower max_running, which is now serve's.
+    atomic action SpawnB1:
+        require self.st["a1"] != "none" and self.st["b1"] == "none"
+        self.spawn("b1", CAP_B)
+
+    # user/parent: messages a1 after its turn closed. Send takes a slot
+    # and never looks at the cap or the queue.
+    atomic action MessageA1:
+        require self.st["a1"] == "idle" and self.msgs == 0
+        self.msgs = 1
+        self.st["a1"] = "running"
+        self.slots = with_slot(self.slots, "a1")
+
+    # drainQueue: pop the head while a slot is free under the cap in
+    # force, reserving its slot; else return. It pops again only after
+    # launch of the last pop returned.
+    atomic fair action Drain:
+        require self.drain and len(booting(self.st)) == 0
+        if len(self.queue) > 0 and len(self.slots) < eff(self.cap):
+            self.count_start()
+            c = self.queue[0]
+            self.queue = self.queue[1:]
+            self.st[c] = "booting"
+            self.slots = with_slot(self.slots, c)
+        else:
+            self.drain = False
+
+    # launch of the popped child: killed when a Stop came while it
+    # booted (the exit frees the slot), else its turn opens.
+    atomic fair action Launch:
+        require len(booting(self.st)) > 0
+        c = booting(self.st)[0]
+        if c == "b1" and self.stop_b1:
+            self.close(c, "stopped")
+        else:
+            self.st[c] = "running"
+
+    atomic fair action FinishA1:
+        require self.st["a1"] == "running"
+        self.close("a1", "idle")
+
+    atomic fair action FinishA2:
+        require self.st["a2"] == "running"
+        self.close("a2", "idle")
+
+    atomic fair action FinishB1:
+        require self.st["b1"] == "running"
+        self.close("b1", "idle")
+
+    # user: Stop agent on b1 (stopChild).
+    atomic action StopB1:
+        require self.st["b1"] in ("queued", "booting", "running") and not self.stop_b1
+        if self.st["b1"] == "queued":
+            # Dropped from the queue and meta: no row, budget back.
+            self.queue = without(self.queue, "b1")
+            self.born = without(self.born, "b1")
+            self.st["b1"] = "none"
+        elif self.st["b1"] == "booting":
+            # drainQueue already popped it: launch sees stopReq.
+            self.stop_b1 = True
+        else:
+            # Interrupt: the cancelled turn frees the slot.
+            self.close("b1", "stopped")
+
+action Init:
+    serve = Serve()
+
+# serve never starts a child itself (spawn or drain) while s.running is
+# at the cap then in force. A message's slot is not a start.
+always assertion ServeStartsWithinCap:
+    return serve.over == 0
+
+# A queued child is in the queue exactly once, and a child in the queue
+# is queued: never both queued and started, never lost.
+always assertion QueuedIsInQueue:
+    for c in KIDS:
+        n = len([q for q in serve.queue if q == c])
+        if n > 1 or (n == 1) != (serve.st[c] == "queued"):
+            return False
+    return True
+
+# s.running holds exactly the children with a boot or a turn in flight;
+# a closed turn gives its slot back.
+always assertion SlotIsOpenWork:
+    for c in KIDS:
+        if (c in serve.slots) != (serve.st[c] in ("booting", "running")):
+            return False
+    return True
+
+# A Stop on a child the drain already popped stops it: it never runs.
+always assertion StopWinsBoot:
+    return not (serve.stop_b1 and serve.st["b1"] in ("running", "idle"))
+
+# FIFO across parents: while a child waits, nothing created after it
+# has started.
+always assertion QueueIsFifo:
+    for q in serve.queue:
+        for c in serve.born[serve.born.index(q) + 1:]:
+            if serve.st[c] != "queued":
+                return False
+    return True
+
+# The queue drains: a slot frees under the cap and the drain starts
+# every waiting child.
+always eventually assertion QueueDrains:
+    return len(serve.queue) == 0
+
+# A free slot under the cap is not left idle while children wait.
+always eventually assertion NoIdleSlotWithQueue:
+    return len(serve.queue) == 0 or len(serve.slots) >= eff(serve.cap)
