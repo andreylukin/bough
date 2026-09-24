@@ -122,7 +122,9 @@ test('quiet grouped records retain every invocation input and output in newest-f
   await page.goto(url + '/#/hooks');
   const group = page.locator('.hk-fire');
   await expect(group).toHaveCount(1);
-  await expect(group.locator('.hk-main')).toContainText('×3');
+  // 9457f5d7 turned the " ×3" suffix into a count pill; its title names what the number means.
+  await expect(group.locator('.hk-main .hk-count')).toHaveText('3');
+  await expect(group.locator('.hk-main .hk-count')).toHaveAttribute('title', '3 runs collapsed');
   await expect(group.getByRole('region', { name: 'Input', exact: true })).toHaveCount(0);
   await group.locator('.hk-chev').click();
   const records = group.locator('.hk-runs > li');
