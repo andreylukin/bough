@@ -1,0 +1,164 @@
+# The Me page (#/me): today's brief, the signal rows it wrote, triage of
+# those rows, steering sentences for the next brief, and Refresh.
+# Product: go/internal/serve/web/src/me.tsx (MeView, MePage, Signal,
+# Steer), go/internal/serve/wiki.go (me, meRefresh, meTriage, meSteer,
+# spawnBrief), go/plugins/wiki/brief.go and triage.go (the files).
+#
+# One Me role holds the page and the files behind it. The page shows
+# what GET /api/me returns (it polls every 30 s), so profile, brief and
+# signal are the disk's as the page shows them; refreshing is the
+# page's own.
+#
+#   view        loading | error | shown. error is only a first read
+#               that failed: a failed poll keeps the data it had
+#               (useLoad), so there is no shown -> error.
+#   profile     topics/me/profile.md exists. Without it the page offers
+#               neither Refresh nor the steering line.
+#   brief       none | stale | today: the newest file in
+#               topics/me/briefs/. stale is an earlier day's, shown
+#               marked while today has none.
+#   job         idle | running: the detached `bough wiki brief`.
+#   refreshing  the page's "Writing…" spinner. It is a fixed 20 s
+#               timer, not the job: it stops whether or not the job
+#               finished (Settle), and the job can finish before it.
+#   signal      none | shown | pinned | dismissed: one row of
+#               signals.json with its triage (triage.json is keyed by
+#               the row, so a rewrite of signals.json keeps it).
+#
+# Steering changes no state the page shows beyond its own confirmation,
+# which names the section the server chose; the Steer actions are
+# self-loops and the section is checked as the action's answer, not as
+# state (a field for it tripled the graph).
+#
+# Triage, steering and NextDay are enabled only on a quiet page (no job,
+# no spinner). The product allows them during a refresh too; the
+# restriction only keeps the paths few, and every path left is one the
+# product can take. Refresh itself stays enabled while an earlier job
+# still runs, which is the case the fixed 20 s spinner gets wrong.
+#
+# Where the mapped model was corrected against the code:
+# - RefreshFailed is not a state the page has. POST /api/me/refresh
+#   answers ok once the process starts; a brief that then fails (lock
+#   held, agent error) leaves the page as it was (BriefFailed), and a
+#   failed POST is an unhandled rejection under the same 20 s spinner.
+#   So "after Refresh the page eventually shows the new brief or an
+#   explicit failure" does not hold; what holds is SpinnerStops and
+#   JobEnds below.
+# - Triaging has no undismiss in the UI (the API has it): a dismissed
+#   row is hidden, so it can be neither pinned nor restored.
+# - Opening a cited session / project / wiki page leaves the page and
+#   is not modelled. Only signal rows with a session or url open
+#   anything; the brief's session citation chips are onCite={() => {}}.
+
+role Me:
+    action Init:
+        self.view = "loading"
+        self.profile = False
+        self.brief = "none"
+        self.job = "idle"
+        self.refreshing = False
+        self.signal = "none"
+
+    atomic action Load:
+        require self.view == "loading"
+        self.view = "shown"
+
+    atomic action LoadFail:
+        require self.view == "loading"
+        self.view = "error"
+
+    atomic action Retry:
+        require self.view == "error"
+        self.view = "loading"
+
+    # The person writes topics/me/profile.md (the empty state's button
+    # opens it); the next poll shows it.
+    atomic action WriteProfile:
+        require self.view == "shown" and not self.profile
+        self.profile = True
+
+    # POST /api/me/refresh spawns `bough wiki brief` and answers ok. The
+    # button is disabled while the spinner runs, but not while a job
+    # from an earlier click is still running; that second job loses the
+    # wiki lock and exits, so job stays running.
+    atomic action Refresh:
+        require self.view == "shown" and self.profile and not self.refreshing
+        self.refreshing = True
+        self.job = "running"
+
+    # The 20 s timer: spinner off, one reload.
+    atomic fair action Settle:
+        require self.refreshing
+        self.refreshing = False
+
+    # The job wrote today's brief (a new file; earlier days are
+    # untouched) and signals.json with the row.
+    atomic fair action BriefWritten:
+        require self.job == "running"
+        self.job = "idle"
+        self.brief = "today"
+        if self.signal == "none":
+            self.signal = "shown"
+
+    # The job exited without a brief. Nothing on the page changes.
+    atomic fair action BriefFailed:
+        require self.job == "running"
+        self.job = "idle"
+
+    # Midnight: today's brief becomes an earlier day's, frozen; the page
+    # shows it marked stale until the next one.
+    atomic action NextDay:
+        require self.brief == "today" and self.job == "idle" and not self.refreshing
+        self.brief = "stale"
+
+    # POST /api/me/triage answers with the new triage.json and the page
+    # shows it from that answer, before the next poll.
+    atomic action Pin:
+        require self.view == "shown" and self.job == "idle" and not self.refreshing and self.signal == "shown"
+        self.signal = "pinned"
+
+    atomic action Unpin:
+        require self.view == "shown" and self.job == "idle" and not self.refreshing and self.signal == "pinned"
+        self.signal = "shown"
+
+    atomic action Dismiss:
+        require self.view == "shown" and self.job == "idle" and not self.refreshing and self.signal in ("shown", "pinned")
+        self.signal = "dismissed"
+
+    # POST /api/me/steer files the sentence in profile.md and answers
+    # with the section; the line shows only under a brief.
+    atomic action SteerWatch:
+        require self.view == "shown" and self.job == "idle" and not self.refreshing and self.profile and self.brief != "none"
+        pass
+
+    atomic action SteerNotMine:
+        require self.view == "shown" and self.job == "idle" and not self.refreshing and self.profile and self.brief != "none"
+        pass
+
+action Init:
+    me = Me()
+
+# The brief needs a profile: nothing starts a job without one.
+always assertion NoBriefWithoutProfile:
+    return (me.job == "idle" and me.brief == "none") or me.profile
+
+# Rows come from a brief run: there are none before the first brief.
+always assertion SignalsComeWithABrief:
+    return me.signal == "none" or me.brief != "none"
+
+# Briefs are frozen once written: a brief on disk never goes away, and
+# only a finished job makes today's.
+transition assertion BriefsFrozen(before, after):
+    if before.me.brief != "none" and after.me.brief == "none":
+        return False
+    if after.me.brief == "today" and before.me.brief != "today":
+        return before.me.job == "running" and after.me.job == "idle"
+    return True
+
+# The spinner never runs forever.
+always eventually assertion SpinnerStops:
+    return not me.refreshing
+
+# A started brief job always ends, written or failed.
+always eventually assertion JobEnds:
+    return me.job == "idle"

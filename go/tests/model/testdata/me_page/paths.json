@@ -1,0 +1,6483 @@
+{
+  "paths": [
+    {
+      "target": 75,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        43,
+        61,
+        75
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 76,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        43,
+        61,
+        76
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 77,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        43,
+        61,
+        77
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 78,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        43,
+        63,
+        78
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 79,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        24,
+        48,
+        64,
+        79
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 80,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        24,
+        48,
+        64,
+        80
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 81,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        24,
+        48,
+        64,
+        81
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 82,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        24,
+        48,
+        66,
+        82
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 57,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        22,
+        40,
+        57
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        22,
+        40,
+        58
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        22,
+        40,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 60,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        22,
+        42,
+        60
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 62,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        43,
+        62
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 65,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        24,
+        48,
+        65
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 67,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        27,
+        51,
+        67
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 68,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        27,
+        51,
+        68
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 69,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        27,
+        51,
+        69
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        27,
+        52,
+        70
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 71,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        33,
+        54,
+        71
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 72,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        33,
+        54,
+        72
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 73,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        33,
+        54,
+        73
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 74,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        33,
+        55,
+        74
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        13,
+        19,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        13,
+        19,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 39,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        13,
+        19,
+        39
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 41,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        22,
+        41
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Unpin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 46,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        46
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerWatch",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 47,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        23,
+        47
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerNotMine",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 49,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        24,
+        49
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerWatch",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 50,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        24,
+        50
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerNotMine",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        27,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        33,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 20,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        13,
+        20
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 21,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        13,
+        21
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerWatch",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 26,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        14,
+        26
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerNotMine",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 28,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        28
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 29,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        29
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Unpin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 31,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        31
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerWatch",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 32,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        15,
+        32
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Pin",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerNotMine",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "pinned",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.NextDay",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "stale",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 35,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        35
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerWatch",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        16,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Dismiss",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerNotMine",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "dismissed",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 17,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        17
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerWatch",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 18,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        9,
+        18
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.SteerNotMine",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 8,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        8
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        0,
+        2,
+        4,
+        5,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 11,
+      "links": [
+        0,
+        2,
+        4,
+        6,
+        11
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefWritten",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "today",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "shown",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 12,
+      "links": [
+        0,
+        2,
+        4,
+        7,
+        12
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.Load",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.WriteProfile",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Refresh",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "running",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.BriefFailed",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": true,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        },
+        {
+          "action": "Me#0.Settle",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": true,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "target": 3,
+      "links": [
+        1,
+        3
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        },
+        {
+          "action": "Me#0.LoadFail",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "error"
+          }
+        },
+        {
+          "action": "Me#0.Retry",
+          "state": {
+            "me": "role Me#0",
+            "Me#0.brief": "none",
+            "Me#0.job": "idle",
+            "Me#0.profile": false,
+            "Me#0.refreshing": false,
+            "Me#0.signal": "none",
+            "Me#0.view": "loading"
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 31,
+      "total": 31,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 83,
+      "total": 83,
+      "uncovered": []
+    }
+  }
+}
