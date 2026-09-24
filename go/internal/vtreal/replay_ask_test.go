@@ -33,6 +33,10 @@ func askConfig(tape string) string {
 - id: ask
   plugin: ask
   config: {timeout_minutes: 1}
+# The tapes and fakes speak code mode; engine-unreal (the default loop
+# row) cannot drive a replay llm row and runs a different retry path.
+- id: loop
+  plugin: loop
 # Rows that call the model on their own would eat tape replies.
 - id: session-title
   plugin: session-title

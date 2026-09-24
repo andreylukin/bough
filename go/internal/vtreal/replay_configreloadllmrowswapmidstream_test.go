@@ -47,6 +47,10 @@ func configReloadLlmRowSwapMidStreamYml(tape string, delayMs int) string {
 - id: llm
   plugin: replay
   config: {file: %q, delay_ms: %d}
+# The tapes and fakes speak code mode; engine-unreal (the default loop
+# row) cannot drive a replay llm row and runs a different retry path.
+- id: loop
+  plugin: loop
 `, tape, delayMs) + statusbarQuietRows
 }
 

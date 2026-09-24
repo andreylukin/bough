@@ -82,6 +82,10 @@ func costConfig(srv, historyFile string) string {
   config: {model: gpt-4o-mini, base_url: %q}
 - id: history
   plugin: history%s
+# The tapes and fakes speak code mode; engine-unreal (the default loop
+# row) cannot drive a replay llm row and runs a different retry path.
+- id: loop
+  plugin: loop
 - id: cost
   plugin: cost
   config: {prices: {gpt-4o-mini: {input: 10, output: 50}}}
