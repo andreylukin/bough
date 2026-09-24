@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/andreylukin/bough/internal/ci/ciflags"
 )
 
 // The guest has no usable bough: the host binary is a macOS build, and
@@ -25,7 +28,18 @@ import (
 // project definitions live in the host's ~/.bough/projects, and the
 // browser is the host's: a Chrome in the guest would mean an ARM64
 // Chromium per image, and the host can already reach the guest's ports.
-var relayedCommands = map[string]bool{"mcp": true, "project": true, "browser": true}
+//
+// ci is relayed read-only (see ciRelayCheck): the results cache is in the
+// host's ~/.bough, keyed by the worktree's tree, so the guest can ask what
+// is settled for the files it sees. Running a check is not relayed: the
+// commands come from .bough/ci.yml, a file the agent in the orb can
+// write, and running them on the host would put agent-written shell
+// outside the container that confines the session's file changes — and
+// on the host's toolchain rather than the project image's. So an orb
+// session's checks run only when a person runs `bough ci` on the host
+// in its worktree; running them in the container, against a CI worktree
+// the orb mounts, is the missing half (docs/orbs.md).
+var relayedCommands = map[string]bool{"mcp": true, "project": true, "browser": true, "ci": true}
 
 const relayTimeout = 10 * time.Minute
 
@@ -80,8 +94,20 @@ func (p *proxy) relayExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(args) == 0 || !relayedCommands[args[0]] {
-		http.Error(w, "orb relay: only `bough mcp ...`, `bough project ...` and `bough browser ...` run on the host", http.StatusForbidden)
+		http.Error(w, "orb relay: only `bough mcp ...`, `bough project ...`, `bough browser ...` and `bough ci --no-wait|log` run on the host", http.StatusForbidden)
 		return
+	}
+	dir := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		dir = home
+	}
+	if args[0] == "ci" {
+		d, err := p.ciRelayCheck(args[1:], r.Header.Get(relayCwdHeader))
+		if err != nil {
+			http.Error(w, "orb relay: "+err.Error(), http.StatusForbidden)
+			return
+		}
+		dir = d
 	}
 	bin, err := p.bin()
 	if err != nil {
@@ -91,9 +117,7 @@ func (p *proxy) relayExec(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), relayTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
-	if home, err := os.UserHomeDir(); err == nil {
-		cmd.Dir = home
-	}
+	cmd.Dir = dir
 	// Each orb drives its own browser. Two sessions sharing one would
 	// race over the active tab, focus, dialogs and the ref map, so the
 	// session id becomes the browser session name.
@@ -124,6 +148,63 @@ func (p *proxy) relayExec(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(framed.Bytes())
 }
 
+// relayCwdHeader carries the guest shell's working directory. The
+// worktrees are mounted at their host paths, so it names the same
+// checkout on the host; only `bough ci` uses it.
+const relayCwdHeader = "X-Bough-Cwd"
+
+// ciRelayCheck admits a guest's `bough ci` only when it cannot run a
+// check (--no-wait, or `ci log`), only from inside the orb's dir, and
+// without --dir (which would point it elsewhere on the host). It returns
+// the host directory to run in.
+//
+// The args are parsed with the host's own flag set, so what is checked
+// is what the host binary will do: flag lets the last --no-wait win, and
+// a scan that only ever turned read-only on let `--no-wait
+// --no-wait=false` run agent-written checks on the host.
+func (p *proxy) ciRelayCheck(args []string, cwd string) (string, error) {
+	var fs *flag.FlagSet
+	if len(args) > 0 && args[0] == "log" {
+		fs, _ = ciflags.NewLogFlagSet("")
+		fs.SetOutput(io.Discard)
+		if _, err := ciflags.ParseInterleaved(fs, args[1:]); err != nil {
+			return "", fmt.Errorf("`bough ci log`: %v", err)
+		}
+	} else {
+		var fl *ciflags.RunFlags
+		fs, fl = ciflags.NewRunFlagSet("")
+		fs.SetOutput(io.Discard)
+		if err := fs.Parse(args); err != nil {
+			return "", fmt.Errorf("`bough ci`: %v", err)
+		}
+		if fs.NArg() > 0 {
+			return "", fmt.Errorf("`bough ci`: unexpected argument %q", fs.Arg(0))
+		}
+		if !*fl.NoWait {
+			return "", errors.New("`bough ci` cannot run checks from an orb: they run on the host only, and only when a person runs `bough ci` there for this worktree. " +
+				"`bough ci --no-wait` reports the results stored for this tree, `bough ci log <check>` a stored log")
+		}
+	}
+	if ciflags.FlagSet(fs, "dir") {
+		return "", errors.New("`bough ci --dir` is not relayed: run it from the worktree")
+	}
+	if p.root == "" || cwd == "" || !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("ci cwd %q is outside the orb", cwd)
+	}
+	root, err := filepath.EvalSymlinks(p.root)
+	if err != nil {
+		return "", fmt.Errorf("ci: orb dir: %w", err)
+	}
+	real, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("ci cwd %q is outside the orb", cwd)
+	}
+	if rel, err := filepath.Rel(root, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("ci cwd %q is outside the orb", cwd)
+	}
+	return real, nil
+}
+
 // relaySessionHeader carries the guest's session id, so a relayed
 // command can scope per-orb state to it.
 const relaySessionHeader = "X-Bough-Session"
@@ -137,7 +218,7 @@ const relaySessionHeader = "X-Bough-Session"
 // needs no package, and its redirection bypasses the proxy env the orb
 // sets (the relay is the proxy's own listener, reached directly).
 const shimScript = `#!/bin/bash
-# bough in a project orb: runs ` + "`bough mcp|project|browser ...`" + ` on the host
+# bough in a project orb: runs ` + "`bough mcp|project|browser|ci ...`" + ` on the host
 # (see internal/orb/relay.go). Needs only bash and base64.
 set -u
 if [ -z "${BOUGH_HOST:-}" ]; then
@@ -179,6 +260,11 @@ if [ -n "${BOUGH_SESSION:-}" ]; then
   req="${req}X-Bough-Session: $BOUGH_SESSION$CR
 "
 fi
+case $PWD in
+  *$'\n'*|*$'\r'*) ;;
+  *) req="${req}X-Bough-Cwd: $PWD$CR
+" ;;
+esac
 req="$req$CR
 $body"
 

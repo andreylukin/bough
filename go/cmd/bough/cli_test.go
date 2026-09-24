@@ -14,6 +14,9 @@ func TestCommandDispatch(t *testing.T) {
 	if name, rest, err := command([]string{"log", "--raw"}); err != nil || name != "log" || len(rest) != 1 {
 		t.Fatalf("log: %q %v %v", name, rest, err)
 	}
+	if name, rest, err := command([]string{"ci", "--no-wait"}); err != nil || name != "ci" || len(rest) != 1 {
+		t.Fatalf("ci: %q %v %v", name, rest, err)
+	}
 	if name, rest, err := command([]string{"--headless"}); err != nil || name != "" || len(rest) != 1 {
 		t.Fatalf("flags only: %q %v %v", name, rest, err)
 	}
@@ -30,7 +33,7 @@ func TestUsageListsFlagsCommandsConfig(t *testing.T) {
 	for _, want := range []string{
 		"-c, --continue", "-r, --resume [id]", "--set", "--headless", "--web",
 		"--version", "--verbose",
-		"rows", "sessions", "log", "update", "restart",
+		"rows", "sessions", "log", "update", "restart", "ci log <check>",
 		"./bough.yml", "~/.bough/bough.yml", "~/.bough/init.js",
 	} {
 		if !strings.Contains(usageText, want) {
