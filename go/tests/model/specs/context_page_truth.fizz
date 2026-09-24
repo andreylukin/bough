@@ -1,0 +1,218 @@
+# The Context page (#/s/<id>/context) against what the running child
+# actually loaded, while the page stays open: the URL moving to another
+# session, the session being filed under a project, a context file being
+# edited, the child restarting.
+#
+# Two sessions. S is a local session that can be filed under project P;
+# T is a local session in another cwd that never is. The page is
+# ContextPage (web/src/context.tsx), mounted by app.tsx as
+# `row && context ? <ContextPage session={row.id} …/>`: NOT keyed by the
+# session, so a hash change from #/s/S/context to #/s/T/context keeps
+# the same mount and only changes its `session` prop (the hash reader
+# keeps sub = "context"; picking a row in the sidebar instead sets sub
+# to null and closes the page, which is Close here).
+#
+# This spec is the page as it must behave, not as it does today. Three
+# places where main disagrees are expected to go red in the Go MBT and
+# browser stages (see the notes of the commit that adds this file):
+#   1. refresh() never clears data and never drops an answer for a
+#      session the page is no longer showing: after Switch the page
+#      shows S's files under T until T's answer lands, and a slower S
+#      answer replaces T's. Here Switch clears the page to loading and
+#      an answer for the other session lands on nothing.
+#   2. serve's sessionContext lists the files for the project in the
+#      supervisor's meta (sessionSlug), which Assign changes at once,
+#      while the running child's context-md row fixed its paths at
+#      mount from session-project-dir. Here the page lists what the
+#      running child reads and says when the next start will differ.
+#   3. The snapshot is taken once per load and never marked with the
+#      time it was read. Here every loaded page carries its read time.
+#
+# Server and child state:
+#   assigned       S is filed under P in serve's meta (POST
+#                  /api/sessions/S/project; T never is).
+#   child_project  S's running child mounted context-md with P's
+#                  MEMORY.md in its paths. Fixed until the child
+#                  restarts, which reads the meta again.
+# Page state:
+#   page     closed | loading | loaded | failed
+#   sel      whose URL the page is on (#/s/<sel>/context)
+#   shown    whose context is on screen ("" while loading or failed)
+#   inflight_S / inflight_T  a GET /api/sessions/<id>/context still
+#            out. Two requests for the same session are one flag: they
+#            ask the same thing, and whichever lands first settles it.
+#   switches how many times the URL moved while open; capped, because a
+#            person who switches forever never lets a page settle and
+#            the liveness claim is about a person who stops.
+# The snapshot on screen (meaningful only when loaded):
+#   shown_project  the list starts with P's MEMORY.md
+#   shown_note     the page says the next start will read a different
+#                  set (filed or unfiled since the child started)
+#   stamped        the page shows when it read the snapshot
+#   changed        something the snapshot describes changed on disk or
+#                  in serve after it was read (Assign, an edit to a
+#                  context file, the child restarting)
+
+MAX_SWITCHES = 2
+
+role Inspector:
+    action Init:
+        self.page = "closed"
+        self.sel = "S"
+        self.shown = ""
+        self.inflight_S = False
+        self.inflight_T = False
+        self.switches = 0
+        self.assigned = False
+        self.child_project = False
+        self.shown_project = False
+        self.shown_note = False
+        self.stamped = False
+        self.changed = False
+
+    # The Context chip, or the palette's "Inspect context", on S.
+    atomic action Open:
+        require self.page == "closed"
+        self.page = "loading"
+        self.sel = "S"
+        self.inflight_S = True
+
+    # The hash moves to #/s/T/context (or back) with the page open:
+    # Back/forward, a pasted link. The page must drop what it shows,
+    # not keep the other session's files under this one's URL.
+    atomic action Switch:
+        require self.page != "closed" and self.switches < MAX_SWITCHES
+        self.switches += 1
+        if self.sel == "S":
+            self.sel = "T"
+            self.inflight_T = True
+        else:
+            self.sel = "S"
+            self.inflight_S = True
+        self.page = "loading"
+        self.shown = ""
+        self.shown_project = False
+        self.shown_note = False
+        self.stamped = False
+        self.changed = False
+
+    # GET /api/sessions/S/context answers 200. Fair: serve answers what
+    # it received. An answer for a session the page has left is dropped.
+    atomic fair action AnswerS:
+        require self.inflight_S
+        self.inflight_S = False
+        if self.sel == "S" and self.page != "closed":
+            self.page = "loaded"
+            self.shown = "S"
+            self.shown_project = self.child_project
+            self.shown_note = self.assigned != self.child_project
+            self.stamped = True
+            self.changed = False
+
+    atomic fair action AnswerT:
+        require self.inflight_T
+        self.inflight_T = False
+        if self.sel == "T" and self.page != "closed":
+            self.page = "loaded"
+            self.shown = "T"
+            self.shown_project = False
+            self.shown_note = False
+            self.stamped = True
+            self.changed = False
+
+    # The GET fails. Only a page with nothing on screen shows the error;
+    # a failure for a session the page has left lands on nothing.
+    atomic fair action FailS:
+        require self.inflight_S
+        self.inflight_S = False
+        if self.sel == "S" and self.page == "loading":
+            self.page = "failed"
+
+    atomic fair action FailT:
+        require self.inflight_T
+        self.inflight_T = False
+        if self.sel == "T" and self.page == "loading":
+            self.page = "failed"
+
+    # "Retry": the error stays up while the retry is out.
+    atomic action Retry:
+        require self.page == "failed" and not (self.sel == "S" and self.inflight_S) and not (self.sel == "T" and self.inflight_T)
+        if self.sel == "S":
+            self.inflight_S = True
+        else:
+            self.inflight_T = True
+
+    # POST /api/sessions/S/project with P's slug, or "" to unfile it. The
+    # running child is not restarted.
+    atomic action Assign:
+        require not self.assigned
+        self.assigned = True
+        if self.shown == "S":
+            self.changed = True
+
+    atomic action Unassign:
+        require self.assigned
+        self.assigned = False
+        if self.shown == "S":
+            self.changed = True
+
+    # Someone writes S's AGENTS.md, or P's MEMORY.md, while the page is
+    # up. The child re-reads the files every turn; the page does not.
+    atomic action EditContextFile:
+        require self.shown == "S" and not self.changed
+        self.changed = True
+
+    # S's child starts again (resumed after it exited, or serve came
+    # back) and mounts context-md from the meta as it is now.
+    atomic action ChildRestart:
+        require self.child_project != self.assigned
+        self.child_project = self.assigned
+        if self.shown == "S":
+            self.changed = True
+
+    # Back or Esc: setSub(null) unmounts the page; what is still in
+    # flight lands on nothing.
+    atomic action Close:
+        require self.page != "closed"
+        self.page = "closed"
+        self.sel = "S"
+        self.shown = ""
+        self.inflight_S = False
+        self.inflight_T = False
+        self.shown_project = False
+        self.shown_note = False
+        self.stamped = False
+        self.changed = False
+
+action Init:
+    ins = Inspector()
+
+# The page for one session never shows another's context: whatever is
+# on screen belongs to the session in the URL, and a loaded page has
+# something on screen.
+always assertion ShowsOnlyItsSession:
+    if ins.page == "closed":
+        return ins.shown == ""
+    if ins.page == "loaded":
+        return ins.shown == ins.sel
+    return ins.shown == ""
+
+# A fresh snapshot of S lists what S's running child reads (MEMORY.md
+# only if the child mounted with the project), and says so when the
+# next start will read a different set. T is never in a project.
+always assertion ListsRunningChild:
+    if ins.page != "loaded" or ins.changed:
+        return True
+    if ins.shown == "T":
+        return not ins.shown_project and not ins.shown_note
+    return ins.shown_project == ins.child_project and ins.shown_note == (ins.assigned != ins.child_project)
+
+# A snapshot that no longer matches the disk or serve still says when it
+# was read. (Every load stamps; the claim is that nothing clears it.)
+always assertion StaleIsStamped:
+    return not (ins.page == "loaded" and ins.changed) or ins.stamped
+
+# Once the person stops switching, the page settles on the URL's
+# session's context, or on an error (or it was closed).
+always eventually assertion SettlesOnItsSession:
+    return ins.page == "closed" or ins.page == "failed" or (ins.page == "loaded" and ins.shown == ins.sel)
