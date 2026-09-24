@@ -1,0 +1,205 @@
+# serve startup against the two files it reads before it listens:
+# ~/.bough/serve/meta.json (titles, archive flags, projects, queued
+# tasks) and ~/.bough/serve.token. One install, one serve process, run
+# under launchd with KeepAlive=true (cmd/bough/launchd.go), so any exit,
+# clean or not, is followed by another start.
+#
+# This spec is what the code does TODAY. The properties the flow was
+# mapped with that the code does not have are listed at the end, each
+# with the counterexample fizz finds when it is added; they are
+# findings, not assertions, until the product changes.
+#
+# What the code does, and so what the spec says:
+#
+# - serveForeground (cmd/bough/serve.go) calls serveclient.LoadToken
+#   first, then serve.NewSupervisor; either error returns from the
+#   process before net.Listen, so nothing is served. Under launchd that
+#   is a restart, and the next start reads the same files: "refused".
+#   Starting is inside the atomic Start (nothing observes it).
+# - loadMeta (internal/serve/supervisor.go) reads meta.json: missing is
+#   a fresh install; otherwise it tries the v2 metaFile shape, then the
+#   legacy bare map of session id -> SessionMeta. Both unmarshals failing
+#   is fatal. Checked with encoding/json: a zero-length file and a torn
+#   one both fail both ("unexpected end of JSON input"); so does a file
+#   with ONE wrongly-typed field ("archived": "yes"): json.Unmarshal
+#   returns the type error, the v2 branch is skipped because err != nil,
+#   and the map branch fails on "version". So a bad field does not drop
+#   every session's metadata as the mapped model suspected: it refuses
+#   the whole start (correction to the mapped model).
+# - migrateProjects saves meta.json only when the loaded version is
+#   below 2 (a legacy map or a v1 file) and the file existed or had a
+#   label table; a v2 file returns early and a fresh install writes
+#   nothing (correction: the mapped model said it saves every start).
+#   So a legacy start rewrites the file as v2 once, keeping every row.
+# - saveMetaLocked (every title, archive, ack, project, task change)
+#   is os.WriteFile(meta.json.tmp) + os.Rename, with no fsync of the
+#   file or the directory. Power loss can leave the rename durable and
+#   the data not: a zero-length meta.json. Or the crash lands between
+#   the write and the rename: the old meta.json plus a leftover .tmp.
+#   loadMeta never reads the .tmp and the next save truncates it, so a
+#   leftover is harmless.
+# - LoadToken: ReadToken non-empty wins. Otherwise O_CREATE|O_EXCL then
+#   WriteString; a failed write (ENOSPC) returns an error and leaves the
+#   created file empty. Every later start sees "" from ReadToken, then
+#   EEXIST from O_EXCL, re-reads "" and fails "token file is empty".
+#
+# Fields (Serve#0.<field>):
+#   meta   absent | v2 | legacy | empty | torn | badfield
+#   tmp    a meta.json.tmp is left next to it
+#   token  absent | ok | empty
+#   serve  down | up | refused   (refused: exited with the error; launchd
+#          will start it again)
+#   titled the file holds titles/archive flags a person set (a torn or
+#          badfield file still holds them for a human to recover; an
+#          empty one does not)
+
+role Serve:
+    action Init:
+        # A fresh install: nothing on disk yet.
+        self.meta = "absent"
+        self.tmp = False
+        self.token = "absent"
+        self.serve = "down"
+        self.titled = False
+
+    # ServeStart and LaunchdRestart: the same code, and launchd's
+    # KeepAlive makes it fair, from a clean stop and from a refusal.
+    atomic fair action Start:
+        require self.serve in ("down", "refused")
+        if self.token == "absent":
+            self.token = "ok"
+        if self.token == "empty" or self.meta in ("empty", "torn", "badfield"):
+            self.serve = "refused"
+        else:
+            if self.meta == "legacy":
+                # migrateProjects rewrites it as v2, rows kept; the
+                # rename consumes any leftover .tmp.
+                self.meta = "v2"
+                self.tmp = False
+            self.serve = "up"
+
+    # The first start dies writing the token it just created (ENOSPC).
+    atomic action StartTokenENOSPC:
+        require self.serve in ("down", "refused") and self.token == "absent"
+        self.token = "empty"
+        self.serve = "refused"
+
+    # A person sets a title / archives a session: saveMetaLocked.
+    atomic action Save:
+        require self.serve == "up"
+        self.meta = "v2"
+        self.tmp = False
+        self.titled = True
+
+    # SIGTERM, bough update, a crash outside a save.
+    atomic action Stop:
+        require self.serve == "up"
+        self.serve = "down"
+
+    # Power loss during a save: the rename reached the disk, the data
+    # did not. Whatever the file held is gone.
+    atomic action PowerLossEmpty:
+        require self.serve == "up"
+        self.serve = "down"
+        self.meta = "empty"
+        self.titled = False
+
+    # Power loss between WriteFile(tmp) and Rename: the old file stays.
+    atomic action PowerLossBeforeRename:
+        require self.serve == "up"
+        self.serve = "down"
+        self.tmp = True
+
+    # A hand edit or an agent's write tool, while serve is not running
+    # (an edit while it runs is the same once serve stops without a
+    # save, and is overwritten by the next save otherwise).
+    atomic action EditTorn:
+        require self.serve != "up" and self.meta in ("v2", "legacy")
+        self.meta = "torn"
+
+    atomic action EditBadField:
+        require self.serve != "up" and self.meta in ("v2", "legacy")
+        self.meta = "badfield"
+
+    # A file from before the projects table (a restored backup).
+    atomic action EditLegacy:
+        require self.serve != "up" and self.meta == "v2"
+        self.meta = "legacy"
+
+    # The only ways out of a bad file today: a human fixes the JSON, or
+    # deletes the file and loses every title with it.
+    atomic action RepairMeta:
+        require self.serve != "up" and self.meta in ("torn", "badfield")
+        self.meta = "v2"
+
+    atomic action DeleteMeta:
+        require self.serve != "up" and self.meta != "absent"
+        self.meta = "absent"
+        self.titled = False
+
+    atomic action DeleteToken:
+        require self.serve != "up" and self.token != "absent"
+        self.token = "absent"
+
+action Init:
+    srv = Serve()
+
+# serve is up only on files it could read: the migration never leaves a
+# legacy file behind, and no bad shape is served over.
+always assertion UpOnlyOnReadableFiles:
+    return srv.serve != "up" or (srv.meta in ("absent", "v2") and srv.token == "ok")
+
+# A refusal always has a bad file behind it: a leftover .tmp, a legacy
+# map or a missing token never stop serve. A transition claim, because
+# refused is a process that exited: a human may fix a file before
+# launchd starts it again (a step that changes a file while refused is
+# an edit, not a start).
+transition assertion RefusedOnlyOnBadFile(before, after):
+    start = before.srv.serve != "refused" or (before.srv.meta == after.srv.meta and before.srv.token == after.srv.token)
+    return not (after.srv.serve == "refused" and start) or after.srv.token == "empty" or after.srv.meta in ("empty", "torn", "badfield")
+
+# A fresh install writes no meta.json and has no titles to show.
+always assertion AbsentMeansNoTitles:
+    return srv.meta != "absent" or not srv.titled
+
+# Titles and archive flags present before a start are present after it
+# (a legacy file's rows survive its migration).
+transition assertion StartKeepsTitles(before, after):
+    return not (before.srv.serve != "up" and after.srv.serve == "up") or before.srv.titled == after.srv.titled
+
+# A refused start never rewrites the file it could not read: whatever a
+# human could still recover from it is still there.
+transition assertion RefusalLeavesMetaAlone(before, after):
+    return not (before.srv.serve != "refused" and after.srv.serve == "refused") or before.srv.meta == after.srv.meta
+
+# Liveness that holds today: serve comes up unless a file needs a human.
+# (The mapped "from Empty/Torn serve reaches Up without a human" does
+# not; see FINDINGS.)
+always eventually assertion UpUnlessAFileNeedsAHuman:
+    return srv.serve == "up" or srv.token == "empty" or srv.meta in ("empty", "torn", "badfield")
+
+# FINDINGS: the mapped properties the code does not have. Each one,
+# added as written, fails fizz with the counterexample named:
+#
+# always assertion StartsOnItsOwnSaveLeftovers:
+#     return not (srv.serve == "refused" and srv.meta == "empty")
+#   Init, Start, PowerLossEmpty, Start -> refused forever (the
+#   launchd crash loop; NewSupervisor: "unexpected end of JSON input").
+#
+# always assertion BadFieldLosesAtMostThatRow:
+#     return not (srv.serve == "refused" and srv.meta == "badfield")
+#   Init, Start, Save, Stop, EditBadField, Start -> refused.
+#
+# always assertion EmptyTokenIsRepaired:
+#     return not (srv.serve == "refused" and srv.token == "empty")
+#   Init, StartTokenENOSPC -> refused on every later start.
+#
+# always eventually assertion RecoversWithoutAHuman:
+#     return srv.serve == "up"
+#   Init, Start, Save, Stop, EditTorn, then Start forever: a refused
+#   loop, so CrashLoop is absorbing without a human (PowerLossEmpty
+#   leads to the same loop).
+#
+# always assertion PowerLossKeepsTitles:  (non-durable save)
+#     return srv.titled or srv.meta == "absent"
+#   Init, Start, PowerLossEmpty.
