@@ -579,29 +579,6 @@ func lastCloseCancelled(lines []serve.Line) bool {
 	return !open && last == "cancelled"
 }
 
-// stoppedPrompt is app.tsx's: the last prompt, when its turn was
-// cancelled before any assistant reply.
-func stoppedPrompt(lines []serve.Line) string {
-	i := len(lines) - 1
-	for i >= 0 && (lines[i].Kind != "input" || lines[i].Data["steer"] != nil) {
-		i--
-	}
-	if i < 0 {
-		return ""
-	}
-	cancelled := false
-	for _, l := range lines[i+1:] {
-		if l.Kind == "assistant" {
-			return ""
-		}
-		cancelled = cancelled || l.Kind == "cancelled"
-	}
-	if !cancelled {
-		return ""
-	}
-	return lines[i].Text
-}
-
 func lineKinds(lines []serve.Line) []string {
 	var k []string
 	for _, l := range lines {
