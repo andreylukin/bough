@@ -199,7 +199,10 @@ export function modelTests<C>(flow: Flow<C>): void {
 // go/tests/model/mbt to replay against the spec's graph.
 function saveTranscripts(serve: Serve, spec: string, ids: string[], title: string): void {
   const root = process.env.MODEL_TRACE_DIR;
-  if (!root) return;
+  // A flow whose spec is the page's own state (ui_projects, ui_me, ...)
+  // names no sessions and has no history projection: an empty dir of
+  // its failed TestHistoryTraces ("no history projection registered").
+  if (!root || ids.length === 0) return;
   const dir = path.join(root, spec);
   fs.mkdirSync(dir, { recursive: true });
   // Cut short: an exhaustive walk's title names dozens of steps, past the

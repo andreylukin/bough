@@ -553,7 +553,8 @@ modelTests<Ctx>({
   // The sidebar's toolbar is on screen at every node but a phone's thread,
   // whose own header is then.
   status: (c) => c.page.locator('.sidebar .side-bar:visible, main .thread-head:visible, main .page-head:visible, main h1:visible').first(),
-  sessions: (c) => (c.a ? [c.a] : []),
+  // The spec is the page's state, not a transcript's: no history check.
+  sessions: () => [],
   async cleanup(c) {
     if (!c) return;
     c.listMode = 'pass';

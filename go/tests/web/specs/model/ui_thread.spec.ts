@@ -399,7 +399,8 @@ modelTests<Ctx>({
   read: readUiState,
   // The header's title: on screen on the thread; a sub page has its own head.
   status: (c) => c.page.locator('.thread-head h1, .page-head h1, main h1').first(),
-  sessions: (c) => [c.id],
+  // The spec is the page's state, not a transcript's: no history check.
+  sessions: () => [],
   async cleanup(c) {
     if (!c) return;
     c.firstRead = false;
