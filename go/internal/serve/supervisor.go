@@ -774,6 +774,18 @@ func (s *Supervisor) emit(ch *child, kind, text string, extra map[string]any) {
 			s.releaseLocked(ch)
 		}
 		ch.inTurn = true
+	case "activity":
+		// "model is thinking" is all the child prints while its first
+		// request is in flight, which a reasoning model can make
+		// seconds long; a Stop then was held for holdLimit as if the
+		// prompt were unread. The "" that clears the label is no sign.
+		if text != "" {
+			if ch.unread {
+				ch.unread = false
+				s.releaseLocked(ch)
+			}
+			ch.inTurn = true
+		}
 	}
 	switch kind {
 	case "input":
@@ -1001,8 +1013,9 @@ func (ch *child) started() bool {
 	}
 }
 
-// Interrupt SIGINTs the child and keeps the lease, so the session can
-// be prompted again without a respawn.
+// Interrupt SIGINTs the child. The headless child cancels its turn and
+// then exits (130 mid-turn, 0 idle), so the next prompt respawns it;
+// a prompt it has not taken yet holds the signal until it does.
 func (s *Supervisor) Interrupt(id string) error {
 	s.mu.Lock()
 	ch, ok := s.kids[id]

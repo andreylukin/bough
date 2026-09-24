@@ -42,6 +42,10 @@ const (
 	// headless child, which never prints an "input" line: the first
 	// sign a prompt became a turn is its streamed output.
 	envNoInput = "BOUGH_FAKE_NOINPUT"
+	// envThinking makes its first output the engine's "model is
+	// thinking" activity line, which is all the real child prints while
+	// its first model request is in flight.
+	envThinking = "BOUGH_FAKE_THINKING"
 )
 
 func TestMain(m *testing.M) {
@@ -142,7 +146,9 @@ func fakeSlowSigChild() {
 				os.Exit(0) // not yet a turn: the prompt is dropped, nothing recorded
 			default:
 			}
-			if os.Getenv(envNoInput) != "" {
+			if os.Getenv(envThinking) != "" {
+				say(map[string]any{"kind": "activity", "text": "model is thinking"})
+			} else if os.Getenv(envNoInput) != "" {
 				say(map[string]any{"kind": "assistant-delta", "text": "once"})
 			} else {
 				say(map[string]any{"kind": "input", "text": line})
@@ -648,6 +654,30 @@ func TestSupervisorInterruptMidTurnWithoutInputLine(t *testing.T) {
 	}
 	if !hasKind(f.sup.Recent(id), "cancelled") {
 		t.Fatalf("interrupt mid-turn was held, not sent: %v", kinds(f.sup.Recent(id)))
+	}
+}
+
+// Until the model's first token the real child prints only "model is
+// thinking". A Stop then must reach the turn at once: it used to be
+// held for holdLimit (20 s) as if the prompt were still unread.
+func TestSupervisorInterruptWhileModelThinks(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envSlowSig+"=1", envThinking+"=1")
+	id := "sess-thinking"
+	f.seed(t, id)
+	if err := f.sup.Send(id, "tell a long story"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitFor(t, "the model to start thinking", func() bool { return hasKind(f.sup.Recent(id), "activity") })
+	if err := f.sup.Interrupt(id); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) && !hasKind(f.sup.Recent(id), "cancelled") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !hasKind(f.sup.Recent(id), "cancelled") {
+		t.Fatalf("Stop while the model thinks was held, not sent: %v", kinds(f.sup.Recent(id)))
 	}
 }
 
