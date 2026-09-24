@@ -4469,7 +4469,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const send = async () => {
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.
-    if (!t || busy || uploading || askChanged || row.archived) return;
+    // Nor before the transcript is read: what landed is judged against it.
+    if (!t || loading || busy || uploading || askChanged || row.archived) return;
     // A tag whose content is gone is never sent as its placeholder.
     const lost = lostTags(t, images.current, pastes.current);
     if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.join(", ")}`); return; }
@@ -4909,7 +4910,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 </button>
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
-              {live && (stopping === "failed"
+              {/* Not before the transcript is read: the header names no status until then, and a Stop beside it claimed a turn it could not show. */}
+              {live && !loading && (stopping === "failed"
                 ? <button className="btn composer-stop-retry" onClick={stop} title="Stop (Esc)" aria-keyshortcuts="Escape">Retry stop</button>
                 : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
                           aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Stop (Esc)" aria-keyshortcuts="Escape">
@@ -4920,7 +4922,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 <button className="btn composer-queue" onClick={enqueue} disabled={uploading > 0 || askChanged}
                         title={modKey() + "Enter"}>Queue</button>
               )}
-              <button className="btn btn-primary" onClick={send} disabled={failedLoad || busy || uploading > 0 || blank || askChanged || row.archived}
+              <button className="btn btn-primary" onClick={send} disabled={loading || busy || uploading > 0 || blank || askChanged || row.archived}
                       title={failedLoad ? "Transcript didn’t load" : running && !draftAsk ? "Enter" : undefined}
                       aria-label={(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}>
                 <span className="send-word">{(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}</span>
