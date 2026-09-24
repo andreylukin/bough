@@ -57,6 +57,26 @@ func Release(t testing.TB, dir, name string) {
 	}
 }
 
+// ReleaseWith lets a "block" turn named name reply as turn says instead
+// of with its own text: {Mode: "error"} fails the held request, so a
+// session can sit in "running" before the test picks the outcome.
+func ReleaseWith(t testing.TB, dir, name string, turn Turn) {
+	t.Helper()
+	b, err := json.Marshal(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Through a temp name, as Queue does: the row must never read a
+	// half-written release as an empty (plain) one.
+	tmp := filepath.Join(dir, name+".release-tmp")
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, name+".release")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // WaitTaken waits until the row has picked up turn name (it renames
 // <name>.json to <name>.taken as the request starts), so a test knows
 // the model call is in flight.

@@ -160,7 +160,17 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
 		for {
-			if _, err := os.Stat(release); err == nil {
+			if b, err := os.ReadFile(release); err == nil {
+				// A release that carries a turn answers as it says, so a
+				// test can hold a session in "running" and only then
+				// choose whether the turn finishes or fails.
+				var then controlTurn
+				if len(b) > 0 && json.Unmarshal(b, &then) == nil && then.Mode == "error" {
+					return ullm.Response{}, errors.New(then.Error)
+				}
+				if then.Text != "" {
+					return a.reply(ctx, then.Text, 0)
+				}
 				return a.reply(ctx, turn.Text, 0)
 			}
 			select {

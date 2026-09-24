@@ -212,6 +212,26 @@ func TestControlSlow(t *testing.T) {
 	}
 }
 
+// A held turn released with a Turn in the release file answers as that
+// turn says, so a test can take a session to "running" first and only
+// then decide whether the turn finishes or fails.
+func TestControlBlockReleaseError(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "never sent"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	ReleaseWith(t, r.dir(), "001", Turn{Mode: "error", Error: "released as boom"})
+	r.waitFor("released as boom")
+	code, out := r.finish()
+	if code != 1 {
+		t.Fatalf("exit %d, want 1 for an errored turn:\n%s", code, out)
+	}
+	if strings.Contains(out, "never sent") {
+		t.Fatalf("held text sent despite the error release:\n%s", out)
+	}
+}
+
 // Block holds the request until the test releases it: nothing replies
 // while it is held, and the queued text arrives once it is released.
 func TestControlBlock(t *testing.T) {
