@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Page } from '@playwright/test';
 import { CONTROL_CONFIG, controlDir, queue, waitTaken } from '../../helpers/control';
-import { loadPaths, type Step } from '../../helpers/model';
+import { loadPaths, type Step, walkTest } from '../../helpers/model';
 import { test, expect, type Serve } from '../../helpers/serve';
 
 const SPEC = 'session_filing';
@@ -282,7 +282,7 @@ test.describe(`model: ${SPEC}`, () => {
   const bare = (a: string) => a.slice(a.indexOf('.') + 1);
   loadPaths(SPEC).forEach((trace: Step[], i) => {
     const walk = trace.slice(1).map((s) => s.action).join(' → ');
-    test(`path ${i}: ${walk}`, async ({ sharedServe: serve, page }, info) => {
+    walkTest(SPEC)(`path ${i}: ${walk}`, async ({ sharedServe: serve, page }, info) => {
       const errors: string[] = [];
       page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
       page.on('pageerror', (e) => errors.push(String(e)));
