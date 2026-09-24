@@ -3857,6 +3857,29 @@ const noLines: Line[] = [];
 type Upload = { slot: number; tag: string; done: Promise<string> };
 const uploads = new Map<string, Set<Upload>>();
 
+/**
+ * "Start project session" moves the unsent draft as it is once the new
+ * session exists: its tags stay tags with their pastes and slots, and an
+ * upload still running is followed by the new session's Thread, so it
+ * lands in the new draft. Expanding it when the project was picked moved
+ * a paste as raw wrapper text and an uploading image as a tag whose path
+ * was then written nowhere. The old session keeps none of it, draft-ask
+ * included.
+ */
+export function moveDraft(from: string, to: string, store: Pick<Storage, "getItem" | "setItem" | "removeItem"> = localStorage) {
+  try {
+    const draft = store.getItem("bough:draft:" + from) ?? "";
+    const atts = store.getItem("bough:draft-atts:" + from);
+    if (draft.trim()) {
+      store.setItem("bough:draft:" + to, draft);
+      if (atts) store.setItem("bough:draft-atts:" + to, atts);
+    }
+    for (const k of ["bough:draft:", "bough:draft-atts:", "bough:draft-ask:"]) store.removeItem(k + from);
+  } catch { /* storage off */ }
+  const up = uploads.get(from);
+  if (up) { uploads.delete(from); uploads.set(to, up); }
+}
+
 export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
@@ -3875,7 +3898,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   /** Stop a project session's container; the child restarts it on its next command. */
   onStopOrb?: () => void;
   /** Start a project session in this project's orb, carrying the draft over unsent. */
-  onStartProject?: (project: string, draft: string) => void;
+  onStartProject?: (project: string) => void;
   onNewProject?: () => void;
   onModel: (m: string, plugin?: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** This session's unrecorded sends, kept by the app across session switches. */
@@ -4943,7 +4966,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
                         note="This session is read-only outside a git checkout. Your draft moves with you, unsent"
                         options={projects.map((p) => ({ value: p.slug, label: p.name }))}
-                        onChange={(id) => onStartProject(id, expand(draft))} />
+                        onChange={(id) => onStartProject(id)} />
               ) : onNewProject && (
                 // No project to run in yet: the palette's project flow; the draft stays here.
                 <button type="button" className="btn composer-start" onClick={onNewProject}>Start project session…</button>
@@ -5788,15 +5811,11 @@ export default function App() {
       onAck={() => act(() => api.ack(r.id), "mark it seen")}
       onStopOrb={async () => { if (await confirmStopOrb(r.jobs)) act(() => api.stopOrb(r.id), "stop the orb"); }}
       onNewProject={() => { setPalQuery("New project"); setPalette(true); }}
-      onStartProject={home ? async (project, draft) => { if (await confirmFailedBuild(projects.find((p) => p.slug === project))) act(async () => {
+      onStartProject={home ? async (project) => { if (await confirmFailedBuild(projects.find((p) => p.slug === project))) act(async () => {
         // The draft moves, unsent: the new session's composer holds it.
         const created = await api.create(home, "", "project", project);
         markCreated(created.id);
-        try {
-          if (draft.trim()) localStorage.setItem("bough:draft:" + created.id, draft);
-          localStorage.removeItem("bough:draft:" + r.id);
-          localStorage.removeItem("bough:draft-atts:" + r.id);
-        } catch { /* storage off */ }
+        moveDraft(r.id, created.id);
         goProject(project, created.id);
       }, "start a project session"); } : undefined} />
     </RunningCallCtx.Provider>
