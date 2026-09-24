@@ -126,6 +126,21 @@ func commit(p paths, msg string) {
 	_ = git(p.wiki, "-c", "user.name=bough", "-c", "user.email=bough@localhost", "commit", "-q", "-m", msg)
 }
 
+// commitPage records one hand edit (a Save, a review decision) as its
+// page alone. An ingest or brief may be running with its agent halfway
+// through other files, and `add -A` here swept those into "edit P",
+// leaving the run's own commit without them.
+func commitPage(p paths, msg, rel string) {
+	if _, err := os.Stat(filepath.Join(p.wiki, ".git")); err != nil {
+		return
+	}
+	_ = git(p.wiki, "add", "--", rel)
+	if git(p.wiki, "diff", "--cached", "--quiet", "--", rel) == nil {
+		return // nothing staged
+	}
+	_ = git(p.wiki, "-c", "user.name=bough", "-c", "user.email=bough@localhost", "commit", "-q", "-m", msg, "--only", "--", rel)
+}
+
 func git(dir string, args ...string) error {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	var out bytes.Buffer

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -224,6 +225,77 @@ func TestEditClaim(t *testing.T) {
 	}
 }
 
+// A hand edit's commit holds its page and nothing else: an ingest's
+// agent may be writing other files at the same moment, and those belong
+// in the ingest's commit, not in "edit P".
+func TestHandCommitsHoldOnlyTheirPage(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	s, _ := storeFixture(t)
+	if err := ensureWiki(s.p); err != nil {
+		t.Fatal(err)
+	}
+	rel := "topics/go-testing/ghost.md"
+	other := filepath.Join(s.p.wiki, "topics", "go-testing", "gate.md")
+	files := func() string {
+		out, _ := exec.Command("git", "-C", s.p.wiki, "show", "--name-only", "--format=%s", "HEAD").Output()
+		return strings.TrimSpace(string(out))
+	}
+	write(t, other, "# Gate\n\nAn agent is rewriting this.\n")
+	write(t, filepath.Join(s.p.wiki, "topics", "new", "page.md"), "# New\n\nAnd writing this.\n")
+	pg, _ := s.Page(rel)
+	if err := s.WritePage(rel, pg.Body+"\nOne more line.\n", &pg.Body); err != nil {
+		t.Fatal(err)
+	}
+	if got := files(); got != "edit "+rel+"\n\n"+rel {
+		t.Fatalf("the edit's commit is not its page alone:\n%s", got)
+	}
+	var u Block
+	pg, _ = s.Page(rel)
+	for _, b := range pg.Blocks {
+		if b.State == "uncited" {
+			u = b
+		}
+	}
+	if err := s.EditClaim(rel, u.Line, u.End, u.Raw, "inference"); err != nil {
+		t.Fatal(err)
+	}
+	if got := files(); !strings.HasSuffix(got, "\n\n"+rel) || strings.Count(got, "\n") != 2 {
+		t.Fatalf("the review's commit is not its page alone:\n%s", got)
+	}
+	out, _ := exec.Command("git", "-C", s.p.wiki, "status", "--porcelain").Output()
+	if !strings.Contains(string(out), "gate.md") || !strings.Contains(string(out), "topics/new/") {
+		t.Fatalf("the agent's files were swept into a hand commit; status:\n%s", out)
+	}
+}
+
+// A Save names the body the editor read: a page an ingest rewrote since
+// is ErrStale and keeps the ingest's text, not the editor's.
+func TestWritePageRefusesAMovedBase(t *testing.T) {
+	t.Parallel()
+	s, _ := storeFixture(t)
+	rel := "topics/go-testing/ghost.md"
+	pg, _ := s.Page(rel)
+	read := pg.Body
+	ingested := read + "\n- A claim an ingest added.\n"
+	write(t, filepath.Join(s.p.wiki, filepath.FromSlash(rel)), ingested)
+	if err := s.WritePage(rel, read+"\nMine.\n", &read); !errors.Is(err, ErrStale) {
+		t.Fatalf("Save over a moved page: %v, want ErrStale", err)
+	}
+	if pg, _ := s.Page(rel); pg.Body != ingested {
+		t.Fatalf("the refused Save wrote the page:\n%s", pg.Body)
+	}
+	if err := s.WritePage(rel, ingested+"\nMine.\n", &ingested); err != nil {
+		t.Fatalf("Save on the body it read: %v", err)
+	}
+	gone := "topics/go-testing/none.md"
+	if err := s.WritePage(gone, "x", &read); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Save of a missing page: %v, want ErrNotFound", err)
+	}
+}
+
 func TestPagePathRefusesOutsideTopics(t *testing.T) {
 	s, home := storeFixture(t)
 	write(t, filepath.Join(home, "secret.md"), "no")
@@ -235,7 +307,7 @@ func TestPagePathRefusesOutsideTopics(t *testing.T) {
 			t.Errorf("pagePath(%q) err = %v, want ErrBadPath", rel, err)
 		}
 	}
-	if err := s.WritePage("topics/out/secret.md", "pwned"); err == nil {
+	if err := s.WritePage("topics/out/secret.md", "pwned", nil); err == nil {
 		t.Fatal("wrote through a symlink out of the wiki")
 	}
 }
@@ -256,13 +328,13 @@ func TestProfileIsWritableBeforeItExists(t *testing.T) {
 	if s.Me(time.Now()).HasProfile {
 		t.Fatal("reading the missing profile created it")
 	}
-	if err := s.WritePage(ProfilePath, pg.Body+"\nI own acme/web.\n"); err != nil {
+	if err := s.WritePage(ProfilePath, pg.Body+"\nI own acme/web.\n", nil); err != nil {
 		t.Fatalf("WritePage(%s) with no profile: %v", ProfilePath, err)
 	}
 	if !s.Me(time.Now()).HasProfile {
 		t.Fatal("saving the profile did not create it")
 	}
-	if err := s.WritePage("topics/me/other.md", "x"); !errors.Is(err, ErrNotFound) {
+	if err := s.WritePage("topics/me/other.md", "x", nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("WritePage of another missing page: %v, want ErrNotFound", err)
 	}
 	if _, err := s.Page("topics/me/other.md"); !errors.Is(err, ErrNotFound) {
