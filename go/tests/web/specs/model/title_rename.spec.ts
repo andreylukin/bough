@@ -6,7 +6,7 @@
 // llm-control.
 import * as fs from 'fs';
 import * as path from 'path';
-import { test, type Page, type Route } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 import { CONTROL_CONFIG, controlDir, queue, release, waitTaken } from '../../helpers/control';
 import { loadPaths, modelTests, type Step } from '../../helpers/model';
 import type { Serve } from '../../helpers/serve';
@@ -38,6 +38,9 @@ interface Ctx {
   // RenameFail's 500s not yet logged: Chromium logs each failed POST once,
   // and the log can land after the step's own wait.
   failures: number;
+  failNext: boolean;       // the next rename POST is served with meta.json unwritable
+  blocked?: Promise<void>; // while it is, the page's other writes wait
+  writes: number;          // the page's other writes serve is handling
 }
 
 const abstract = (s: string) => (s === AUTO ? 'auto' : s);
@@ -111,11 +114,48 @@ async function asKnown(c: Ctx, route: Route): Promise<void> {
 async function routes(c: Ctx): Promise<void> {
   await c.page.route((u) => u.pathname === '/api/sessions' || u.pathname === `/api/sessions/${c.id}`, (route) =>
     route.request().method() === 'GET' ? asKnown(c, route) : route.continue());
+  // RenameFail breaks serve's meta save for its one POST. Any other write
+  // the page sends meanwhile (the ack of a turn that just finished) would
+  // fail too and log a 500 no step asked for, so the page's other writes
+  // are held while the save is broken, and the save is broken only once
+  // none of them is in serve.
+  await c.page.route((u) => u.pathname.startsWith('/api/') && u.pathname !== `/api/sessions/${c.id}/rename`, async (route) => {
+    if (route.request().method() === 'GET') return route.fallback();
+    while (c.blocked) await c.blocked;
+    c.writes++;
+    try {
+      const res = await route.fetch().catch(() => null);
+      // A write still out when the test's serve stops.
+      if (!res) return route.abort().catch(() => {});
+      return route.fulfill({ response: res });
+    } finally {
+      c.writes--;
+    }
+  });
   // A rename that serve took is what the page's awaited refresh shows.
   await c.page.route((u) => u.pathname === `/api/sessions/${c.id}/rename`, async (route) => {
-    const res = await route.fetch();
-    if (res.ok()) c.known = await serverRow(c);
-    return route.fulfill({ response: res });
+    const fail = c.failNext;
+    c.failNext = false;
+    let open = () => {};
+    const tmp = metaPath(c) + '.tmp';
+    if (fail) {
+      c.blocked = new Promise((r) => { open = r; });
+      await expect.poll(() => c.writes, { message: 'RenameFail: the page\'s other writes to finish' }).toBe(0);
+      // A directory where serve writes meta.json.tmp, as the Go adapter does.
+      fs.mkdirSync(tmp, { recursive: true });
+    }
+    try {
+      const res = await route.fetch();
+      if (res.ok()) c.known = await serverRow(c);
+      return await route.fulfill({ response: res });
+    } finally {
+      if (fail) {
+        // Gone already once the test's serve stopped and took HOME with it.
+        if (fs.existsSync(tmp)) fs.rmdirSync(tmp);
+        c.blocked = undefined;
+        open();
+      }
+    }
   });
 }
 
@@ -161,6 +201,7 @@ modelTests<Ctx>({
     const c: Ctx = {
       page, serve, id: await serve.newSession(), trace: loadPaths(SPEC)[n], step: 0,
       held: '', known: { title: '', summary: '' }, prior: '', failures: 0,
+      failNext: false, writes: 0,
     };
     await routes(c);
     await page.goto(`${serve.url}/#/s/${c.id}`);
@@ -215,24 +256,18 @@ modelTests<Ctx>({
       await dialog(c).waitFor({ state: 'hidden' });
       c.prior = '';
     },
-    // serve's meta save fails (a directory where it writes meta.json.tmp,
-    // as the Go adapter does) for a rename that would change the name.
+    // serve's meta save fails (see routes) for a rename that would change
+    // the name.
     async RenameFail(c) {
       c.step++;
-      const tmp = metaPath(c) + '.tmp';
-      fs.mkdirSync(tmp, { recursive: true });
-      try {
-        const header = shownName((await c.page.locator('.thread-head h1').textContent()) ?? '');
-        // The answer, not the error line: whether the dialog then shows
-        // it and stays up is the state read's to say.
-        const posted = c.page.waitForResponse((r) => new URL(r.url()).pathname === `/api/sessions/${c.id}/rename`);
-        c.failures++; // before the POST: the log can come before the answer does
-        await submit(c, header === 'mine' ? '' : 'mine');
-        if ((await posted).ok()) throw new Error('RenameFail: POST rename succeeded with meta.json.tmp blocked');
-      } finally {
-        // Gone already once the test's serve stopped and took HOME with it.
-        if (fs.existsSync(tmp)) fs.rmdirSync(tmp);
-      }
+      const header = shownName((await c.page.locator('.thread-head h1').textContent()) ?? '');
+      // The answer, not the error line: whether the dialog then shows
+      // it and stays up is the state read's to say.
+      const posted = c.page.waitForResponse((r) => new URL(r.url()).pathname === `/api/sessions/${c.id}/rename`);
+      c.failures++; // before the POST: the log can come before the answer does
+      c.failNext = true;
+      await submit(c, header === 'mine' ? '' : 'mine');
+      if ((await posted).ok()) throw new Error('RenameFail: POST rename succeeded with meta.json.tmp blocked');
     },
     async Dismiss(c) {
       c.step++;
