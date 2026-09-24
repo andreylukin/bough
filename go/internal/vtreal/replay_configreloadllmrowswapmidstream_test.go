@@ -90,7 +90,8 @@ func TestConfigReloadLlmRowSwapMidStream(t *testing.T) {
 	alpha := configReloadLlmRowSwapMidStreamTape(t, "alpha.jsonl", "first turn", "model-alpha", "wa", "ALPHA_DONE", 50)
 	beta := configReloadLlmRowSwapMidStreamTape(t, "beta.jsonl", "second turn", "model-beta", "wb", "BETA_DONE", 3)
 	cfg := filepath.Join(work, "bough.yml")
-	if err := os.WriteFile(cfg, []byte(configReloadLlmRowSwapMidStreamYml(alpha, 150)), 0o644); err != nil {
+	// 80ms a word: 4 s of stream against a reload that lands ~0.5 s in.
+	if err := os.WriteFile(cfg, []byte(configReloadLlmRowSwapMidStreamYml(alpha, 80)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	term, err := NewTerminal(t, 120, 30)
