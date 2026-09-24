@@ -1,0 +1,249 @@
+---
+# Every behaviour ends in a closed turn with nothing left to do: rest,
+# not a deadlock.
+deadlock_detection: false
+---
+
+# The engine's native ask (or secret) runs alongside another call from
+# the same reply: the model asks the person a question and, in the same
+# reply, starts run_js or bash. Recipe: go/tests/model/README.md.
+#
+# ask_answer.fizz assumes a question never overlaps other calls, and that
+# only the ask's own end resolves it. On the engine calls are parallel,
+# so a sibling's end, a stray error line and a provider error all land
+# while the Asker (plugins/ask/native.go) still blocks on the person.
+#
+# One question lives in four places here:
+#   asker  the child's Asker: the ask call blocked on the person.
+#          none | pending (the call started, the ask not yet put in) |
+#          open | job (adopted as a job by providerError) | answered |
+#          timedout | cancelled
+#   armed  serve's s.asks[id] (supervisor.go emitLocked): gates /answer
+#          (ErrNoAsk -> 409 when empty) and /prompt (409 while set).
+#   hl     the headless child's hlAsk (plugins/ui/headless.go): whether
+#          the next stdin line is the answer or a steer.
+#   ask    the row's ask (status.go StatusOf over history): what the page
+#          shows, and what makes the status needs-you.
+#
+# THIS SPEC IS THE INTENDED BEHAVIOUR. Where the product (at 5471918e)
+# differs, the difference is a finding, and the spec mutation that
+# models the product's behaviour is named next to the action it changes:
+#   B1 run_js's end (a recorded "result") clears all three:
+#      supervisor.go emitLocked deletes s.asks on every "result",
+#      status.go StatusOf drops pending on every "result",
+#      headless.go askEnded treats every result as the ask's end.
+#   B2 a failing run_js also emits a live-only "error" first
+#      (project.go run_js end): serve and hlAsk clear on it too. History
+#      then records the result, so the screen clears as in B1.
+#   B3 a plain stderr line (supervisor.go pumpStderr -> "error") clears
+#      serve's arm only: the page keeps needs-you and its buttons 409.
+#      A recorded error note (a hook blocking a steer, a refusal note)
+#      clears serve's arm and hlAsk; history keeps the ask, so again
+#      needs-you with buttons that 409.
+#   B4 a provider error after the sibling's end (the harness re-asks the
+#      model with the sibling's result) runs providerError
+#      (unreal/session/actor.go): it adopts every foreground call,
+#      Blocking or not, as a job and closes the turn with an error; the
+#      error and the done clear every arm, and the Asker keeps blocking
+#      with no route for an answer until its 10-minute timeout.
+# A bash sibling's end is a "call" with tool bash: nothing disarms on
+# it, in the product or here.
+#
+# Fields beyond the four above:
+#   status   the row: running | needs-you | done | error | stopped
+#   sibling  the other call: none | running | ok | failed | cancelled
+#   tool     the sibling's tool: "" | js | bash
+#   perr     a provider error was recorded while the ask was open
+#   sent     the person sent a message (at most one: bounds the graph)
+#   steeredPast  sticky: a message went to the child as a steer or a new
+#                turn while the Asker still blocked
+#   msgAnswered  sticky: a message was taken as the answer
+#   lost     sticky: the ask timed out while it could not be answered
+#            from the screen (the 10-minute stall)
+# The child stays alive throughout (its death is ask_answer's Exit).
+# A secret is the same call with tool "secret": every clear keys on
+# tool ask|secret alike, so it is not a separate branch here.
+
+role Session:
+    # A turn is running; the model has not replied yet.
+    action Init:
+        self.status = "running"
+        self.asker = "none"
+        self.armed = False
+        self.hl = False
+        self.ask = False
+        self.sibling = "none"
+        self.tool = ""
+        self.perr = False
+        self.sent = False
+        self.steeredPast = False
+        self.msgAnswered = False
+        self.lost = False
+
+    # Model: one reply with an ask and a run_js (code mode's tool on the
+    # engine) or a bash call. Both start at once.
+    atomic action ReplyWithAskAndRunJS:
+        require self.status == "running" and self.asker == "none"
+        self.asker = "pending"
+        self.sibling = "running"
+        self.tool = "js"
+
+    atomic action ReplyWithAskAndBash:
+        require self.status == "running" and self.asker == "none"
+        self.asker = "pending"
+        self.sibling = "running"
+        self.tool = "bash"
+
+    # The Asker puts the question in (oneAtATime, then putIn): the "ask"
+    # entry is recorded and emitted; serve arms it, hlPrint sets hlAsk.
+    atomic fair action AskOpens:
+        require self.asker == "pending"
+        self.asker = "open"
+        self.armed = True
+        self.hl = True
+        self.ask = True
+        self.status = "needs-you"
+
+    # Engine.SiblingEnd. The sibling can end before or after the ask is
+    # open. run_js records a "result" (plus a live "error" when it
+    # failed); bash records a "call" with tool bash. None of these is
+    # the ask's end, so nothing about the ask changes.
+    # Product (B1/B2): if self.tool == "js": self.lose_ask(True, True, True)
+    atomic fair action SiblingEndOk:
+        require self.sibling == "running"
+        self.sibling = "ok"
+
+    atomic action SiblingEndFail:
+        require self.sibling == "running"
+        self.sibling = "failed"
+
+    # Provider.FailsAfterSiblingEnd: the harness asked the model again
+    # with the sibling's result, and the request failed. The error is
+    # recorded; the Blocking ask keeps the turn open (as evaluate() does
+    # for a blocking call) and stays answerable; the answer goes to the
+    # model with the next request.
+    # Product (B4): self.asker = "job"; self.lose_ask(True, True, True);
+    #               self.status = "error"
+    atomic action ProviderFails:
+        require self.asker == "open" and self.sibling in ("ok", "failed") and not self.perr
+        self.perr = True
+
+    # System.StderrLine: the child writes a line on stderr; serve emits
+    # it as "error" (live, never in history). Not the ask's end.
+    # Product (B3): self.armed = False
+    atomic action StderrLine:
+        require self.asker == "open"
+        pass
+
+    # System.HookErrorNote: a recorded "error" entry mid-turn (a hook
+    # blocking a steer, a refusal note). Not the ask's end.
+    # Product (B3): self.armed = False; self.hl = False
+    atomic action HookErrorNote:
+        require self.asker == "open"
+        pass
+
+    # User.Answer: the page's buttons/composer while the row is
+    # needs-you. POST /answer: 409 unless serve is armed; the line then
+    # reaches hlAsk, and the Asker's call ends answered.
+    atomic fair action Answer:
+        require self.status == "needs-you"
+        if self.armed and self.hl and self.asker == "open":
+            self.asker = "answered"
+            self.lose_ask(True, True, True)
+            self.status = "running"
+
+    # User.SendMessage: the page sends a message only while no question
+    # is on screen (ask_answer's Send). /prompt is 409 while serve is
+    # armed; otherwise the line reaches the child, where hlAsk decides.
+    atomic action SendMessage:
+        require not self.sent and self.status != "needs-you"
+        self.sent = True
+        if self.armed:
+            pass
+        elif self.hl and self.asker in ("open", "job"):
+            self.msgAnswered = True
+            self.asker = "answered"
+            self.lose_ask(True, True, True)
+            self.status = "running"
+        else:
+            if self.asker in ("open", "job"):
+                self.steeredPast = True
+            # A steer while running; a new turn otherwise.
+            self.status = "running"
+
+    # Asker.Timeout: 10 minutes pass with no answer. The call ends with
+    # an error; its recorded end clears whatever still names the ask.
+    # Not fair: the person is expected to answer first.
+    atomic action Timeout:
+        require self.asker in ("open", "job")
+        if not (self.armed and self.hl and self.ask and self.asker == "open"):
+            self.lost = True
+        self.asker = "timedout"
+        self.lose_ask(True, True, True)
+        if self.status == "needs-you":
+            self.status = "running"
+
+    # User.Stop: the turn is cancelled; the ask's call and the sibling
+    # end cancelled, and "cancelled" clears every arm.
+    atomic action Stop:
+        require self.status in ("running", "needs-you")
+        if self.asker in ("pending", "open"):
+            self.asker = "cancelled"
+        if self.sibling == "running":
+            self.sibling = "cancelled"
+        self.lose_ask(True, True, True)
+        self.status = "stopped"
+
+    # The turn ends once nothing holds it: a reply was made, the ask is
+    # resolved and the sibling has ended.
+    atomic fair action Finish:
+        require self.status == "running" and self.asker not in ("none", "pending", "open") and self.sibling != "running"
+        self.lose_ask(True, True, True)
+        if self.perr:
+            self.status = "error"
+        else:
+            self.status = "done"
+
+    atomic func lose_ask(arm, head, row):
+        if arm:
+            self.armed = False
+        if head:
+            self.hl = False
+        if row:
+            self.ask = False
+
+action Init:
+    session = Session()
+
+# While the Asker has an open ask, serve's arm, headless hlAsk and the
+# row's ask all name it; with no ask open, none of them does.
+always assertion ArmsNameTheOpenAsk:
+    o = session.asker == "open"
+    return session.armed == o and session.hl == o and session.ask == o
+
+# Another call's result or error, a stderr line or an error note never
+# takes serve's arm off an open ask: the page's answer would 409.
+always assertion ForeignEventNeverDisarms:
+    return session.asker != "open" or session.armed
+
+# A Blocking ask is never adopted as a job by providerError.
+always assertion BlockingAskNeverAJob:
+    return session.asker != "job"
+
+# needs-you iff an ask is open (the child is alive throughout).
+always assertion NeedsYouIffAskOpen:
+    return (session.status == "needs-you") == (session.asker == "open")
+
+# A message sent while an ask is open never steers past it, and is
+# never taken as its answer.
+always assertion MessageNeverSteersPastAsk:
+    return not session.steeredPast and not session.msgAnswered
+
+# An ask never runs out its 10 minutes unanswerable from the screen.
+always assertion NoLostAsk:
+    return not session.lost
+
+# An open ask is eventually answered from the screen (the person
+# answering is fair; the timeout is not).
+always eventually assertion AskEventuallyResolved:
+    return session.asker != "open" and session.asker != "pending"
