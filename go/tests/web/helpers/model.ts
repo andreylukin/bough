@@ -202,7 +202,10 @@ function saveTranscripts(serve: Serve, spec: string, ids: string[], title: strin
   if (!root) return;
   const dir = path.join(root, spec);
   fs.mkdirSync(dir, { recursive: true });
-  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  // Cut short: an exhaustive walk's title names dozens of steps, past the
+  // 255-byte file name limit (ENAMETOOLONG). "path <n>" leads it, so the
+  // cut name is still the walk's own.
+  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 120);
   for (const id of ids) {
     const src = path.join(serve.home, '.bough', 'history', id + '.jsonl');
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, `${slug}-${id}.jsonl`));
