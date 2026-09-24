@@ -6,7 +6,7 @@ package llm
 // engine request takes the lexically first <name>.json in the control
 // dir (renaming it <name>.taken, so the test can see the call is in
 // flight) and answers as it says: finish with text, fail, stream slowly,
-// or hold until <name>.release appears. llm-script's tape is fixed at
+// call one tool, or hold until <name>.release appears. llm-script's tape is fixed at
 // mount; this one is fed while the session runs, which is what cancel,
 // steer and "the model is still thinking" tests need. The test side is
 // go/tests/model/llm. Config: dir (default ~/.bough/llm-control).
@@ -85,10 +85,12 @@ func (c *controlLLM) AgentAdapter(o agentllm.Options) (agentllm.Adapter, error) 
 }
 
 type controlTurn struct {
-	Mode    string `json:"mode"`
-	Text    string `json:"text"`
-	Error   string `json:"error"`
-	DelayMS int    `json:"delay_ms"`
+	Mode    string          `json:"mode"`
+	Text    string          `json:"text"`
+	Error   string          `json:"error"`
+	DelayMS int             `json:"delay_ms"`
+	Tool    string          `json:"tool"`
+	Args    json.RawMessage `json:"args"`
 }
 
 // take claims the next queued turn. A name the test is still writing
@@ -155,6 +157,8 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 		return ullm.Response{}, errors.New(turn.Error)
 	case "slow":
 		return a.reply(ctx, turn.Text, time.Duration(turn.DelayMS)*time.Millisecond)
+	case "call":
+		return a.call(name, turn)
 	case "block":
 		release := filepath.Join(a.c.dir, name+".release")
 		tick := time.NewTicker(10 * time.Millisecond)
@@ -168,6 +172,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				if len(b) > 0 && json.Unmarshal(b, &then) == nil && then.Mode == "error" {
 					return ullm.Response{}, errors.New(then.Error)
 				}
+				if then.Mode == "call" {
+					return a.call(name, then)
+				}
 				if then.Text != "" {
 					return a.reply(ctx, then.Text, 0)
 				}
@@ -180,7 +187,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 			}
 		}
 	}
-	return ullm.Response{}, fmt.Errorf("llm-control: %s.json: unknown mode %q (want ok, error, slow or block)", name, turn.Mode)
+	return ullm.Response{}, fmt.Errorf("llm-control: %s.json: unknown mode %q (want ok, error, slow, call or block)", name, turn.Mode)
 }
 
 // reply streams text a word at a time, delay apart, so the live
@@ -208,6 +215,30 @@ func (a *controlAdapter) reply(ctx context.Context, text string, delay time.Dura
 		ID:     fmt.Sprintf("control-%d", n),
 		Stop:   ullm.StopComplete,
 		Output: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleAssistant, Text: text}}},
+		Usage:  u,
+	}, nil
+}
+
+// call answers with one tool call, so a test can make the model ask
+// (tools.ask, tools.secret) at a moment it picks. The call's result
+// goes out on the next request, which takes the next queued turn.
+func (a *controlAdapter) call(name string, turn controlTurn) (ullm.Response, error) {
+	if turn.Tool == "" {
+		return ullm.Response{}, fmt.Errorf("llm-control: %s: a call turn needs a tool", name)
+	}
+	args := string(turn.Args)
+	if args == "" || args == "null" {
+		args = "{}"
+	}
+	u := ullm.Usage{InputTokens: 1, OutputTokens: 1}
+	a.c.mu.Lock()
+	addAgentUsage(&a.c.usage, u)
+	n := a.c.n
+	a.c.mu.Unlock()
+	return ullm.Response{
+		ID:     fmt.Sprintf("control-%d", n),
+		Stop:   ullm.StopComplete,
+		Output: []ullm.Item{{Type: ullm.ItemToolCall, Data: ullm.ToolCall{CallID: fmt.Sprintf("control-call-%d", n), Name: turn.Tool, Arguments: args}}},
 		Usage:  u,
 	}, nil
 }

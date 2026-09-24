@@ -16,13 +16,15 @@ import (
 	"time"
 )
 
-// Turn is one queued model response. Mode is "ok", "error", "slow" or
-// "block".
+// Turn is one queued model response. Mode is "ok", "error", "slow",
+// "block" or "call" (one call of Tool with Args, e.g. tools.ask).
 type Turn struct {
-	Mode    string `json:"mode"`
-	Text    string `json:"text,omitempty"`
-	Error   string `json:"error,omitempty"`
-	DelayMS int    `json:"delay_ms,omitempty"`
+	Mode    string         `json:"mode"`
+	Text    string         `json:"text,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	DelayMS int            `json:"delay_ms,omitempty"`
+	Tool    string         `json:"tool,omitempty"`
+	Args    map[string]any `json:"args,omitempty"`
 }
 
 // Dir is the control dir the row reads when its config names none.

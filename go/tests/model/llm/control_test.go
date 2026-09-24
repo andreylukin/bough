@@ -251,3 +251,43 @@ func TestControlBlock(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+// Call answers with one tool call instead of text: the engine runs the
+// tool, and its result goes out on the next request, which takes the
+// next queued turn. Here the call is ask, answered on stdin.
+func TestControlCall(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "call", Tool: "ask", Args: map[string]any{"question": "which colour?", "options": []string{"red", "blue"}}})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "noted the colour"})
+	r.send("hello")
+	r.waitFor("[ask] which colour?")
+	r.send("2")
+	r.waitFor("[assistant] noted the colour")
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// A held turn released with a call turn makes that call, so a test can
+// hold a session in "running" and only then have the model ask.
+func TestControlBlockReleaseCall(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "never sent"})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "answer received"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	ReleaseWith(t, r.dir(), "001", Turn{Mode: "call", Tool: "ask", Args: map[string]any{"question": "go on?"}})
+	r.waitFor("[ask] go on?")
+	r.send("yes")
+	r.waitFor("[assistant] answer received")
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "never sent") {
+		t.Fatalf("held text sent despite the call release:\n%s", out)
+	}
+}
