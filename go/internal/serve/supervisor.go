@@ -27,6 +27,7 @@ import (
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -710,6 +711,8 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 		// Wait only after both pipes are drained: reaping first closes
 		// them under the readers and loses the child's last lines.
 		wg.Wait()
+		// A model test holds the lease of an exited child open here.
+		testhold.At(fmt.Sprintf("%d.drop", cmd.Process.Pid))
 		err := cmd.Wait()
 		code := 0
 		if ee := new(exec.ExitError); errors.As(err, &ee) {

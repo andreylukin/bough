@@ -18,6 +18,7 @@ import (
 
 	"github.com/andreylukin/bough"
 	"github.com/andreylukin/bough/internal/schema"
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/activity"
 	_ "github.com/andreylukin/bough/plugins/agenttools"
@@ -544,6 +545,8 @@ func main() {
 	// [cancelled]/[done] lines reach stdout before the ui row unmounts.
 	if cancelled {
 		ui.AwaitCancelled(3 * time.Second)
+		// A model test holds the exiting child here, after "cancelled".
+		testhold.At(fmt.Sprintf("%d.tail", os.Getpid()))
 	}
 	ctx.Unmount()
 	if cancelled {

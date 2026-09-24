@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -293,7 +294,16 @@ func headlessPump() {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
-	for sc.Scan() {
+	held := testhold.Dir() != ""
+	for n := 1; sc.Scan(); n++ {
+		if held {
+			// A model test decides when (and whether) each line is read.
+			go func(n int, line string) {
+				testhold.Line(n, line)
+				hlLineIn(line)
+			}(n, sc.Text())
+			continue
+		}
 		hlLineIn(sc.Text())
 	}
 
