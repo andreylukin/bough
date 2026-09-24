@@ -90,3 +90,26 @@ func TestFileKeychain(t *testing.T) {
 		t.Fatalf("resolve %q %v", v, err)
 	}
 }
+
+func TestRefreshReadsPastTheCache(t *testing.T) {
+	store, reads := fakeKeychain(t)
+	svc := Service("web", "TOKEN")
+	store[svc] = "one"
+	if v, err := Resolve(Ref(svc)); err != nil || v != "one" {
+		t.Fatalf("resolve %q %v", v, err)
+	}
+	delete(store, svc) // removed with `security`, not through Store
+	if v, err := Resolve(Ref(svc)); err != nil || v != "one" {
+		t.Fatalf("Resolve should still answer from the cache: %q %v", v, err)
+	}
+	if _, err := Refresh(Ref(svc)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Refresh answered from the cache: %v", err)
+	}
+	store[svc] = "two"
+	if v, err := Refresh(Ref(svc)); err != nil || v != "two" {
+		t.Fatalf("Refresh kept the cached miss: %q %v", v, err)
+	}
+	if v, _ := Resolve(Ref(svc)); v != "two" || *reads != 3 {
+		t.Fatalf("Refresh did not keep what it read: %q, reads %d", v, *reads)
+	}
+}

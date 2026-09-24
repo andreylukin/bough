@@ -62,6 +62,11 @@ var hostCommand = func(name string, args ...string) string {
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
+// HostGitHubToken is the host's `gh auth token`. A seam: a test that
+// runs serve in process swaps it, and never reads the host's gh login
+// (hostCommand prefers /opt/homebrew/bin/gh, so PATH cannot stand in).
+var HostGitHubToken = func() string { return hostCommand("gh", "auth", "token") }
+
 var ghToken = struct {
 	sync.Mutex
 	val string
@@ -74,8 +79,18 @@ func githubToken() string {
 	ghToken.Lock()
 	defer ghToken.Unlock()
 	if time.Since(ghToken.at) > 5*time.Minute || ghToken.val == "" {
-		ghToken.val, ghToken.at = hostCommand("gh", "auth", "token"), time.Now()
+		ghToken.val, ghToken.at = HostGitHubToken(), time.Now()
 	}
+	return ghToken.val
+}
+
+// githubTokenNow reads `gh auth token` now and keeps it for
+// githubToken. Preflight answers "would a start work now?": a
+// five-minute-old token said ok for a gh the person had just logged out.
+func githubTokenNow() string {
+	ghToken.Lock()
+	defer ghToken.Unlock()
+	ghToken.val, ghToken.at = HostGitHubToken(), time.Now()
 	return ghToken.val
 }
 

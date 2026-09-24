@@ -51,7 +51,7 @@ func Preflight(ctx context.Context, home string, rt container.Runtime, p project
 	}
 	if slices.Contains(p.Def.Identity, projectdef.IdentityGitHub) {
 		c := PreflightCheck{Kind: "gh", Name: "GitHub token", Status: PreflightOK}
-		if githubToken() == "" {
+		if githubTokenNow() == "" {
 			c.Status, c.Detail = PreflightFail, "`gh auth token` printed nothing (run: gh auth login)"
 		}
 		out = append(out, c)
@@ -63,7 +63,7 @@ func Preflight(ctx context.Context, home string, rt container.Runtime, p project
 	sort.Strings(names)
 	for _, n := range names {
 		c := PreflightCheck{Kind: "secret", Name: n, Status: PreflightOK}
-		v, err := secrets.Resolve(p.Def.Secrets[n])
+		v, err := secrets.Refresh(p.Def.Secrets[n])
 		switch {
 		case errors.Is(err, secrets.ErrNotFound):
 			c.Status, c.Detail = PreflightFail, p.Def.Secrets[n]+" not found in the keychain"

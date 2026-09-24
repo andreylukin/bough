@@ -94,6 +94,16 @@ func Resolve(ref string) (string, error) {
 	return val, nil
 }
 
+// Refresh is Resolve reading the keychain now, not the cache, and
+// keeping what it read. A check a person runs to see whether an item is
+// there (preflight) must see one they just stored or deleted by hand.
+func Refresh(ref string) (string, error) {
+	cache.Lock()
+	delete(cache.m, ref)
+	cache.Unlock()
+	return Resolve(ref)
+}
+
 // Store writes value to the keychain under service (create or update).
 // Quotes, backslashes and newlines are refused: `security -i` tokenizes
 // them.
