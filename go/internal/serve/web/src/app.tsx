@@ -1899,6 +1899,14 @@ function nativeFacts(l: Line): CallFacts {
 const tailLines = (s: string, n = 3) => s.split("\n").filter((l) => l.trim()).slice(-n);
 
 /**
+ * A running call row opened or shut by hand, by call id. The record that
+ * replaces the running row is a new row: it takes the state once, so the
+ * output you opened the call to watch does not snap shut as it lands
+ * (the ui_thread walk found it). Later mounts are the row's own default.
+ */
+const runningOpen = new Map<string, boolean>();
+
+/**
  * An engine session's call, as one row: what it did and what it cost,
  * opening onto what it printed. There is no program around it to show,
  * so the row is the call itself. While it runs it spins and keeps its
@@ -1910,6 +1918,13 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
   const d = line.data ?? {};
   const tool = str(d.tool);
   const running = callRunning(line);
+  const id = typeof d.id === "string" ? d.id : "";
+  const [handed] = useState(() => {
+    if (running || !id) return undefined;
+    const v = runningOpen.get(id);
+    runningOpen.delete(id);
+    return v;
+  });
   const canceled = d.canceled === true;
   const failed = !running && !canceled && callFailed(line);
   const why = failed && typeof d.error === "string" ? firstLine(cleanError(d.error)) : "";
@@ -1921,7 +1936,14 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
   const cmd = str(d.cmd) || line.text;
   return (
     <details className={"block thin toolcall call-native" + (failed ? " block-failed" : "")} data-seq={running ? undefined : line.seq}
-             open={current || (running && tail.length > 0) || undefined}>
+             open={(handed ?? (current || (running && tail.length > 0))) || undefined}
+             // Only a hand's toggle: the row opening itself on its first output is its default, not a choice.
+             onToggle={running && id ? (e) => {
+               if (e.target !== e.currentTarget) return;
+               if (e.currentTarget.open === (tail.length > 0)) runningOpen.delete(id); else runningOpen.set(id, e.currentTarget.open);
+             } : undefined}>
+      {/* No control inside the summary (it is one itself: axe's
+          nested-interactive), so the output's Copy sits with the output. */}
       <summary role="button">
         <span className="block-label">{running ? presentTense(callVerb(tool)) : callVerb(tool)}</span>
         {line.text && <span className="mono block-detail" title={str(d.cmd) || line.text}>{line.text}</span>}
@@ -1937,12 +1959,11 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
             <Elapsed since={line.at} title="Running" />
           </span>
         ) : <CallMeta line={line} />}
-        {output && <CopyButton text={output} what="output" />}
       </summary>
       <div className="block-body">
         {cmd && <pre className="mono call-cmd">{cmd}</pre>}
         {running ? (tail.length > 0 && <pre className="mono call-tail" aria-live="off">{tail.join("\n")}</pre>)
-          : output.trim() ? <div className="tool-output"><Code text={output} lang={tool === "view" ? langForPath(line.text) : ""} /></div>
+          : output.trim() ? <><div className="tool-output"><Code text={output} lang={tool === "view" ? langForPath(line.text) : ""} /></div><CopyButton text={output} what="output" /></>
           : <p className="tool-noresult">No output.</p>}
         {d.truncated === true && <p className="exec-note exec-note-quiet">Output shortened here: the head and tail are kept</p>}
       </div>
@@ -3014,7 +3035,11 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
   all?: { open: boolean; at: number } | null; children: React.ReactNode;
 }) {
   const key = session + ":" + seg.seq;
-  const [open, setOpen] = useState(() => segOpen.get(key) ?? defaultOpen);
+  // A live turn's fold is one fold whatever it holds: when its running
+  // call is recorded the segment takes the record's seq and mounts anew,
+  // and it used to shut on the person watching it (the ui_thread walk).
+  const liveKey = running && since ? session + ":live:" + since : "";
+  const [open, setOpen] = useState(() => segOpen.get(key) ?? (liveKey ? segOpen.get(liveKey) : undefined) ?? defaultOpen);
   const box = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (!all) return;
@@ -3024,7 +3049,7 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
   }, [all]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <details ref={box} className={"block thin work-seg" + (running ? " work-seg-live" : "")} open={open} data-open-key={"seg:" + seg.seq}
-             onToggle={(e) => { if (e.target !== e.currentTarget) return; const o = e.currentTarget.open; segOpen.set(key, o); setOpen(o); }}>
+             onToggle={(e) => { if (e.target !== e.currentTarget) return; const o = e.currentTarget.open; segOpen.set(key, o); if (liveKey) segOpen.set(liveKey, o); setOpen(o); }}>
       <summary role="button" aria-expanded={open}>
         {running && (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -5229,10 +5254,15 @@ export default function App() {
       if (ev.kind === "activity") { setActivity(ev.text === ENGINE_WAITING ? "" : ev.text); return; }
       // An engine's call carries the provider's call id (a string); the loop's per-block calls number theirs.
       const native = (ev.kind === "call" || ev.kind === "sub:call") && typeof ev.extra?.id === "string";
-      // Live only, never refetched: a native call's start and its streamed output.
+      // Live only, never refetched: a native call's start and its streamed output (a start still catches up, below).
       if (ev.kind === "call-delta" || (native && ev.extra?.phase === "start")) {
         setNativeRunning((m) => liveNative(m, ev));
-        return;
+        if (ev.kind === "call-delta") return;
+        // A start is not recorded, but it says what was: the engine sends
+        // no event for the turn's input or for the reply that asked for
+        // the call, so without this catch-up the prompt stayed a
+        // "sending" copy under its own running call, and the streamed
+        // reply stayed a preview (the ui_thread walk found both).
       }
       // A native call's end falls through: it is recorded, and the refetch below brings the row that replaces the running one.
       if (!native && (ev.kind === "call" || ev.kind === "sub:call")) {

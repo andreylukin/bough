@@ -84,7 +84,8 @@ test("MB-STREAM: the block exists and the breathing dot fades without scaling", 
   const frames = [...css.matchAll(/@keyframes breath-dot\{([^@]*?\})\}/g)].map((m) => m[1]).join("");
   expect(frames).not.toMatch(/scale|transform/);
   expect(css).not.toContain("typing-dots");
-  expect(css.match(/\.turn-sending \.prompt-text\{/g)?.length).toBe(1);
+  // One sending fade, on the words only: a faded "Show full prompt" link fell below 4.5:1.
+  expect(css.match(/\.turn-sending \.prompt-text[^{]*\{/g)).toEqual([".turn-sending .prompt-text>:not(.link){"]);
 });
 
 test("MB-WORK: the narrow popover keeps the glyph column, so a failed glyph never sits on its title", () => {
