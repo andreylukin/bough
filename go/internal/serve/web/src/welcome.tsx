@@ -220,7 +220,9 @@ export function Welcome({ onStart, onSkip, onBack }: {
     <div className="welcome scroll">
       {onBack && (
         <nav className="welcome-nav" aria-label="Welcome">
-          <button type="button" className="back" onClick={onBack} aria-label="Back to sessions">
+          {/* Leaving is as final as Skip: the page wrote #/ for the list, and
+              a reload that found the welcome unwritten put it back up. */}
+          <button type="button" className="back" onClick={() => { dismiss(); onBack(); }} aria-label="Back to sessions">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
                  strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
           </button>

@@ -152,6 +152,34 @@ func TestServeErrorsCarryStatus(t *testing.T) {
 	}
 }
 
+// A session made from the page and archived before anyone typed in it
+// stays a session: archived, listed under ?all=1, answering 200. The
+// kill used to close the child's stdin right after SIGKILL, and on
+// macOS the child often read that EOF first and shut down cleanly,
+// which deletes a history file that holds only its meta entry; the
+// archive then answered 404 and the session was gone. Found by the
+// narrow_layout model walk (go/tests/model), roughly one archive in
+// fifty, so this archives many.
+func TestArchiveKeepsAFreshSession(t *testing.T) {
+	t.Parallel()
+	s := servetest.Start(t, servetest.Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cwd := s.Dir(t, "work")
+	for i := 0; i < 80; i++ {
+		row, err := s.CreateSession(ctx, cwd, "")
+		if err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		if _, err := s.Archive(ctx, row.ID); err != nil {
+			t.Fatalf("archive %d (%s): %v", i, row.ID, err)
+		}
+		if _, _, err := s.GetSession(ctx, row.ID); err != nil {
+			t.Fatalf("session %d (%s) after archive: %v", i, row.ID, err)
+		}
+	}
+}
+
 // Eight servers up at the same moment, each on its own HOME, port and
 // token, each running a turn concurrently with the others: every one
 // sees only its own session, and its reply echoes its own prompt. All

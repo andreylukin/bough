@@ -1,0 +1,291 @@
+# The control room at phone width (max-width:720px): one pane at a time,
+# the list or the thread, never both (go/internal/serve/web/src/app.tsx,
+# `pane` and the `.app[data-pane=…]` rules in dist/index.html).
+#
+# One Phone role holds what the page decides, all of it client state:
+#
+#   pane      "list" | "thread"   which pane data-pane names
+#   view      "sessions" | "page" | "project"
+#             page is Me, Projects, Hooks and Wiki, one state: each is a
+#             route with a Back and the phone ViewNav, and nothing here
+#             tells them apart. project is one project's page.
+#   selected  a session's transcript is what the view shows (a session
+#             on sessions, a thread on the project page)
+#   empty     the server lists no session (what the welcome waits for)
+#   welcome   the welcome is still "auto": not skipped or used
+#   unseen    the open session has a finish nobody has seen
+#   overlay   "none" | "settings" | "work" | "threads" | "panel": the
+#             Settings popover (model/effort/project/rename/archive under
+#             More), the Work sheet (<=480px), the project page's Threads
+#             drawer and Project panel drawer (under 860/1080px)
+#   keyboard  the on-screen keyboard is up (visualViewport shrinks)
+#   fitted    the open overlay's bottom is inside the visual viewport
+#   backed    the last move was Back (a Reload since does not clear it:
+#             the claim is that the reload stays on the list)
+#   acked_on_list  an ack went out while the list was the pane (history)
+#
+# The URL is not a field: the page writes it from view and selected
+# (the replaceState effect), so "#/" is exactly sessions with nothing
+# selected, and Reload re-reads the pane from it.
+#
+# Left out on purpose, each a finding (see the flow's notes):
+#   - "/" (hardware keyboard) on Me or a project page sets pane=list
+#     while the view stays: .me and .prj are not .thread, so the CSS
+#     hides neither and both panes show. SearchKey is modelled only on
+#     the sessions view, where it is safe; allowing it on every view
+#     breaks OnePane.
+#   - A session arriving from elsewhere while the welcome is up turns
+#     the thread pane into the Overview, which on a phone has no Back
+#     and no ViewNav. Arrive is modelled only after the welcome is gone;
+#     allowing it while the welcome shows breaks WayBack.
+
+role Phone:
+    action Init:
+        # An empty server on a phone opens on the welcome, which lives in
+        # the thread pane (the showWelcome effect sets pane=thread).
+        self.pane = "thread"
+        self.view = "sessions"
+        self.selected = False
+        self.empty = True
+        self.welcome = True
+        self.unseen = False
+        self.overlay = "none"
+        self.keyboard = False
+        self.fitted = True
+        self.backed = False
+        self.acked_on_list = False
+
+    # --- the list pane -------------------------------------------------
+
+    atomic action OpenRow:
+        # Tap a row: openSession pushes #/s/<id> and shows the thread.
+        require self.pane == "list" and not self.empty
+        self.view = "sessions"
+        self.selected = True
+        self.pane = "thread"
+        self.backed = False
+
+    atomic action SearchKey:
+        # "/" shows the list for search and keeps the session selected;
+        # the URL still names it. Only on the sessions view (see above).
+        require self.overlay == "none" and self.view == "sessions" and self.pane == "thread" and self.selected
+        self.pane = "list"
+        self.keyboard = False
+        self.backed = False
+
+    # --- getting around ------------------------------------------------
+
+    atomic fair<strong> action Back:
+        # goList: every thread-pane route's Back (thread, pages, project,
+        # the welcome's). Clears the selection so the URL says #/.
+        require self.pane == "thread" and self.overlay == "none" and has_back(self)
+        if show_welcome(self):
+            self.welcome = False
+        self.view = "sessions"
+        self.selected = False
+        self.pane = "list"
+        self.keyboard = False
+        self.backed = True
+
+    atomic action NavPage:
+        # Phone ViewNav: Me / Projects / Hooks / Wiki. onView keeps the
+        # selection (setView only), but no page shows it and every way off
+        # a page (goList, goProject) clears it, so here it is cleared.
+        require nav_visible(self) and self.overlay == "none"
+        self.view = "page"
+        self.selected = False
+        self.pane = "thread"
+        self.keyboard = False
+        self.backed = False
+
+    atomic action NavSessions:
+        # Phone ViewNav's Sessions is goList too, but not Back.
+        require nav_visible(self) and self.overlay == "none" and self.pane == "thread"
+        self.view = "sessions"
+        self.selected = False
+        self.pane = "list"
+        self.keyboard = False
+        self.backed = False
+
+    atomic action OpenProject:
+        # A project on the Projects page: goProject clears the selection.
+        require self.view == "page" and self.overlay == "none"
+        self.view = "project"
+        self.selected = False
+        self.pane = "thread"
+        self.backed = False
+
+    atomic action OpenThread:
+        # The project page shows a thread (showProjectSession). The home's
+        # composer, which had the keyboard, leaves the page with it.
+        require self.view == "project" and self.overlay == "none" and not self.selected and not self.empty
+        self.selected = True
+        self.keyboard = False
+        self.backed = False
+
+    atomic action Reload:
+        # The hash decides: "#/" is the list, anything else a thread-pane
+        # route; then the welcome effect, if the server is still empty.
+        if self.view == "sessions" and not self.selected:
+            self.pane = "list"
+        else:
+            self.pane = "thread"
+        if show_welcome(self) and self.view == "sessions" and not self.selected:
+            self.pane = "thread"
+        self.overlay = "none"
+        self.keyboard = False
+        self.fitted = True
+
+    # --- the welcome ---------------------------------------------------
+
+    atomic action WelcomeStart:
+        # Start on the welcome creates a session and opens it.
+        # welcome stays "auto" in the page, but with a session listed it
+        # shows nothing; cleared here so the two are one state.
+        require show_welcome(self) and self.pane == "thread" and self.view == "sessions" and not self.selected
+        self.empty = False
+        self.welcome = False
+        self.selected = True
+        self.backed = False
+
+    atomic action Arrive:
+        # A session made elsewhere (the CLI, another tab) lands on the list.
+        # Only once the welcome is gone (see above).
+        require self.empty and not self.welcome
+        self.empty = False
+
+    # --- overlays and the keyboard -------------------------------------
+
+    atomic action OpenSettings:
+        # More -> Session settings. Opening moves focus into the popover,
+        # which drops the keyboard, and fits it to the visual viewport.
+        require self.overlay == "none" and self.pane == "thread" and self.selected and self.view != "page"
+        self.overlay = "settings"
+        self.keyboard = False
+        self.fitted = True
+        self.backed = False
+
+    atomic action OpenWork:
+        # The Work sheet at <=480px: fixed, 80dvh, which does not follow
+        # the keyboard; opening focuses its heading, so the keyboard drops.
+        require self.overlay == "none" and self.pane == "thread" and self.selected and self.view == "sessions"
+        self.overlay = "work"
+        self.keyboard = False
+        self.fitted = False
+        self.backed = False
+
+    atomic action OpenThreads:
+        # The Threads drawer: its button shows only beside an open thread.
+        require self.overlay == "none" and self.view == "project" and self.selected
+        self.overlay = "threads"
+        self.keyboard = False
+        self.fitted = True
+        self.backed = False
+
+    atomic action OpenPanel:
+        # The Project panel drawer (MEMORY.md editor): inside .app, whose
+        # height is --app-height, the visual viewport's.
+        require self.overlay == "none" and self.view == "project"
+        self.overlay = "panel"
+        self.keyboard = False
+        self.fitted = True
+        self.backed = False
+
+    atomic fair action CloseOverlay:
+        # Close, Escape, a tap outside, or the drawers' scrim.
+        require self.overlay != "none"
+        self.overlay = "none"
+        self.keyboard = False
+        self.fitted = True
+
+    atomic action KeyboardUp:
+        # Something takes typing: the composer (a session, or the project
+        # page's), a control in Settings, the panel's editor. The Settings
+        # popover refits on visualViewport resize; the panel follows
+        # --app-height. The Work sheet and Threads drawer hold no input.
+        require not self.keyboard and can_type(self)
+        self.keyboard = True
+        if self.overlay != "none":
+            self.fitted = self.overlay == "settings" or self.overlay == "panel"
+
+    atomic action KeyboardDown:
+        require self.keyboard
+        self.keyboard = False
+
+    # --- the server ----------------------------------------------------
+
+    atomic action Finish:
+        # A turn in the session ends while the list is the pane, the case
+        # NoAckOnList is about; a finish while viewing is acked at once.
+        require not self.empty and not self.unseen and self.pane == "list"
+        self.unseen = True
+
+    atomic fair action Ack:
+        # The page acks an unseen finish only while its transcript is on
+        # screen: viewing needs pane=thread on a phone.
+        require self.unseen and viewing(self)
+        self.unseen = False
+        if self.pane == "list":
+            self.acked_on_list = True
+
+
+def show_welcome(a):
+    return a.welcome and a.empty
+
+def nav_visible(a):
+    # The phone ViewNav: on the list, and on every view but sessions.
+    return a.pane == "list" or a.view != "sessions"
+
+def has_back(a):
+    # Thread, pages and project all pass onBack=goList; the welcome has
+    # one at phone width; the Overview (sessions, nothing selected, no
+    # welcome) has none.
+    if a.view != "sessions":
+        return True
+    return a.selected or show_welcome(a)
+
+def can_type(a):
+    if a.overlay == "settings" or a.overlay == "panel":
+        return True
+    if a.overlay != "none" or a.pane != "thread":
+        return False
+    return (a.view == "sessions" and a.selected) or a.view == "project"
+
+def viewing(a):
+    # app.tsx `viewing`: a row, on sessions or project, and on a phone
+    # only while the thread is the pane.
+    return a.selected and (a.view == "sessions" or a.view == "project") and a.pane == "thread"
+
+
+action Init:
+    phone = Phone()
+
+# A phone never shows the list and a main pane at once. The CSS hides
+# only .thread under data-pane=list, and Me/project pages are not .thread,
+# so the list pane is only ever the sessions view.
+always assertion OnePane:
+    return phone.pane == "thread" or phone.view == "sessions"
+
+# Back lands on the list with nothing selected, so the URL is #/ and a
+# reload stays on the list.
+always assertion BackLandsOnList:
+    return not phone.backed or (phone.pane == "list" and phone.view == "sessions" and not phone.selected)
+
+# Nothing is acked while only the list is visible.
+always assertion NoAckOnList:
+    return not phone.acked_on_list
+
+# An overlay never runs under the on-screen keyboard.
+always assertion OverlayAboveKeyboard:
+    return not (phone.keyboard and phone.overlay != "none" and not phone.fitted)
+
+# Every thread-pane route offers a way back: Back, or the phone ViewNav,
+# or (under an overlay) its close.
+always assertion WayBack:
+    return phone.pane == "list" or phone.overlay != "none" or has_back(phone) or nav_visible(phone)
+
+# Whatever the route, a person who keeps taking the way back gets to the
+# list: Back is strongly fair (enabled again and again, eventually tapped)
+# and an overlay is eventually closed.
+always eventually assertion ListReachable:
+    return phone.pane == "list"

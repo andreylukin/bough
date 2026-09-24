@@ -5382,8 +5382,9 @@ export default function App() {
       : view === "me" ? "#/me"
       // The session the page shows (ProjectView's onShow), not the one it
       // was opened on: from the focus, switching threads or '‹ All
-      // threads' left the URL on the first thread, so a reload or a
-      // shared link reopened that one.
+      // threads' left the URL on the first thread, and a thread opened
+      // from the project's home was in no URL, so a reload or a shared
+      // link lost it.
       : view === "project" ? (selected ? `#/projects/${projectSlug}/t/${selected}` : `#/projects/${projectSlug}`)
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
