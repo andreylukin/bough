@@ -142,6 +142,11 @@ type Row struct {
 	// Error is a failed background agent's first error line, cleaned;
 	// only the children listing fills it.
 	Error string `json:"error,omitempty"`
+	// Unsaved says the session's history is not being saved: its child
+	// holds entries its file lacks (a full disk). It outlives the child
+	// that held them, whose loss is then for good, until a later child's
+	// append lands.
+	Unsaved bool `json:"unsaved,omitempty"`
 }
 
 // AgentCount is a parent's background agents.
@@ -313,7 +318,13 @@ func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
 // re-reading a long session.
 func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	in, ok := a.info(id)
+	in, ok, err := a.lookup(id)
+	if err != nil {
+		// The sessions dir could not be read: whether the session
+		// exists is unknown, and a 404 told the page it was gone.
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: session %q: %w", id, err))
+		return
+	}
 	if !ok {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
 		return
@@ -697,6 +708,7 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 		Cache:      d.cacheFor(model),
 		Trouble:    trouble,
 		Unseen:     d.unseen(st, trouble, meta.Ack, now, in.Origin),
+		Unsaved:    a.sup.Unsaved(in.ID),
 
 		TestsFailed: d.testsFailed,
 		TestsAt:     d.testsAt,
@@ -780,19 +792,25 @@ func (a *API) writeRow(w http.ResponseWriter, code int, id string) {
 }
 
 func (a *API) info(id string) (history.SessionInfo, bool) {
+	in, ok, _ := a.lookup(id)
+	return in, ok
+}
+
+// lookup is info that tells a failed listing from an unknown id.
+func (a *API) lookup(id string) (history.SessionInfo, bool, error) {
 	if id == "" {
-		return history.SessionInfo{}, false
+		return history.SessionInfo{}, false, nil
 	}
 	infos, err := a.sup.List()
 	if err != nil {
-		return history.SessionInfo{}, false
+		return history.SessionInfo{}, false, err
 	}
 	for _, in := range infos {
 		if in.ID == id {
-			return in, true
+			return in, true, nil
 		}
 	}
-	return history.SessionInfo{}, false
+	return history.SessionInfo{}, false, nil
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

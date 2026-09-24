@@ -243,6 +243,10 @@ func hlPrint(ev Event) {
 		// wiki ingest updated its pages and still exited 1).
 		hlTurnErr.Store(true)
 		hlLine(hlErr, "error", ev.Text, nil)
+	case "history":
+		// Whether appends land ({"saved"}): serve keeps it for the page.
+		// Not an "error": the turn itself did not fail.
+		hlLine(hlOut, ev.Kind, ev.Text, ev.Data)
 	case "call", "sub:call":
 		// The call's record (tool, id, phase, ms, exit, add/del): serve
 		// renders it, so it rides along. Plain output prints a call once,
