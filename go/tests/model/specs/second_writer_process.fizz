@@ -245,9 +245,11 @@ role Host:
         self.shown = status_of(self)
 
     # `bough -r S` in a terminal. F4: refused while a serve child holds
-    # S. The resume closes a dangling turn as cancelled.
+    # S. The resume closes a dangling turn as cancelled. A queued agent
+    # has no history file until its drain starts it, so there is nothing
+    # to resume yet (`bough -r S` says "no session").
     atomic action CliResume:
-        require self.cli == "none" and not self.akid and not self.bkid
+        require self.cli == "none" and not self.akid and not self.bkid and self.task == "started"
         self.cli = "idle"
         self.turn = "closed"
         self.shown = status_of(self)
@@ -279,6 +281,10 @@ def status_of(h):
         kid = h.bkid
     else:
         return "offline"
+    # A queued agent is listed as queued (the serve's queue, not its
+    # history, which it does not have yet); Send is not offered.
+    if h.task == "queued":
+        return "queued"
     if h.turn == "closed":
         return "done"
     if kid:
