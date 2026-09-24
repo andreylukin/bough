@@ -115,7 +115,9 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
 
   return (
     <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen} titles={titles} onRetry={load}
-      onSave={async (name: OrbFile, text: string) => { await api.putOrbFile(project.slug, name, text); load(); }}
+      // The list re-reads too: a saved project.yml can fix (or rename) the
+      // project this page lists, and it said "didn't parse" until the poll.
+      onSave={async (name: OrbFile, text: string) => { try { await api.putOrbFile(project.slug, name, text); } finally { load(); await onChanged(); } }}
       onBuild={() => { void run(() => api.buildOrb(project.slug)); }}
       onStopOrb={async (session) => { if (await confirmStopOrb(rows.find((r) => r.id === session)?.jobs)) void run(() => api.stopOrb(session)); }}
       onRemoveOrb={(session) => { void run(async () => {
@@ -446,6 +448,9 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                 <button className="proj-fold" aria-expanded={!folded.has(p.slug)} onClick={() => fold(p.slug)}>
                   <h2>{p.name}</h2>
                   <span className="num proj-count">{countLabel(p.slug, rs, p.orb?.repos)}</span>
+                  {/* It still lists (its name falls back to the slug), so say why
+                      it reads "alpha": the fix is the Orb section's project.yml. */}
+                  {p.error && <span className="proj-count is-failed proj-bad" title={p.error}>project.yml didn’t parse</span>}
                   <OrbUp n={upBy.get(p.slug) ?? 0} />
                   <Chevron />
                 </button>
