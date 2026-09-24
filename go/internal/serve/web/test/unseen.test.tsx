@@ -55,3 +55,12 @@ test("the sidebar marks an unseen finish with the same dot, and says it in words
   expect(html).toContain("Done, not seen yet");
   expect(side("u1")).not.toContain("unseen-dot");
 });
+
+test("the row kept as your place after going back still shows its dot until the ack lands", () => {
+  // Home marks the session you left (selected), but nothing is on screen
+  // (viewing ""): leaving before the ack answered must not hide the dot.
+  const html = renderToStaticMarkup(
+    <Sidebar rows={[fresh, seen]} selected="u1" viewing="" onSelect={noop} query="" onQuery={noop} showArchived={false} onToggleArchived={noop} />,
+  );
+  expect(html.match(/class="unseen-dot"/g)?.length).toBe(1);
+});
