@@ -141,6 +141,10 @@ role Session:
 
     # Stop (Esc or the button) while the turn is live. It records which
     # unlanded rows it may have swallowed; a running turn is cancelled.
+    # A turn stopped before any reply puts its prompt back in an empty
+    # composer (stoppedPrompt), as Start does for a held one; one that
+    # already replied (a steer carried it past a Finish) does not.
+    # Whether it replied is not a field here, hence the choice.
     atomic action Stop:
         live = self.live()
         require live and self.stops < MAX_STOPS
@@ -149,6 +153,11 @@ role Session:
         self.stop_steer = self.steer == "pending"
         if self.status == "running":
             self.status = "idle"
+            if self.draft == "":
+                # Through a local: fizz 0.5.3 forks on `self.draft =
+                # any [...]` but keeps the old value on both branches.
+                restored = any ["", "msg"]
+                self.draft = restored
 
     # ---- the page and the child ----
 
@@ -172,9 +181,14 @@ role Session:
         else:
             self.status = "running"
 
-    # A pending steer lands at the running turn's next boundary.
+    # A pending steer lands at the running turn's next boundary, or in a
+    # turn a Stop cancelled: the engine records the steers queued before
+    # a cancel first (internal/unreal/session/actor.go cancelTurn), so
+    # the page shows it landed, and the model reads it with the next
+    # input.
     atomic fair action SteerLands:
-        require self.status == "running" and self.steer == "pending"
+        require self.status == "running" or self.stop_steer
+        require self.steer == "pending"
         self.steer = "none"
         self.stop_steer = False
 
