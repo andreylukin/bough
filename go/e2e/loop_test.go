@@ -45,6 +45,7 @@ nodes:
 // 1), and with fail routed back to the coder it passes on the second
 // visit (exit 0). Project mode is not covered here: e2e fakes no orbs.
 func TestLoopLocalEchoCheck(t *testing.T) {
+	t.Parallel()
 	home, cwd, _ := sandbox(t, launchOpts{})
 	extra := []string{"BOUGH_WEB_ADDR=127.0.0.1:0"}
 
@@ -153,6 +154,7 @@ nodes:
 `
 
 func TestLoopVerdictReplay(t *testing.T) {
+	t.Parallel()
 	home, cwd, _ := sandbox(t, launchOpts{cwd: map[string]string{"pipeline.yml": loopVerdictYML}})
 	extra := []string{"BOUGH_WEB_ADDR=127.0.0.1:0"}
 	for _, c := range []struct {
