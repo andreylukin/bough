@@ -4699,12 +4699,13 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 <p className="send-failed-prompt">{failed.text}</p>
                 <span className="send-failed-meta">
                   {failed.at && <span className="num">Tried {new Date(failed.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</span>}
-                  <button className="link" onClick={() => drop(failed)}>Discard</button>
+                  <button className="link" onClick={() => { drop(failed); composer.current?.focus(); }}>Discard</button>
                 </span>
               </div>
             </details>
             <span className="send-failed-actions">
-              <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer, failed.ask, failed)}>Retry</button>
+              {/* The row goes with the button that had focus: focus lands in the composer, never on the page. */}
+              <button className="btn" disabled={busy} onClick={() => { void deliver(failed.text, failed.answer, failed.ask, failed); composer.current?.focus(); }}>Retry</button>
               {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
               <button className="btn composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
                 onClick={() => { toDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>

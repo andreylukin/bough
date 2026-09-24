@@ -74,9 +74,10 @@ export function SkillPicker({ onPick, disabled = false }: { onPick: (name: strin
                   {s.summary && <span className="skill-sum">{s.summary}</span>}
                 </button>
               ))}
+              {/* Retry goes with the line it is on: focus returns to the filter, or it fell out of the dialog. */}
               {hits.length === 0 && (
                 <p className="skills-empty" role="status">
-                  {error ? <>Couldn’t load skills. <button className="link" onClick={retry}>Retry</button></>
+                  {error ? <>Couldn’t load skills. <button className="link" onClick={() => { retry(); field.current?.focus(); }}>Retry</button></>
                     : !all ? (slow ? <><Spinner /> Loading skills…</> : "")
                     : all.length === 0 ? "No skills installed. Create ~/.claude/skills/<name>/SKILL.md"
                     : `No skills match “${q.trim()}”.`}

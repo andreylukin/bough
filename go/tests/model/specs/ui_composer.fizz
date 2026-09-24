@@ -375,10 +375,13 @@ role Composer:
     # ---- the failure row ----
 
     # Retry resends the same request (a steer if A is live meanwhile).
-    # Archived, the server refuses it and the row stays.
+    # Archived, the server refuses it and the row stays. The row goes
+    # with the button that was pressed, and focus goes to the composer
+    # rather than falling to the page (Discard likewise).
     atomic action Retry:
         require self.session == "a" and self.failed and self.status != "archived"
         self.failed = False
+        self.focus = "composer"
         live = self.live()
         if not live:
             self.pending = True
@@ -396,6 +399,7 @@ role Composer:
     atomic action Discard:
         require self.session == "a" and self.failed
         self.failed = False
+        self.focus = "composer"
         self.view()
 
     # ---- archive and switching ----
