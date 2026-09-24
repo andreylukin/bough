@@ -1,0 +1,5 @@
+
+å{"channel_messages":{},"channels":{},"current":0,"failedInvariants":null,"name":"yield","returns":"{}","roles":null,"state":{"door":"closed","locked":false},"stats":{"totalActions":0,"counts":{}},"threads":[],"witness":[[false]]}
+é{"channel_messages":{},"channels":{},"current":0,"failedInvariants":null,"name":"yield","returns":"{}","roles":[],"state":{"door":"open","locked":false},"stats":{"totalActions":1,"counts":{"Open":1}},"threads":[],"witness":[[false]]}
+ê{"channel_messages":{},"channels":{},"current":0,"failedInvariants":null,"name":"yield","returns":"{}","roles":[],"state":{"door":"closed","locked":true},"stats":{"totalActions":1,"counts":{"Lock":1}},"threads":[],"witness":[[false]]}
+¨{"channel_messages":{},"channels":{},"current":0,"failedInvariants":null,"name":"Slam","returns":"{}","roles":[],"state":{"door":"closed","locked":false},"stats":{"totalActions":2,"counts":{"Open":1,"Slam":1}},"threads":[{"id":13,"stack":[{"fileIndex":0,"name":"Slam","pc":"Actions[5].Block.Stmts[2].any","scope":{"loopRange":null,"parent":null,"skipstmts":null,"vars":"{}"},"vars":"{}"}],"fairness":1}],"witness":[[false]]}

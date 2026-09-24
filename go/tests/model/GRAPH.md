@@ -129,6 +129,24 @@ What that means for a consumer:
   on the violating one (seen in the failing run's `nodes_errors.pb`).
 - The error-path `adjacency_lists_errors.pb` links carry no `type`.
 
+### Forks inside an action
+
+Observed on [`testdata/Door.fizz`](testdata/Door.fizz), whose atomic
+`Slam` ends in `locked = any [True, False]`. The action link goes to an
+**intermediate node** whose `name` is the action (`"Slam"`, not
+`"yield"`) and whose `state` is still the pre-choice value; the choice
+links out of it carry **no `type`** and are named after the choice:
+
+```
+0 yield {closed,false}  -Open->  1 yield {open,false}
+1                       -Slam->  3 Slam  {closed,false}   type "action"
+3  -Any:locked=True->  2 yield {closed,true}               type ""
+3  -Any:locked=False-> 0                                   type ""
+```
+
+So an abstract step (action, observed state) is one `action` link plus the
+untyped links after it, matched at the settled `yield` node.
+
 ### The only JSON graph: `error-graph.json`
 
 Written on failure only. It is the failing path, a JSON array of links, each
@@ -218,3 +236,17 @@ tags (pseudo-versions only). The next lib commit, `ff30d4195ab2`
   `mbt/` has only `generator/` and `lib/`, and a code search there for
   `FizzMo` finds nothing. We can run and redistribute the binaries under
   Apache-2.0 but cannot build or patch them.
+
+## Consumers in this tree
+
+- `go/tests/web/model/gen.ts <run dir> [out.json]` (node strips the
+  types; `npm run test:model` in `go/tests/web`): emits paths that cover
+  every link, each target reached by its BFS-shortest prefix and extended
+  through forks to a settled node, with an abstract `trace` per path and a
+  states/transitions coverage report.
+- `go/tests/model/tracecheck`: `Load(runDir)` then `Check(steps)` returns
+  the first step the graph does not allow (action not enabled, or no
+  reachable state matches the observed fields).
+- Fixtures: `testdata/light/` and `testdata/door/` are real v0.5.3 run
+  dirs; `testdata/door/paths.json` is the generator's output, which the
+  tracecheck test replays.

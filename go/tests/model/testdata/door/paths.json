@@ -1,0 +1,138 @@
+{
+  "paths": [
+    {
+      "target": 5,
+      "links": [
+        0,
+        3,
+        5
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "door": "closed",
+            "locked": false
+          }
+        },
+        {
+          "action": "Open",
+          "state": {
+            "door": "open",
+            "locked": false
+          }
+        },
+        {
+          "action": "Slam",
+          "state": {
+            "door": "closed",
+            "locked": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 6,
+      "links": [
+        0,
+        3,
+        6
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "door": "closed",
+            "locked": false
+          }
+        },
+        {
+          "action": "Open",
+          "state": {
+            "door": "open",
+            "locked": false
+          }
+        },
+        {
+          "action": "Slam",
+          "state": {
+            "door": "closed",
+            "locked": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 2,
+      "links": [
+        0,
+        2
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "door": "closed",
+            "locked": false
+          }
+        },
+        {
+          "action": "Open",
+          "state": {
+            "door": "open",
+            "locked": false
+          }
+        },
+        {
+          "action": "Close",
+          "state": {
+            "door": "closed",
+            "locked": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 4,
+      "links": [
+        1,
+        4
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "door": "closed",
+            "locked": false
+          }
+        },
+        {
+          "action": "Lock",
+          "state": {
+            "door": "closed",
+            "locked": true
+          }
+        },
+        {
+          "action": "Unlock",
+          "state": {
+            "door": "closed",
+            "locked": false
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 4,
+      "total": 4,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 7,
+      "total": 7,
+      "uncovered": []
+    }
+  }
+}
