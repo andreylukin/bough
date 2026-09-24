@@ -48,8 +48,19 @@ func TestHeadlessProjectSessionExecsThroughOrb(t *testing.T) {
 		}
 	}
 	yml := "repos:\n  - path: " + repo + "\n    branch: main\n"
-	out := runHeadless(t, launchOpts{from: b, sets: []string{"orb.runtime=fake"}, args: []string{"--project", "demo"},
-		home: map[string]string{".bough/projects/demo/project.yml": yml, ".bough/projects/demo/setup.sh": "true\n"}}, "SYSTEM!", "CODE!")
+	p := launchHeadless(t, launchOpts{from: b, sets: []string{"orb.runtime=fake"}, args: []string{"--project", "demo"},
+		home: map[string]string{".bough/projects/demo/project.yml": yml, ".bough/projects/demo/setup.sh": "true\n"}})
+	// One turn at a time: a line sent while SYSTEM!'s turn runs steers
+	// it, and the steered turn drops the prompt reply as stale, so the
+	// section went missing whenever CODE! beat that turn's first block.
+	p.send("SYSTEM!")
+	p.waitFor("[done]")
+	p.send("CODE!")
+	p.closeStdin()
+	if code := p.waitExit(); code != 0 {
+		t.Fatalf("exit code %d; output:\n%s", code, p.out.String())
+	}
+	out := p.out.String()
 	mustContain(t, out, "Project session: demo", "hi from codemode")
 	mustNotContain(t, out, "Session mode: local", "orb not ready")
 }
