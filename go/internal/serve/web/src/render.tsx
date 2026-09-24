@@ -417,7 +417,8 @@ export function groupTurns(lines: Line[]): Turn[] {
     }
     // Turn summaries live in the sidebar's turn log, not the transcript.
     // The engine entry is the coordinator's build record: provenance for tools, not conversation.
-    if (l.kind === "meta" || l.kind === "origin" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model" || l.kind === "engine") continue;
+    // A stored notice is shown on its own (storedNotices), then as its wake turn: never as a turn of its own.
+    if (l.kind === "meta" || l.kind === "origin" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model" || l.kind === "engine" || l.kind === "notice" || l.kind === "notice-delivered") continue;
     // R3-C: a steer the open turn took belongs to that turn, not a new one.
     if (l.kind === "input" && l.data?.steer && cur?.prompt) { cur.body.push(l); continue; }
     // A background call's end is recorded between turns, just before the
@@ -715,6 +716,17 @@ export function cleanError(text: string): string {
 
 /** "[agent <title> · <id> finished] <reply>": the note a background agent leaves when it ends. */
 export const isAgentNotice = (l: Line) => l.kind === "job" && /^\[agent [^\]]* (?:finished|failed|stopped)\]/.test(l.text ?? "");
+
+/**
+ * Reports serve stored for a session with no process ("notice"), as the
+ * job lines a live session records them as, until its loop takes them
+ * ("notice-delivered") and they become its wake turn. Without this, a
+ * parent that was not running showed none of its agents' reports.
+ */
+export function storedNotices(lines: Line[]): Line[] {
+  const taken = new Set(lines.filter((l) => l.kind === "notice-delivered").map((l) => String(l.data?.id ?? "")));
+  return lines.filter((l) => l.kind === "notice" && !taken.has(String(l.data?.id ?? ""))).map((l) => ({ ...l, kind: "job" }));
+}
 
 const jobFailed = (l: Line) => {
   const d = l.data ?? {};
