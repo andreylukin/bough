@@ -137,7 +137,7 @@ export function agentReports(lines: Line[]): Map<string, string> {
  * "Stopping…" until the worker's own record ends it (a natural outcome
  * wins), or 15s pass without one.
  */
-export function useStopStore(byKey: Map<string, Worker>, review: ReturnType<typeof useReviewed>) {
+export function useStopStore(byKey: Map<string, Worker>, review: ReturnType<typeof useReviewed>, onStopped?: () => void) {
   const [stops, setStops] = useState<Record<string, StopEntry>>({});
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const requestStop = useCallback((w: Worker, fromWork?: boolean) => {
@@ -145,11 +145,14 @@ export function useStopStore(byKey: Map<string, Worker>, review: ReturnType<type
     clearTimeout(timers.current.get(w.key));
     timers.current.set(w.key, setTimeout(() => setStops((m) => (m[w.key]?.state === "stopping" ? { ...m, [w.key]: { ...m[w.key], state: "timeout" } } : m)), 15_000));
     const req = w.kind === "job" ? api.killJob(w.session, Number(w.id)) : api.stopAgent(w.id);
+    // A stopped queued agent leaves no process and no event behind: only
+    // a fresh read of the agents shows it gone.
+    req.then(() => onStopped?.(), () => {});
     req.catch(() => {
       clearTimeout(timers.current.get(w.key));
       setStops((m) => ({ ...m, [w.key]: { state: "error", fromWork } }));
     });
-  }, []);
+  }, [onStopped]);
   // The worker's own record ended it: the stop is over, whatever the outcome.
   useEffect(() => {
     const done = Object.entries(stops).filter(([k, s]) => s.state !== "error" && byKey.get(k) && byKey.get(k)!.life !== "running" && byKey.get(k)!.life !== "queued");
@@ -336,7 +339,7 @@ export type ChildState = "idle" | "loading" | "ok" | "error";
  * its counts or transcript move. Only a session that says it started
  * agents asks; the others have none to load.
  */
-export function useChildren(row: Row, rows: Row[], tick: number): { children: Row[] | null; state: ChildState; retry: () => void } {
+export function useChildren(row: Row, rows: Row[], tick: number): { children: Row[] | null; state: ChildState; retry: () => void; refresh: () => void } {
   const has = Boolean(row.agents?.total) || rows.some((r) => r.spawnedBy === row.id);
   const [children, setChildren] = useState<Row[] | null>(null);
   const [state, setState] = useState<ChildState>(has ? "loading" : "idle");
@@ -354,7 +357,9 @@ export function useChildren(row: Row, rows: Row[], tick: number): { children: Ro
     return () => { on = false; clearTimeout(t); };
   }, [row.id, has, sig, nonce]);
   const retry = useCallback(() => { setState("loading"); setNonce((n) => n + 1); }, []);
-  return { children, state, retry };
+  // Read again, keeping the list on screen meanwhile.
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  return { children, state, retry, refresh };
 }
 
 /* ---------------- live region ---------------- */
@@ -536,7 +541,7 @@ export function WorkDialog({ workers, sheet, anchor, childState, onRetryChildren
         </button>
       </header>
       {paused && <p className="work-paused" role="status"><span className="work-dot work-dot-amber" aria-hidden="true" />Updates paused · Reconnecting…</p>}
-      <div className="work-body" data-stops={shown.some((w) => w.live && (w.canStop || ctx?.stops[w.key])) ? "" : undefined}>
+      <div className="work-body" data-stops={shown.some((w) => (w.live || w.life === "queued") && (w.canStop || ctx?.stops[w.key])) ? "" : undefined}>
         {(filter === "all" || filter === "agent") && (childState === "loading" && !agents.length
           ? <p className="work-note work-loading" role="status"><WorkGlyph life="running" size={12} /><span>Loading background agents…</span></p>
           : childState === "error"
@@ -619,7 +624,7 @@ function WorkRow({ w, now, parent, inReview, inHistory, open, onToggle, onPin, o
         ].filter(Boolean).map((node, i) => <Fragment key={i}>{i > 0 && <span className="work-sep"> · </span>}{node}</Fragment>)}
       </div>
       <span className="work-row-time" data-ticking={w.ms === undefined && ms !== undefined ? "" : undefined}>{took}</span>
-      <div className="work-row-stop">{w.live && <StopWorkButton w={w} fromWork />}</div>
+      <div className="work-row-stop">{(w.live || w.life === "queued") && <StopWorkButton w={w} fromWork />}</div>
       {open && (
         <div className="work-row-preview" id={previewId}>
           <Preview w={w} parent={parent} />

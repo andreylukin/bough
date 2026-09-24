@@ -266,7 +266,8 @@ export function agentsFromRows(parent: Row, rows: Row[], children?: Row[] | null
     // An idle child that is no longer live ended its work.
     w.life = queued ? "queued" : AGENT_LIFE[c.status] ?? (c.status === "idle" ? (c.live ? "running" : "finished") : "unknown");
     if (TERMINAL.has(w.life)) w.endedAt = c.lastAt;
-    w.canStop = c.live && w.life === "running";
+    // A queued agent has no process, but serve can still drop it from its queue.
+    w.canStop = (c.live && w.life === "running") || w.life === "queued";
     if (w.life === "failed" && c.error) w.error = c.error;
     out.push(w);
   }

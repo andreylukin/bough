@@ -61,3 +61,7 @@ test("MB-WORK: the Work button carries a glyph, and a job head dots only its fai
   const head = renderToStaticMarkup(<JobGroupHead workers={[w("1", { life: "running" }), w("2", { life: "failed" })]} />);
   expect(head).toContain('<span class="work-dot" aria-hidden="true"></span>1 failed');
 });
+
+test("MB-WORK: a queued agent's row has Stop, though it is not live", () => {
+  expect(dialog([w("1", { life: "queued", live: false, canStop: true })])).toContain('aria-label="Stop agent"');
+});

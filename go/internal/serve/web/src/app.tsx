@@ -4048,7 +4048,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     // A child's report to this session is its result; nothing else carries one.
     .map((w) => (w.kind === "agent" && reports.has(w.id) ? { ...w, result: reports.get(w.id) } : w)), [row, lines, turns, rows, kids.children, reports]);
   const byKey = useMemo(() => new Map(workers.map((w) => [w.key, w])), [workers]);
-  const { stops, requestStop } = useStopStore(byKey, review);
+  const { stops, requestStop } = useStopStore(byKey, review, kids.refresh);
   const workCtx = useMemo<WorkCtx>(() => {
     const jobs = new Map(workers.filter((w) => w.kind === "job").map((w) => [w.id, w]));
     const jobFirst = new Map<string, number>();
