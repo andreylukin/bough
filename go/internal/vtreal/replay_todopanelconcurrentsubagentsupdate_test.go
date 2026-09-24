@@ -108,7 +108,7 @@ func todoPanelConcurrentSubagentsUpdateAssert(t *testing.T, a *app, where string
 	if got != want {
 		t.Fatalf("%s: panel is not the final todo state\ngot:\n%s\nwant:\n%s\nscreen:\n%s", where, got, want, s)
 	}
-	a.check(where)
+	a.checkOn(where, s)
 }
 
 // todoPanelConcurrentSubagentsUpdateHistory is the newest session file.

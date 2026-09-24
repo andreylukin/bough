@@ -48,8 +48,7 @@ func TestMultiBlockReplyRunsEveryBlock(t *testing.T) {
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
-	a.check("after turn")
-	screen := a.settled()
+	screen := a.check("after turn")
 	h := firstBlockOnlyTexts(a)
 	codes, results, assistant := h["code"], h["result"], h["assistant"]
 

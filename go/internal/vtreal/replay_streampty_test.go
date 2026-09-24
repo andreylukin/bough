@@ -172,7 +172,7 @@ func TestStreamPtySlowStreamDraft(t *testing.T) {
 	if !strings.Contains(s, "SLOWEND") {
 		t.Errorf("reply incomplete:\n%s", s)
 	}
-	a.check("after slow stream with draft")
+	a.checkOn("after slow stream with draft", s)
 }
 
 // A stream that stalls for 2.5 s between two deltas and then ends: the

@@ -196,7 +196,7 @@ func TestSubagentOverlayScrollWhileParentStreams(t *testing.T) {
 			if strings.Contains(s, "W2-LINE-") {
 				t.Errorf("subagent transcript leaked into the parent view:\n%s", s)
 			}
-			a.check("back at the parent")
+			a.checkOn("back at the parent", s)
 		})
 	}
 }

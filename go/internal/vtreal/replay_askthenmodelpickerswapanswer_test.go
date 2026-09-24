@@ -143,7 +143,7 @@ func askThenModelPickerSwapAnswerRun(t *testing.T) {
 	if n := len(bodies()); n != 0 {
 		t.Fatalf("the swap alone sent %d requests to the new provider", n)
 	}
-	a.check("picker closed, ask pending")
+	a.checkOn("picker closed, ask pending", s)
 
 	// Answer by number: the turn finishes on the tape, then the next
 	// turn is the new provider's.

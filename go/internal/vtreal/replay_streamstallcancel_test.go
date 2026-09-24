@@ -73,7 +73,7 @@ func TestStreamStallCancel(t *testing.T) {
 	if strings.Contains(s, "ALPHAEND") {
 		t.Fatalf("the reply finished despite the stall and cancel:\n%s", s)
 	}
-	a.check("after stalled cancel")
+	a.checkOn("after stalled cancel", s)
 	if !a.waitDone(1, 5*time.Second) {
 		t.Fatalf("no done/cancelled entry in history after the cancel")
 	}

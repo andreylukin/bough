@@ -102,8 +102,7 @@ func TestSteerMidTurn(t *testing.T) {
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
-	a.check("after steered turn")
-	screen := a.settled()
+	screen := a.check("after steered turn")
 
 	t.Run("TestSteerLanded", func(t *testing.T) {
 		if !strings.Contains(screen, "❯ "+steerText+" (steer)") || strings.Contains(screen, "pending") {

@@ -143,7 +143,7 @@ func TestTodoPanelWithRewindAndResume(t *testing.T) {
 		if !strings.Contains(s, "[x] 2 review the diff") {
 			t.Fatalf("resumed panel is not the turn-3 list:\n%s", s)
 		}
-		a.check("resumed at turn 3")
+		a.checkOn("resumed at turn 3", s)
 	})
 
 	var fork string

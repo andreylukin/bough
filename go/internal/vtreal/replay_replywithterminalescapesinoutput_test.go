@@ -103,8 +103,7 @@ func TestReplyWithTerminalEscapesInOutput(t *testing.T) {
 			t.Fatalf("turn never finished:\n%s", a.text())
 		}
 		a.waitFor("MODELZ")
-		a.check("after reply")
-		s := a.settled()
+		s := a.check("after reply")
 		t.Run("model_text", func(t *testing.T) { replyWithTerminalEscapesInOutputScreen(t, s, "MODEL") })
 		t.Run("tool_output", func(t *testing.T) {
 			ls := a.lines()

@@ -119,7 +119,7 @@ func TestScratchSpillDuringCancel(t *testing.T) {
 	if strings.Contains(s, "```") {
 		t.Errorf("raw fence marker left on screen after the cancel:\n%s", s)
 	}
-	a.check("after cancel")
+	a.checkOn("after cancel", s)
 
 	// Exactly one spill file, closed and complete.
 	spills, _ := filepath.Glob(filepath.Join(a.home, ".bough", "spill", "result-*.log"))

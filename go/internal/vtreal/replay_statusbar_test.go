@@ -139,7 +139,7 @@ func TestStatusbarDegradesByWidth(t *testing.T) {
 		)
 		a := startCfg(t, w, 24, statusbarCfg(hist))
 		s := a.settled()
-		a.check(fmt.Sprintf("idle at %d columns", w))
+		a.checkOn(fmt.Sprintf("idle at %d columns", w), s)
 		bar := statusbarLine(a, s)
 		bars[i], seen[i] = bar, map[string]bool{}
 		for _, p := range parts {
@@ -272,7 +272,7 @@ func TestStatusbarSpinnerWhileStreaming(t *testing.T) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
 	s := a.settled()
-	a.check("after the turn")
+	a.checkOn("after the turn", s)
 	if bar := statusbarLine(a, s); statusbarElapsed.MatchString(bar) {
 		t.Fatalf("the elapsed time is still on the bar after the turn: %q\nscreen:\n%s", bar, s)
 	}
@@ -295,7 +295,7 @@ func TestStatusbarFlashKeepsUsageChips(t *testing.T) {
 	a.key('x', uv.ModCtrl) // the leader: the bar says it is pending
 	a.waitFor("ctrl+x …")
 	s = a.settled()
-	a.check("flash")
+	a.checkOn("flash", s)
 	bar := statusbarLine(a, s)
 	if !strings.Contains(bar, "ctrl+x …") {
 		t.Fatalf("the flash is not on the bar: %q\nscreen:\n%s", bar, s)

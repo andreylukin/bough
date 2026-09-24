@@ -100,7 +100,7 @@ func longSoakSteerCancelCycleRun(t *testing.T, n int) {
 		}
 		a.waitUntil(func(s string) bool { return !cancelSpinner.MatchString(s) }, where+": idle")
 		s := a.settled()
-		a.check(where)
+		a.checkOn(where, s)
 		if !strings.Contains(s, fmt.Sprintf("SHORTREPLY%d", i)) {
 			t.Errorf("%s: resubmit did not render its own reply:\n%s", where, s)
 		}

@@ -85,7 +85,7 @@ func TestRewindWhileAskPending(t *testing.T) {
 		if in := followUpKinds(a, "input"); strings.Join(in, "|") != "turn one prompt" {
 			t.Errorf("fork inputs = %q, want turn 2 truncated", in)
 		}
-		a.check("after rewind")
+		a.checkOn("after rewind", s)
 	})
 
 	t.Run("OneTypesIntoComposer", func(t *testing.T) {

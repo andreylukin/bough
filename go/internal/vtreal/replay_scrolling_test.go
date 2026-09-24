@@ -146,7 +146,7 @@ func TestScrolling(t *testing.T) {
 		if r := composerRow(ls); r < 0 || r < len(ls)-3 {
 			t.Fatalf("composer left the bottom while scrolled (row %d of %d):\n%s", r, len(ls), s)
 		}
-		a.check("wheel up")
+		a.checkOn("wheel up", s)
 	})
 
 	t.Run("WheelDownClearsCue", func(t *testing.T) {
@@ -198,7 +198,7 @@ func TestScrolling(t *testing.T) {
 		if strings.Contains(s, scrollingMark(turns)) {
 			t.Fatalf("the last turn is still on screen at the top:\n%s", s)
 		}
-		a.check("home")
+		a.checkOn("home", s)
 		a.key(uv.KeyEnd, 0)
 		a.waitUntil(func(string) bool { return scrollingAtBottom(a) }, "the bottom after end")
 		if strings.Contains(a.text(), scrollingMark(1)) {
@@ -246,7 +246,7 @@ func TestScrolling(t *testing.T) {
 		if strings.Contains(s, "scrolled ↑") {
 			t.Fatalf("follow mode did not resume after submit:\n%s", s)
 		}
-		a.check("follow after submit")
+		a.checkOn("follow after submit", s)
 	})
 
 	// A drag over the transcript selects and copies; it must not move
@@ -340,7 +340,7 @@ func TestScrollingNewOutputDoesNotFollow(t *testing.T) {
 	if !strings.Contains(s, "scrolled ↑") {
 		t.Fatalf("the finished turn pulled the scrolled-up view back to the bottom:\n%s", s)
 	}
-	a.check("new output while scrolled up")
+	a.checkOn("new output while scrolled up", s)
 
 	// End follows again.
 	a.key(uv.KeyEnd, 0)

@@ -69,8 +69,7 @@ func TestHooksReplay(t *testing.T) {
 		if !a.waitDone(n, 30*time.Second) {
 			t.Fatalf("turn %d never finished:\n%s", n, a.text())
 		}
-		a.check(in)
-		return a.settled()
+		return a.check(in)
 	}
 	must := func(t *testing.T, s, want, where string) {
 		t.Helper()

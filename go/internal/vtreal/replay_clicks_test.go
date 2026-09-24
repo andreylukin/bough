@@ -83,7 +83,6 @@ func clicksToggle(t *testing.T, a *app, tag, body string) {
 	a.waitUntil(func(s string) bool { return !clicksHasClosed(s, tag) },
 		fmt.Sprintf("%q expanded by a click (the ▸ header gone)", tag))
 	a.check(tag + " expanded")
-	a.settled()
 	row = clicksRow(a, "▾", tag)
 	if row < 0 && body != "" {
 		row = clicksRow(a, body, body)
@@ -168,7 +167,6 @@ func TestClicksToggleEveryKind(t *testing.T) {
 		a.click(2, row)
 		a.waitUntil(func(s string) bool { return clicksHasClosed(s, "system (") }, "the system block folded by a click (▸)")
 		a.check("system collapsed")
-		a.settled()
 		row = clicksRow(a, "▸", "system (")
 		if row < 0 {
 			t.Fatalf("no folded system header on screen:\n%s", a.text())
@@ -197,7 +195,7 @@ func TestClicksCollapseAllExpandAll(t *testing.T) {
 	if !clicksHasOpen(s, "code js") || !clicksHasOpen(s, "result (") {
 		t.Fatalf("expand_all did not open code and result (▾):\n%s", s)
 	}
-	a.check("expand_all")
+	a.checkOn("expand_all", s)
 
 	a.key('x', uv.ModCtrl)
 	a.key('c', 0)
@@ -209,7 +207,7 @@ func TestClicksCollapseAllExpandAll(t *testing.T) {
 	if !clicksHasClosed(s, "code js") || !clicksHasClosed(s, "result (") {
 		t.Fatalf("collapse_all did not close code and result (▸):\n%s", s)
 	}
-	a.check("collapse_all")
+	a.checkOn("collapse_all", s)
 }
 
 // A click on the user's own prompt row toggles nothing and leaves the
@@ -275,7 +273,7 @@ func TestClicksBehindPickerAreInert(t *testing.T) {
 	if !clicksHasClosed(s, "code js") {
 		t.Fatalf("a block toggled behind the picker:\n%s", s)
 	}
-	a.check("after the picker")
+	a.checkOn("after the picker", s)
 }
 
 // The slash palette is an overlay too: a click on a row above it goes

@@ -97,7 +97,7 @@ func TestSkillsHelpListing(t *testing.T) {
 			t.Errorf("/help missing %q:\n%s", want, s)
 		}
 	}
-	a.check("after /help")
+	a.checkOn("after /help", s)
 }
 
 // "/bravo go" submits the line as input; the mention injects bravo's
@@ -115,7 +115,7 @@ func TestSkillsSlashCommandInjects(t *testing.T) {
 	if strings.Contains(s, "SKILLMARK_ALPHA") {
 		t.Errorf("unmentioned skill injected:\n%s", s)
 	}
-	a.check("after /bravo")
+	a.checkOn("after /bravo", s)
 }
 
 // Mentioning a skill in prose injects it too.

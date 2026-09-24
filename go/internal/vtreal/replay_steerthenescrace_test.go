@@ -65,7 +65,7 @@ func TestSteerThenEscRace(t *testing.T) {
 	a.waitUntil(func(s string) bool { return !cancelSpinner.MatchString(s) },
 		"the spinner to stop after the cancel")
 	screen := a.settled()
-	a.check("after steer+esc")
+	a.checkOn("after steer+esc", screen)
 
 	t.Run("TestSteerThenEscRaceCancelled", func(t *testing.T) {
 		if strings.Contains(screen, "ALPHAEND") {
@@ -129,6 +129,6 @@ func TestSteerThenEscRace(t *testing.T) {
 				t.Errorf("%q on screen after the next turn:\n%s", bad, s)
 			}
 		}
-		a.check("after the next turn")
+		a.checkOn("after the next turn", s)
 	})
 }

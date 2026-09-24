@@ -210,7 +210,7 @@ func TestSlowTerminalEscCancelsStreaming(t *testing.T) {
 	if strings.Contains(s, "ALPHAEND") {
 		t.Fatalf("the reply kept streaming after esc:\n%s", s)
 	}
-	a.check("after cancel")
+	a.checkOn("after cancel", s)
 }
 
 // A long streamed reply and a huge block result end on the same

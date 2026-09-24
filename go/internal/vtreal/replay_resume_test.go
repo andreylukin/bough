@@ -214,8 +214,7 @@ func TestResumeStatusBarShowsRecordedUsage(t *testing.T) {
 
 	a := startCfg(t, 100, 40, resumeConfig(next, log))
 	a.waitFor("resumed ")
-	a.check("resumed boot")
-	s := a.settled()
+	s := a.check("resumed boot")
 	for _, want := range []string{"Hello from turn one.", "Two files here."} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("resumed transcript missing %q:\n%s", want, s)

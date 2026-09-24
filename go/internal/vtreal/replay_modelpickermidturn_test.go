@@ -127,7 +127,6 @@ func TestModelPickerMidTurn(t *testing.T) {
 	}
 	a.waitFor("echo: second turn")
 	a.check("after second turn")
-	a.settled()
 	close(stop)
 	<-sampled
 

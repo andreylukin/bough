@@ -113,7 +113,7 @@ func TestCwdDeletedUnderSession(t *testing.T) {
 		if !cwdDeletedUnderSessionError(s) {
 			t.Errorf("tools.bash in a deleted cwd shows no error:\n%s", s)
 		}
-		a.check("deleted-cwd turn")
+		a.checkOn("deleted-cwd turn", s)
 	})
 
 	t.Run("at_picker_empty", func(t *testing.T) {
@@ -124,7 +124,7 @@ func TestCwdDeletedUnderSession(t *testing.T) {
 		if names, _ := atPickerRows(s); len(names) != 0 {
 			t.Errorf("picker lists files of a deleted cwd %q:\n%s", names, s)
 		}
-		a.check("@ in a deleted cwd")
+		a.checkOn("@ in a deleted cwd", s)
 		a.key(uv.KeyEscape, 0)
 		for range 2 {
 			a.key(uv.KeyBackspace, 0)

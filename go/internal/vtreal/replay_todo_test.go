@@ -95,7 +95,7 @@ func TestTodoPanel(t *testing.T) {
 			if head < 0 || comp < 0 || head >= comp {
 				t.Fatalf("%d cols: panel (row %d) must sit above the composer (row %d):\n%s", cols, head, comp, s)
 			}
-			a.check("todo panel open")
+			a.checkOn("todo panel open", s)
 		})
 	}
 }
@@ -107,8 +107,7 @@ func TestTodoToggleHidesAndRestores(t *testing.T) {
 
 	a.key('t', uv.ModCtrl)
 	a.waitUntil(func(s string) bool { return !strings.Contains(s, todoHeader) }, "the todo panel to hide")
-	a.check("todo panel hidden")
-	if s := a.settled(); strings.Contains(s, "[x] 2 review the diff") {
+	if s := a.check("todo panel hidden"); strings.Contains(s, "[x] 2 review the diff") {
 		t.Fatalf("ctrl+t hid the header but left the items:\n%s", s)
 	}
 
@@ -132,7 +131,7 @@ func TestTodoEscKeepsPanel(t *testing.T) {
 	if !strings.Contains(s, todoHeader) || !strings.Contains(s, "[ ] 1 cut the tag") {
 		t.Fatalf("esc should leave the pinned todo panel alone (only ctrl+t hides it):\n%s", s)
 	}
-	a.check("esc with the todo panel open")
+	a.checkOn("esc with the todo panel open", s)
 }
 
 // A resumed session pins its list at boot: the panel is read from the
@@ -147,5 +146,5 @@ func TestTodoPanelOnResume(t *testing.T) {
 			t.Fatalf("resumed todo panel is missing %q:\n%s", want, s)
 		}
 	}
-	a.check("todo panel on resume")
+	a.checkOn("todo panel on resume", s)
 }

@@ -151,7 +151,7 @@ func TestSpawnAllPartialFailureContinues(t *testing.T) {
 	}
 	a.waitFor("PARENTDONE")
 	s := a.settled()
-	a.check("after spawnAll")
+	a.checkOn("after spawnAll", s)
 	for state, want := range map[string]int{"done": 1, "error": 1, "reported failure": 1} {
 		if got := spawnallPartialFailureCount(s, state); got != want {
 			t.Errorf("%d card(s) in state %q, want %d:\n%s", got, state, want, s)
@@ -198,7 +198,7 @@ func TestSpawnAllPartialFailureEsc(t *testing.T) {
 	a.waitUntil(func(s string) bool { return spawnallPartialFailureCount(s, "running") == 0 },
 		"no card still running after esc")
 	s := a.settled()
-	a.check("after esc")
+	a.checkOn("after esc", s)
 	if strings.Contains(s, "PARENTDONE") {
 		t.Errorf("the turn went on after esc:\n%s", s)
 	}

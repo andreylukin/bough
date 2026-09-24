@@ -111,7 +111,7 @@ func TestLlmSmallTitle(t *testing.T) {
 	if strings.Contains(s, "end of tape") {
 		t.Fatalf("the main tape ran out early:\n%s", s)
 	}
-	a.check("second turn")
+	a.checkOn("second turn", s)
 }
 
 // The ↹ chip is the small model's guess at the rest of the draft; tab

@@ -158,7 +158,7 @@ func TestFollowUpRewindSecondTurn(t *testing.T) {
 	if in := followUpKinds(a, "input"); fmt.Sprint(in) != "[alpha]" {
 		t.Errorf("forked session inputs = %q, want [alpha]:\n%s", in, s)
 	}
-	a.check("after rewind")
+	a.checkOn("after rewind", s)
 
 	// Resend: the model is asked exactly once more, so the NEXT tape
 	// reply lands — not beta's again, not end of tape.
@@ -177,7 +177,7 @@ func TestFollowUpRewindSecondTurn(t *testing.T) {
 			t.Errorf("rewound reply resurfaced in the forked session:\n%s", s)
 		}
 	}
-	a.check("after resend")
+	a.checkOn("after resend", s)
 }
 
 func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
@@ -205,5 +205,5 @@ func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
 	if in := followUpKinds(a, "input"); fmt.Sprint(in) != "[alpha beta]" {
 		t.Errorf("inputs = %q, want [alpha beta]:\n%s", in, s)
 	}
-	a.check("after follow-up")
+	a.checkOn("after follow-up", s)
 }

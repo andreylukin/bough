@@ -49,7 +49,7 @@ func TestDoubleSubmitEnterBurst(t *testing.T) {
 			if c := strings.TrimSpace(strings.TrimPrefix(followUpComposer(a), ">")); c != "" && c != "say something" {
 				t.Errorf("composer = %q, want empty:\n%s", c, s)
 			}
-			a.check("after burst " + tc.name)
+			a.checkOn("after burst "+tc.name, s)
 		})
 	}
 }

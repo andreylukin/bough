@@ -79,7 +79,7 @@ func TestSteerDuringBangShellRunning(t *testing.T) {
 			return strings.Contains(s, "sdbsr-done") || strings.Contains(strings.ToLower(s), "cancel")
 		}, "shell output or a cancelled marker")
 		s := a.settled()
-		a.check("after steer + esc")
+		a.checkOn("after steer + esc", s)
 		ls := strings.Split(s, "\n")
 		if r := composerRow(ls); r < 0 || strings.TrimSpace(strings.TrimPrefix(ls[r], "> ")) != "" && !strings.Contains(ls[r], "say something") {
 			t.Errorf("composer not empty after steer submit:\n%s", s)

@@ -116,6 +116,6 @@ func TestSearch(t *testing.T) {
 		if !strings.Contains(s, "answer number 30") {
 			t.Errorf("view left the bottom after ctrl+s / esc:\n%s", a.text())
 		}
-		a.check("after ctrl+s / esc")
+		a.checkOn("after ctrl+s / esc", s)
 	})
 }

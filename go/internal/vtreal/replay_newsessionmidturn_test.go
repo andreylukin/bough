@@ -219,7 +219,7 @@ func TestNewSessionMidTurn(t *testing.T) {
 				t.Errorf("old turn's usage landed on the new session's bar (%q):\n%s", stale, s)
 			}
 		}
-		a.check("cost new session")
+		a.checkOn("cost new session", s)
 		newSessionMidTurnQuit(a)
 		for p, es := range newSessionMidTurnFiles(t, home) {
 			ks := newSessionMidTurnKinds(es)

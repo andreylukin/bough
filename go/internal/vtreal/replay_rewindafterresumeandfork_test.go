@@ -175,7 +175,7 @@ func TestRewindAfterResumeAndFork(t *testing.T) {
 			t.Errorf("transcript after rewind to turn 1 is wrong:\n%s", s)
 		}
 		rewindAfterResumeAndForkDisk(t, a, "after rewind")
-		a.check("after rewind")
+		a.checkOn("after rewind", s)
 	})
 
 	t.Run("NewPromptOnFork", func(t *testing.T) {

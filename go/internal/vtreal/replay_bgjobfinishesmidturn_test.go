@@ -185,8 +185,7 @@ func TestBgjobFinishesMidTurn(t *testing.T) {
 			}
 			return true
 		}, "the job strip to clear")
-		a.check("after wake")
-		if s := a.settled(); strings.Contains(s, "[background job]") {
+		if s := a.check("after wake"); strings.Contains(s, "[background job]") {
 			t.Errorf("wake preamble leaked onto the screen:\n%s", s)
 		}
 	})

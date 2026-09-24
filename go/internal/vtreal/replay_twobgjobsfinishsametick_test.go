@@ -181,7 +181,7 @@ func TestTwoBgjobsFinishSameTick(t *testing.T) {
 		if strings.Contains(s, "[background job]") {
 			t.Errorf("wake preamble leaked onto the screen:\n%s", s)
 		}
-		a.check("after wakes")
+		a.checkOn("after wakes", s)
 	})
 }
 

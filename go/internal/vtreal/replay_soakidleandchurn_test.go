@@ -167,7 +167,7 @@ func soakidleandchurnRun(t *testing.T, n int) {
 		if !strings.Contains(screen, longSessionMarker(i)) {
 			t.Errorf("%s: answer %s not on screen:\n%s", where, longSessionMarker(i), screen)
 		}
-		a.check(where)
+		a.checkOn(where, screen)
 		if t.Failed() {
 			return
 		}

@@ -109,8 +109,7 @@ func TestSubagentsCards(t *testing.T) {
 		t.Run(fmt.Sprintf("%dcols", cols), func(t *testing.T) {
 			t.Parallel()
 			a := subagentsBoot(t, cols, 30)
-			a.check("boot")
-			s := a.settled()
+			s := a.check("boot")
 			for _, want := range []string{"subagent 1", "subagent 2"} {
 				if !strings.Contains(s, want) {
 					t.Fatalf("no card for %s on screen:\n%s", want, s)
@@ -147,14 +146,14 @@ func TestSubagentsFoldOpen(t *testing.T) {
 			if !strings.Contains(s, "17 test files") {
 				t.Errorf("open card does not show the child's report:\n%s", s)
 			}
-			a.check("card open")
+			a.checkOn("card open", s)
 			// enter again closes it.
 			a.key(uv.KeyEnter, 0)
 			s = a.settled()
 			if strings.Contains(s, "17 test files") {
 				t.Errorf("enter did not fold the card shut again:\n%s", s)
 			}
-			a.check("card closed")
+			a.checkOn("card closed", s)
 		})
 	}
 }
@@ -181,7 +180,7 @@ func TestSubagentsTranscriptOverlay(t *testing.T) {
 			if strings.Contains(s, "17 test files") {
 				t.Errorf("overlay leaked the other subagent's transcript:\n%s", s)
 			}
-			a.check("overlay open")
+			a.checkOn("overlay open", s)
 
 			subagentsEsc(a)
 			s = a.settled()
@@ -191,7 +190,7 @@ func TestSubagentsTranscriptOverlay(t *testing.T) {
 			if !strings.Contains(s, "subagent 2") {
 				t.Errorf("esc did not return to the spawner's transcript:\n%s", s)
 			}
-			a.check("back from overlay")
+			a.checkOn("back from overlay", s)
 		})
 	}
 }

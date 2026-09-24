@@ -64,24 +64,31 @@ var panicky = regexp.MustCompile(`panic:|goroutine \d+ \[|runtime error:`)
 // need not wait out another settle window for the same frame.
 func (a *app) check(where string) string {
 	a.t.Helper()
+	return a.checkOn(where, a.settled())
+}
+
+// checkOn is check starting from s, a screen the caller has just
+// settled with nothing sent since: settling again would only wait out
+// another window on the same frame.
+func (a *app) checkOn(where, s string) string {
+	a.t.Helper()
 	// The screen is eventually consistent and the callers are not: most
 	// reach here through waitDone, which gates on a history entry — a
 	// file write that lands BEFORE the repaint following it. So retry
 	// the layout invariant instead of asserting on whichever frame
 	// happened to be current, with a deadline so a composer that never
 	// comes back to the bottom still fails, and still prints the frame.
-	var s string
-	var ls []string
+	ls := strings.Split(s, "\n")
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		s = a.settled()
-		ls = strings.Split(s, "\n")
 		if r := composerRow(ls); r >= 0 && r >= len(ls)-3 {
 			break
 		}
 		if !time.Now().Before(deadline) {
 			break
 		}
+		s = a.settled()
+		ls = strings.Split(s, "\n")
 	}
 	if panicky.MatchString(s) {
 		a.t.Errorf("%s: crash text on screen:\n%s", where, s)

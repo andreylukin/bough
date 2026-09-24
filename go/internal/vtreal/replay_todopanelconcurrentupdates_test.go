@@ -121,7 +121,7 @@ func todoPanelConcurrentUpdatesAssert(t *testing.T, a *app, where string) {
 	if got != want {
 		t.Fatalf("%s: panel is not the last todo state\ngot:\n%s\nwant:\n%s\nscreen:\n%s", where, got, want, s)
 	}
-	a.check(where)
+	a.checkOn(where, s)
 }
 
 func todoPanelConcurrentUpdatesAssertHidden(t *testing.T, a *app, where string) {
@@ -130,7 +130,7 @@ func todoPanelConcurrentUpdatesAssertHidden(t *testing.T, a *app, where string) 
 	if got := todoPanelConcurrentUpdatesPanel(s); len(got) > 0 {
 		t.Fatalf("%s: hidden panel left rows behind:\n%s\nscreen:\n%s", where, strings.Join(got, "\n"), s)
 	}
-	a.check(where)
+	a.checkOn(where, s)
 }
 
 func TestTodoPanelConcurrentUpdates(t *testing.T) {
