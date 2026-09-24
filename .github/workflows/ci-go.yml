@@ -5,7 +5,9 @@
 #             it drives a separately built bough binary, so the detector
 #             only slows its timing-sensitive screens down. Windows ships
 #             no binary and its tests are not claimed to pass, so it is
-#             compiled and vetted (cross), not tested.
+#             compiled and vetted (cross), not tested. The race run is
+#             four timing-balanced shards per OS, each with its own
+#             build + test cache, so a PR reruns only what it changed.
 #   cross   — every release target compiles and vets, so a tag never
 #             discovers a build break on an architecture nobody ran
 #   model   — scripts/model-test.sh: the FizzBee models and their tests
@@ -30,44 +32,89 @@ concurrency:
 
 jobs:
   unit:
-    # The race-checked packages and the PTY suite each take minutes, so
-    # they run as separate jobs, in parallel, not as two steps in one.
-    name: unit (${{ matrix.os }}, ${{ matrix.suite }})
+    # The race-checked packages take minutes even split up, so they run
+    # as four jobs, and the PTY suite as a fifth, all in parallel.
+    # scripts/test-shards.sh bin-packs the packages by their recorded
+    # times (scripts/test-timings.tsv); by name, plugins/ui, plugins/tools
+    # and tests/model/mbt kept landing together in one slow shard.
+    name: unit (${{ matrix.os }}, ${{ matrix.shard == 'pty' && 'pty' || format('race {0}/4', matrix.shard) }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        suite: [race, pty]
+        shard: ['1', '2', '3', '4', pty]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: go
     steps:
       - uses: actions/checkout@v4
+      # setup-go's own cache is keyed on go.sum alone and only saved on a
+      # miss, so after the first run its test results never refresh, and
+      # nine jobs race to write the one key. Each job keeps its own cache
+      # below instead.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
-          cache: true # modules + build cache
-          cache-dependency-path: go/go.sum
+          cache: false
+      # The test cache keys a test's result on the mtime of every file in
+      # the module it opened, and a checkout stamps every file with the
+      # time of the checkout, so without this no result from an earlier
+      # run is ever reused. Contents are covered by the build hash.
+      - name: Pin checkout mtimes for the test cache
+        run: find . -path ./.git -prune -o -exec touch -h -t 200001010000 {} +
+        working-directory: .
+      - name: Go cache paths
+        id: go-env
+        run: |
+          echo "build=$(go env GOCACHE)" >>"$GITHUB_OUTPUT"
+          echo "mod=$(go env GOMODCACHE)" >>"$GITHUB_OUTPUT"
+      # Build and test cache (both live in GOCACHE) plus modules, one per
+      # os and shard. A PR restores the newest one main saved, so the
+      # packages it does not change report (cached) instead of running.
+      # Only pushes to main save: one entry per shard per commit already
+      # fills the repo's cache quota quickly.
+      - name: Restore Go build and test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ steps.go-env.outputs.build }}
+            ${{ steps.go-env.outputs.mod }}
+          key: go-test-${{ runner.os }}-${{ matrix.shard }}-${{ github.sha }}
+          restore-keys: go-test-${{ runner.os }}-${{ matrix.shard }}-
       # The pre-commit hook runs this too; CI is what catches a commit
       # made with --no-verify. gofmt and vet answer the same on any
       # runner (vet per GOOS runs in cross).
       - name: gofmt + vet
-        if: matrix.os == 'ubuntu-latest' && matrix.suite == 'race'
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == '1'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
           go vet ./...
+          scripts/test-shards_test.sh
       # Few vCPUs: wide parallelism only starves the timing-sensitive
-      # TUI and PTY tests.
-      - name: test (race)
-        if: matrix.suite == 'race'
-        run: go test -race -parallel 4 -timeout 20m $(go list ./... | grep -v /internal/vtreal)
+      # TUI and PTY tests. No -count=1: an unchanged package's cached
+      # result is the point of the cache above.
+      - name: test (race, shard ${{ matrix.shard }}/4)
+        if: matrix.shard != 'pty'
+        run: |
+          set -euo pipefail
+          pkgs=$(go list ./... | grep -v /internal/vtreal | scripts/test-shards.sh ${{ matrix.shard }} 4)
+          echo "$pkgs"
+          go test -race -parallel 4 -timeout 20m $pkgs
       - name: test (PTY suite)
-        if: matrix.suite == 'pty'
+        if: matrix.shard == 'pty'
         run: go test -parallel 4 -timeout 20m ./internal/vtreal/
+      - name: Save Go build and test cache
+        if: github.event_name == 'push' && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ steps.go-env.outputs.build }}
+            ${{ steps.go-env.outputs.mod }}
+          key: go-test-${{ runner.os }}-${{ matrix.shard }}-${{ github.sha }}
 
   # A release cross-compiles four targets from one runner. Finding out
   # at tag time that one of them does not build is finding out too late.
