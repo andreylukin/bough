@@ -24,6 +24,12 @@ on:
     paths: ['go/**', 'scripts/model-test.sh', '.github/workflows/ci-go.yml']
   pull_request:
     paths: ['go/**', 'scripts/model-test.sh', '.github/workflows/ci-go.yml']
+  # Nightly: the model job's exhaustive run (every transition in the
+  # browser and on the server, and the fizzbee-mbt random runs), too
+  # slow to gate a push.
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
 
 # A newer push to the same branch or PR supersedes the run in progress.
 concurrency:
@@ -172,6 +178,10 @@ jobs:
   # code from them. The script fetches its own pinned binaries.
   model:
     runs-on: ubuntu-latest
+    # A push walks every state; the nightly run takes every transition.
+    timeout-minutes: ${{ github.event_name == 'schedule' && 180 || 30 }}
+    env:
+      MODEL_COVER: ${{ github.event_name == 'schedule' && 'transitions' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
