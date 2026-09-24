@@ -788,6 +788,31 @@ func TestSupervisorSetTitleFailedSaveChangesNothing(t *testing.T) {
 	}
 }
 
+// A whitespace-only title from any client (the page trims, curl does
+// not) hands the name back to history: stored as is, rowOf preferred it
+// to history's title and every page said "Untitled"
+// (specs/session_title_writers.fizz, BlankNeverHidesHistory).
+func TestSupervisorSetTitleBlankHandsBack(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed(t, "sess-blank")
+	if err := f.sup.SetTitle("sess-blank", "mine"); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	if err := f.sup.SetTitle("sess-blank", " \t "); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	if got := f.sup.Meta("sess-blank").Title; got != "" {
+		t.Errorf("after a blank rename, meta title = %q, want empty", got)
+	}
+	if err := f.sup.SetTitle("sess-blank", "  padded  "); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	if got := f.sup.Meta("sess-blank").Title; got != "padded" {
+		t.Errorf("meta title = %q, want %q", got, "padded")
+	}
+}
+
 func TestSupervisorArchiveKillsAndPersists(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

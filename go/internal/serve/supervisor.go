@@ -1318,7 +1318,10 @@ func (s *Supervisor) SetTitle(id, title string) error {
 	defer s.mu.Unlock()
 	old, had := s.meta[id]
 	m := old
-	m.Title = title
+	// Trimmed here, not only by the page: any client can post "   ", and
+	// rowOf would prefer that blank to history's title, so every page
+	// said "Untitled". Blank hands the name back to history.
+	m.Title = strings.TrimSpace(title)
 	s.meta[id] = m
 	// A failed save answers the page with an error, so the name must not
 	// change in memory either: the next list read would show it, and a
