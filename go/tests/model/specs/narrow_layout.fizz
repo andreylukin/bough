@@ -116,9 +116,11 @@ role Phone:
         self.backed = False
 
     atomic action OpenThread:
-        # The project page shows a thread (showProjectSession).
+        # The project page shows a thread (showProjectSession). The home's
+        # composer, which had the keyboard, leaves the page with it.
         require self.view == "project" and self.overlay == "none" and not self.selected and not self.empty
         self.selected = True
+        self.keyboard = False
         self.backed = False
 
     atomic action Reload:

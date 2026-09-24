@@ -254,7 +254,7 @@ func (a *narrowLayoutAdapter) OpenThread() error {
 	if !a.gate.pass(a.view == "project" && a.overlay == "none" && !a.selected && !empty) {
 		return nil
 	}
-	a.selected, a.backed = true, false
+	a.selected, a.keyboard, a.backed = true, false, false
 	return a.load()
 }
 
