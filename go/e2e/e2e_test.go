@@ -1,6 +1,6 @@
-// Package e2e execs the real bough binary. TestMain builds it once
-// per run; every test gets its own temp HOME, temp cwd, config copy,
-// and process, so all tests run in parallel.
+// Package e2e execs the real bough binary: testbin's one cached build,
+// shared with the other suites. Every test gets its own temp HOME, temp
+// cwd, config copy, and process, so all tests run in parallel.
 package e2e
 
 import (
@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/andreylukin/bough/internal/testbin"
 )
 
 var (
@@ -33,29 +35,13 @@ func TestMain(m *testing.M) {
 	// Children inherit this: none may take the user's page server port.
 	os.Setenv("BOUGH_WEB_ADDR", "127.0.0.1:0")
 
-	if bin := os.Getenv("BOUGH_BIN"); bin != "" {
-		boughBin = bin
-		os.Exit(m.Run())
-	}
-	dir, err := os.MkdirTemp("", "bough-e2e-bin-")
+	bin, err := testbin.Path()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e:", err)
 		os.Exit(1)
 	}
-	// ".exe" on Windows, or the file builds and then cannot be
-	// executed: "executable file not found in %PATH%", which was
-	// about half of the Windows failures on its own.
-	boughBin = filepath.Join(dir, "bough"+exeSuffix())
-	build := exec.Command("go", "build", "-o", boughBin, "./cmd/bough")
-	build.Dir = repoRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: build: %v\n%s", err, out)
-		os.RemoveAll(dir)
-		os.Exit(1)
-	}
-	code := m.Run()
-	os.RemoveAll(dir)
-	os.Exit(code)
+	boughBin = bin
+	os.Exit(m.Run())
 }
 
 // safeBuf is a concurrency-safe output accumulator (stdout+stderr).
@@ -327,11 +313,3 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x
 
 // stripANSI removes escape sequences from raw terminal output.
 func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
-
-// exeSuffix is ".exe" on Windows and "" everywhere else.
-func exeSuffix() string {
-	if runtime.GOOS == "windows" {
-		return ".exe"
-	}
-	return ""
-}

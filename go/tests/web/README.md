@@ -17,8 +17,10 @@ its own copy of `bough.yml`, and a fresh free port. `llm-echo` (or a JS
 provider from a test-written `init.js`) is forced via `--set`, so no
 test ever calls a real API.
 
-The Go binary is built ONCE per suite run by `helpers/global-setup.ts`
-(`go build -o <repo>/bough ./cmd/bough`). To skip the build (e.g. CI
+The Go binary comes from `helpers/global-setup.ts`, which runs
+`go run ./internal/testbin/boughbin`: the same cached build the Go
+suites use, keyed by a hash of its sources under `$TMPDIR/bough-testbin`,
+so it is linked only when the sources changed. To skip it (e.g. CI
 built it already), point `BOUGH_BIN` at a prebuilt binary:
 
 ```sh

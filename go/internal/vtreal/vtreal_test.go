@@ -22,9 +22,11 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"runtime"
+
+	"github.com/andreylukin/bough/internal/testbin"
 )
 
-var bin string // built once in TestMain
+var bin string // testbin.Path, resolved once in TestMain
 
 func TestMain(m *testing.M) {
 	// Every child inherits this: none may take the user's page server
@@ -38,23 +40,13 @@ func TestMain(m *testing.M) {
 		killChildren()
 		os.Exit(1)
 	}()
-	dir, err := os.MkdirTemp("", "vtreal-")
-	if err != nil {
-		panic(err)
-	}
-	// ".exe" on Windows, or the file builds and then cannot be
-	// executed: "executable file not found in %PATH%", which was
-	// about half of the Windows failures on its own.
-	bin = filepath.Join(dir, "bough"+exeSuffix())
-	build := exec.Command("go", "build", "-o", bin, "../../cmd/bough")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "vtreal: build:", err)
+	var err error
+	if bin, err = testbin.Path(); err != nil {
+		fmt.Fprintln(os.Stderr, "vtreal:", err)
 		os.Exit(1)
 	}
 	code := m.Run()
 	killChildren()
-	os.RemoveAll(dir)
 	os.Exit(code)
 }
 

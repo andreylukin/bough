@@ -591,8 +591,10 @@ in-process — typed keys, loop events, rendered frames, golden files
 go test -race ./plugins/... ./internal/... ./kernel/
 ```
 
-**2. Headless + PTY binary e2e** (`e2e/`): `TestMain` builds the binary
-once per run (or reuses `$BOUGH_BIN`), then each test execs it —
+**2. Headless + PTY binary e2e** (`e2e/`): `TestMain` takes the binary
+from `internal/testbin` (`$BOUGH_BIN`, else one build cached under
+`$TMPDIR/bough-testbin` by a hash of its sources and shared with the
+vtreal, servetest and web suites), then each test execs it —
 `--headless` with stdin lines in and `[kind] text` events out, the CLI
 subcommands (`bough log`, `bough rows`), config hot-reload, and 3
 native-TTY cases on a real PTY (status bar renders, echo roundtrip,

@@ -5,9 +5,8 @@
 // llm row to llm-echo unless the test says otherwise), its own loopback
 // port and its own token, so any number can run side by side in one
 // test process and none reaches the real ~/.bough or the network. The
-// bough binary is built once per test process; BOUGH_BIN skips the
-// build. Call Main from the package's TestMain so that build is removed
-// when the tests finish.
+// bough binary comes from testbin: BOUGH_BIN, or one cached build
+// shared with every other suite of the run.
 //
 // Test-only: nothing outside _test.go files should import it.
 package servetest
@@ -17,7 +16,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,7 +24,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +31,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/serve"
 	"github.com/andreylukin/bough/internal/serveclient"
+	"github.com/andreylukin/bough/internal/testbin"
 )
 
 // DefaultConfig is the HOME overlay a server starts with: the embedded
@@ -147,55 +145,22 @@ func (s *Server) Build(ctx context.Context) (string, error) {
 	return resp.Header.Get(serve.BuildHeader), nil
 }
 
-var (
-	buildOnce sync.Once
-	buildDir  string
-	buildBin  string
-	buildErr  error
-)
-
-// Binary is the bough binary servers run: BOUGH_BIN when set, else one
-// `go build` per test process, shared by every server in it.
+// Binary is the bough binary servers run: BOUGH_BIN when set, else the
+// build testbin shares with every suite of the run.
 func Binary(t testing.TB) string {
 	t.Helper()
-	if bin := os.Getenv("BOUGH_BIN"); bin != "" {
-		return bin
+	bin, err := testbin.Path()
+	if err != nil {
+		t.Fatal(err)
 	}
-	buildOnce.Do(func() {
-		_, file, _, ok := runtime.Caller(0)
-		if !ok {
-			buildErr = errors.New("servetest: cannot locate source file")
-			return
-		}
-		module := filepath.Join(filepath.Dir(file), "..", "..")
-		// Its own dir per process: concurrent `go test` packages each
-		// build, and copying over a binary another process is running
-		// gets that process SIGKILLed on macOS.
-		buildDir, buildErr = os.MkdirTemp("", "bough-servetest-bin-")
-		if buildErr != nil {
-			return
-		}
-		buildBin = filepath.Join(buildDir, "bough"+exeSuffix())
-		build := exec.Command("go", "build", "-o", buildBin, "./cmd/bough")
-		build.Dir = module
-		if out, err := build.CombinedOutput(); err != nil {
-			buildErr = fmt.Errorf("servetest: go build: %v\n%s", err, out)
-		}
-	})
-	if buildErr != nil {
-		t.Fatal(buildErr)
-	}
-	return buildBin
+	return bin
 }
 
-// Main runs the tests and removes the binary Binary built. Use it as
-// the package's TestMain.
+// Main runs the tests. The binary is testbin's cache entry, reused by
+// later runs, so there is nothing to remove afterwards; it stays so
+// callers' TestMain need not change.
 func Main(m *testing.M) {
-	code := m.Run()
-	if buildDir != "" {
-		os.RemoveAll(buildDir)
-	}
-	os.Exit(code)
+	os.Exit(m.Run())
 }
 
 // Start launches a server and registers Close as a cleanup. It fails the
@@ -623,13 +588,6 @@ func freePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
-}
-
-func exeSuffix() string {
-	if runtime.GOOS == "windows" {
-		return ".exe"
-	}
-	return ""
 }
 
 type safeBuf struct {
