@@ -119,6 +119,8 @@ type controlTurn struct {
 	// Tool and Args are a "call" turn's one tool call.
 	Tool string          `json:"tool"`
 	Args json.RawMessage `json:"args"`
+	// Bash, on a release, answers with one bash tool call running it.
+	Bash string `json:"bash"`
 }
 
 // controlCall is a tool call a release answers with, so a test can put
@@ -227,6 +229,12 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				if then.Mode == "call" {
 					return a.callTurn(ctx, name, then)
 				}
+				// A release with a command answers with a bash call: the
+				// engine records it with its exit and asks again, so a
+				// test can put a tool call inside a turn it still holds.
+				if then.Bash != "" {
+					return a.bash(ctx, name, then.Bash)
+				}
 				if then.Text != "" {
 					return a.reply(ctx, then.Text, 0)
 				}
@@ -301,6 +309,29 @@ func (a *controlAdapter) callTurn(ctx context.Context, name string, turn control
 		return ullm.Response{}, fmt.Errorf("llm-control: %s: a call turn needs a tool", name)
 	}
 	return a.call(ctx, "", controlCall{Name: turn.Tool, Args: turn.Args})
+}
+
+// bash answers with one bash tool call running cmd.
+func (a *controlAdapter) bash(ctx context.Context, name, cmd string) (ullm.Response, error) {
+	args, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		return ullm.Response{}, err
+	}
+	call := ullm.ToolCall{CallID: "control_" + name, Name: "bash", Arguments: string(args)}
+	if a.opts.Sink != nil {
+		a.opts.Sink(agentllm.Delta{Seq: agentllm.SeqOf(ctx), Attempt: 1, Kind: agentllm.DeltaToolStart, CallID: call.CallID, Name: call.Name})
+	}
+	u := ullm.Usage{InputTokens: 1, OutputTokens: 1}
+	a.c.mu.Lock()
+	addAgentUsage(&a.c.usage, u)
+	n := a.c.n
+	a.c.mu.Unlock()
+	return ullm.Response{
+		ID:     fmt.Sprintf("control-%d", n),
+		Stop:   ullm.StopComplete,
+		Output: []ullm.Item{{Type: ullm.ItemToolCall, Data: call}},
+		Usage:  u,
+	}, nil
 }
 
 func controlWords(s string) []string {

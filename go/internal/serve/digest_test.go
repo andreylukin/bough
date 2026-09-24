@@ -87,6 +87,32 @@ func TestDigestTroubleStillExpires(t *testing.T) {
 	}
 }
 
+// A turn's summary and title land after its done, a small-model call
+// later. Mark seen clicked on the failure in between must stay seen when
+// they arrive: they are the turn the person just looked at, not news.
+func TestDigestTroubleIgnoresTheTurnsTrailingEntries(t *testing.T) {
+	now := time.Now().UTC()
+	entries := []history.Entry{
+		{Seq: 1, Kind: "input", At: now, Data: map[string]any{"text": "hi"}},
+		{Seq: 2, Kind: "error", At: now, Data: map[string]any{"text": "boom"}},
+		{Seq: 3, Kind: "done", At: now},
+		{Seq: 4, Kind: "turn-summary", At: now, Data: map[string]any{"text": "s", "turn": 1}},
+		{Seq: 5, Kind: "title", At: now, Data: map[string]any{"text": "t", "turn": 1}},
+	}
+	d := digestOf(entries, now)
+	if got := d.troubled(StatusError, 3, now, false); got != "" {
+		t.Fatalf("acked at the done, summary and title after: %q, want none", got)
+	}
+	if got := d.troubled(StatusError, 0, now, false); got != "failed" {
+		t.Fatalf("never acked: %q, want failed", got)
+	}
+	// Anything else written after the ack is still news.
+	d = digestOf(append(entries, history.Entry{Seq: 6, Kind: "notice", At: now, Data: map[string]any{"text": "n"}}), now)
+	if got := d.troubled(StatusError, 5, now, false); got != "failed" {
+		t.Fatalf("notice after the ack: %q, want failed", got)
+	}
+}
+
 // A clean finish is unseen until acked; a title written after the ack
 // does not bring it back, and trouble, terminals and old finishes never
 // count.

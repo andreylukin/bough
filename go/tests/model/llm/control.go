@@ -29,6 +29,8 @@ type Turn struct {
 	Call    *Call          `json:"call,omitempty"`
 	Tool    string         `json:"tool,omitempty"`
 	Args    map[string]any `json:"args,omitempty"`
+	// Bash, on a release, answers with one bash tool call running it.
+	Bash string `json:"bash,omitempty"`
 }
 
 // Call is a tool call the model makes: a native tool by name, with its

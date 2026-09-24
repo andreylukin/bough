@@ -240,6 +240,29 @@ func TestControlBlockReleaseError(t *testing.T) {
 	}
 }
 
+// A held turn released with Bash answers with a bash tool call instead
+// of text: the engine runs it, records the call with its exit, and asks
+// the model again, which takes the next queued turn. That is how a test
+// puts a failed test run into a session that is still running.
+func TestControlBlockReleaseBash(t *testing.T) {
+	t.Parallel()
+	r := start(t, "--json")
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "never sent"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "after the call"})
+	ReleaseWith(t, r.dir(), "001", Turn{Bash: "echo ran-by-control; exit 3 # go test"})
+	r.waitFor("after the call")
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "ran-by-control") || strings.Contains(out, "never sent") {
+		t.Fatalf("the release did not run its bash call:\n%s", out)
+	}
+	WaitTaken(t, r.dir(), "002", time.Second)
+}
+
 // Block holds the request until the test releases it: nothing replies
 // while it is held, and the queued text arrives once it is released.
 func TestControlBlock(t *testing.T) {
