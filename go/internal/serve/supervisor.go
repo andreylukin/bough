@@ -81,6 +81,9 @@ type SessionMeta struct {
 	// parent. On disk because a restarted serve that re-adopts a child
 	// would otherwise report its old turn again when the process exits.
 	Reported int64 `json:"reported,omitempty"`
+	// Request is the client's request id for the create that made this
+	// session (CreateOnce), so a retried create finds it after a restart.
+	Request string `json:"request,omitempty"`
 }
 
 // Project is one project. The DIRECTORY is the project:
@@ -213,6 +216,13 @@ type Supervisor struct {
 	// createMu serializes Create so two callers cannot both claim the
 	// same freshly-appeared history id.
 	createMu sync.Mutex
+
+	// reqLocks serializes SendOnce and PromptState per session, so two
+	// requests under one id cannot both find it new and both write.
+	// reqs is each session's request ids (requests.go), under mu.
+	reqLocks    map[string]*sync.Mutex
+	createReqMu sync.Mutex // CreateOnce: one create per request id
+	reqs        map[string]map[string]*promptReq
 
 	// mainMu guards mainLocks; each entry serializes Main for ONE slug.
 	// Not s.mu: minting a main thread runs Create, which blocks for up
