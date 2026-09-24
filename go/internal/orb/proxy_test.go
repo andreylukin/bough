@@ -18,18 +18,17 @@ import (
 )
 
 func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
-	// Not parallel: it swaps hostBough.
+	t.Parallel()
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; cat; echo oops >&2; exit 3\n"), 0o755)
-	prev := hostBough
-	hostBough = func() (string, error) { return fake, nil }
-	defer func() { hostBough = prev }()
-	p, err := startProxy("127.0.0.1", "")
+	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer p.Close()
+	client, closeIdle := ownClient()
+	defer closeIdle()
 
 	// The framing the shim writes: one base64 arg per line, a blank
 	// line, then base64 stdin.
@@ -42,7 +41,7 @@ func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
 		return b.String()
 	}
 	post := func(body string) (*http.Response, string, string, int) {
-		resp, err := http.Post(p.URL()+"/bough/exec", "text/plain", strings.NewReader(body))
+		resp, err := client.Post(p.URL()+"/bough/exec", "text/plain", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,17 +87,29 @@ func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
 	}
 }
 
+// ownClient is an HTTP client whose connections the test closes before
+// the proxy's: http.DefaultClient can hold a spare dialed connection that
+// never sends a request, and Shutdown waits on it until Close's one-second
+// timeout, so the test took 1 s about every other run.
+func ownClient() (*http.Client, func()) {
+	tr := &http.Transport{}
+	return &http.Client{Transport: tr}, tr.CloseIdleConnections
+}
+
+// fakeBough is a proxy's host bough that is the script at path.
+func fakeBough(path string) func() (string, error) {
+	return func() (string, error) { return path, nil }
+}
+
 func TestShimRelaysThroughHost(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not installed")
 	}
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; exit 2\n"), 0o755)
-	prev := hostBough
-	hostBough = func() (string, error) { return fake, nil }
-	defer func() { hostBough = prev }()
-	p, err := startProxy("127.0.0.1", "")
+	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,16 +131,14 @@ func TestShimRelaysThroughHost(t *testing.T) {
 // with "python3: not found" and nothing said why; PATH here is cut down
 // to the bare coreutils an image is fair to assume.
 func TestShimNeedsOnlyBashAndBase64(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not installed")
 	}
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; cat; exit 0\n"), 0o755)
-	prev := hostBough
-	hostBough = func() (string, error) { return fake, nil }
-	defer func() { hostBough = prev }()
-	p, err := startProxy("127.0.0.1", "")
+	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +233,8 @@ func TestProxyRequiresToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
+	client, closeIdle := ownClient()
+	defer closeIdle()
 	if !strings.Contains(p.URL(), "bough:s3cret-token@") || strings.Contains(p.Addr(), "s3cret") {
 		t.Fatalf("url %q addr %q", p.URL(), p.Addr())
 	}
@@ -266,7 +277,7 @@ func TestProxyRequiresToken(t *testing.T) {
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,16 +294,14 @@ func TestProxyRequiresToken(t *testing.T) {
 }
 
 func TestShimSendsToken(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not installed")
 	}
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho ok\n"), 0o755)
-	prev := hostBough
-	hostBough = func() (string, error) { return fake, nil }
-	defer func() { hostBough = prev }()
-	p, err := startProxy("127.0.0.1", "tok-12345")
+	p, err := startProxyBin("127.0.0.1", "tok-12345", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}

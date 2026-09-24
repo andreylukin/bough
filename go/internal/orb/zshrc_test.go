@@ -14,10 +14,34 @@ import (
 	"github.com/andreylukin/bough/internal/secrets"
 )
 
-// Tests never read the developer's ~/.zshrc.
+// testKeychain is every keychain item the tests read, one project slug
+// per test. One fake for the whole package, not one swapped in per test,
+// so the tests that resolve secrets can run in parallel.
+var testKeychain = map[string]string{
+	"bough/p/GOOD":        "s3cr3t-value",
+	"bough/sec/DEVPI_URL": "https://devpi.test/one",
+	"bough/sec/LATER":     "later-value",
+	"bough/red/API_KEY":   "sk-live-0123456789",
+	"bough/red/PORT":      "8080",
+	"bough/zrc/API_KEY":   "sk-live-0123456789",
+}
+
+// Tests never read the developer's ~/.zshrc, keychain, gh login or
+// global git config. The host CLIs cost two processes per Open, too.
 func TestMain(m *testing.M) {
 	hostShellEnv = func() map[string]string { return nil }
-	os.Exit(m.Run())
+	hostCommand = func(string, ...string) string { return "" }
+	secrets.KeychainRead = func(service string) (string, error) {
+		if v, ok := testKeychain[service]; ok {
+			return v, nil
+		}
+		return "", secrets.ErrNotFound
+	}
+	code := m.Run()
+	if repoTemplate.dir != "" {
+		os.RemoveAll(repoTemplate.dir)
+	}
+	os.Exit(code)
 }
 
 func TestShellEnvDiff(t *testing.T) {
@@ -42,17 +66,12 @@ func TestShellEnvDiff(t *testing.T) {
 // zshrc exports reach execs as secrets and are redacted; project env and
 // resolved secrets of the same name win.
 func TestOrbShellEnv(t *testing.T) {
-	oldRead, oldShell := secrets.KeychainRead, hostShellEnv
+	// Not parallel: it swaps hostShellEnv, which every Open reads.
+	oldShell := hostShellEnv
 	t.Cleanup(func() {
-		secrets.KeychainRead, hostShellEnv = oldRead, oldShell
+		hostShellEnv = oldShell
 		shellEnvCache.at = time.Time{}
 	})
-	secrets.KeychainRead = func(service string) (string, error) {
-		if service == "bough/zrc/API_KEY" {
-			return "sk-live-0123456789", nil
-		}
-		return "", secrets.ErrNotFound
-	}
 	hostShellEnv = func() map[string]string {
 		return map[string]string{"NOTION_KEY": "ntn-0123456789", "API_KEY": "from-zshrc-0000", "GOFLAGS": "-from-zshrc"}
 	}
