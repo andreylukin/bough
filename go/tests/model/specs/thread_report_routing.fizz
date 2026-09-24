@@ -27,7 +27,10 @@
 # landed counts the current turn's report in the conversation MainID
 # shows; dropped is a report notifyFrom threw away (no parent file).
 # mem/disk are whether Reported covers the current turn in memory and in
-# meta.json: report() sets it and saves best-effort.
+# meta.json: report() sets it and saves best-effort. meta.json is one
+# file written whole from memory, so every later save (an archive, a
+# re-mint, an unarchive, an agent's start or its own report) writes a
+# Reported a failed save left in memory: disk = mem at each of them.
 #
 # slot is another agent holding the one running slot (the cap is folded
 # to 1: the thread is queued exactly when the slot is held).
@@ -77,6 +80,9 @@ role Project:
         # is steering, another flow) and not in the archive's own window.
         require self.main in ("idle", "down", "gone")
         require not (self.archived and self.main == "idle")
+        if self.main == "gone" or self.archived:
+            # Main()'s re-mint and the unarchive each save meta.json.
+            self.disk = self.mem
         if self.main == "gone":
             self.gen = self.gen + 1
             # The new main's conversation holds nothing of the old one.
@@ -94,6 +100,7 @@ role Project:
         # is ArchiveMain + ArchiveKill with nothing between.
         require self.main in ("idle", "turn", "down") and not self.archived
         self.archived = True
+        self.disk = self.mem
 
     atomic fair action ArchiveKill:
         require self.archived and self.main in ("idle", "turn")
@@ -166,7 +173,11 @@ role Project:
         # report() with saveMetaLocked failing: the notice still goes
         # out, Reported is only in memory.
         require self.thread == "pending" and not self.mem
-        require not (self.archived and self.main == "idle")
+        # Not inside the archive window at all: it lasts microseconds in
+        # serve, and a test can hold it only by making SetArchived's one
+        # save at the kill, which would write this Reported where serve
+        # would not have. Outside it, mem == disk across the window.
+        require not (self.archived and self.main in ("idle", "turn"))
         require self.tparent == self.gen and self.main != "gone"
         self.mem = True
         self.disk = False
@@ -187,17 +198,22 @@ role Project:
     atomic action ArchiveThread:
         require self.thread in ("done", "interrupted")
         self.thread = "none"
+        self.disk = self.mem
 
     # --- another agent on the running cap.
 
     atomic action SlotTake:
+        # CreateChild saves the new agent's meta.
         require not self.slot and self.thread != "queued"
         self.slot = True
+        self.disk = self.mem
 
     atomic fair action SlotFree:
-        # Its turn ends; drainQueue starts the queued thread at once.
+        # Its turn ends; drainQueue starts the queued thread at once,
+        # and its own report saves its Reported.
         require self.slot
         self.slot = False
+        self.disk = self.mem
         if self.thread == "queued":
             self.thread = "running"
 
