@@ -4841,6 +4841,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               pasted.current = false;
               // Focus moving into the picker (its Retry) keeps it open.
               if (e.relatedTarget instanceof Node && e.currentTarget.parentElement?.querySelector(".mention")?.contains(e.relatedTarget)) return;
+              // An Escape holds only while you stay in the draft: a "/"
+              // typed after coming back (from the Skills picker, say) at
+              // the same spot is a new token, not the one you shut.
+              dismissed.current = "";
               setTrigger(null);
             }}
             onKeyDown={(e) => {
@@ -4869,7 +4873,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                   const rest = d.trimStart(), lead = /^\/(\S+)\s*/.exec(rest);
                   return `/${name} ${lead && known.includes(lead[1]) ? rest.slice(lead[0].length) : rest}`;
                 });
-                document.getElementById("composer")?.focus();
+                // The caret goes after "/name ", where its arguments are
+                // typed, as a mention pick leaves it. At the end it could
+                // sit on a "/" or "@" token the draft already held, which
+                // is a picker shut with no Escape to explain it.
+                const el = composer.current, caret = name.length + 2;
+                requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
               }} />
               <span className="composer-sep" aria-hidden="true" />
               <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} />
