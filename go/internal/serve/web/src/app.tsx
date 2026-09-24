@@ -2479,9 +2479,12 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   const failOut = failBody.split("\n").filter((l) => l.trim()).slice(-3);
   const failName = !fail ? "" : native ? (fail.data?.tool === "bash" ? failNameOf(`tools.bash(${JSON.stringify(failCmd)})`, failBody) : callVerb(str(fail.data?.tool))) || failCmd
     : failNameOf(str(fail.data?.code), resultBody(fail)) || failCmd;
-  // The engine closed the turn with calls still running: they ran on as jobs, in Work.
-  const stillRunning = typeof done.data?.running === "number" ? Math.max(0, done.data.running - (turn.settled ?? 0)) : 0;
   const work = useWork();
+  // The engine closed the turn with calls still running: they ran on as jobs, in Work.
+  // Jobs run in the session's process: with none (a Stop's exit took them)
+  // nothing is running, though no end is recorded until the next child
+  // reports it.
+  const stillRunning = typeof done.data?.running === "number" && work?.live !== false ? Math.max(0, done.data.running - (turn.settled ?? 0)) : 0;
   // The failed call already open on screen says it all; the footer then only points at it.
   const [shownOpen, setShownOpen] = useState(Boolean(fail));
   useEffect(() => {
