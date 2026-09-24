@@ -17,12 +17,15 @@ import (
 )
 
 // Turn is one queued model response. Mode is "ok", "error", "slow" or
-// "block".
+// "block"; a release may also be "call", which answers with a call of
+// Tool with Args (JSON), e.g. the engine's ask.
 type Turn struct {
 	Mode    string `json:"mode"`
 	Text    string `json:"text,omitempty"`
 	Error   string `json:"error,omitempty"`
 	DelayMS int    `json:"delay_ms,omitempty"`
+	Tool    string `json:"tool,omitempty"`
+	Args    string `json:"args,omitempty"`
 }
 
 // Dir is the control dir the row reads when its config names none.

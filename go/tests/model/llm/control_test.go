@@ -251,3 +251,26 @@ func TestControlBlock(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+// A held turn released as a tool call makes the model call that tool:
+// here the engine's ask, so a test can take a session to "needs-you".
+// The next request, once the answer is in, takes the next queued turn.
+func TestControlBlockReleaseCall(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "never sent"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	ReleaseWith(t, r.dir(), "001", Turn{Mode: "call", Tool: "ask", Args: `{"question":"control asks?","options":["yes","no"]}`})
+	r.waitFor("[ask] control asks?")
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "answered and done"})
+	r.send("yes")
+	r.waitFor("[assistant] answered and done")
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "never sent") {
+		t.Fatalf("held text sent despite the call release:\n%s", out)
+	}
+}
