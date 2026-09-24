@@ -89,9 +89,11 @@ async function waitFor(what: string, ok: () => Promise<boolean>, ms = 20_000): P
 // which would run the 20 s spinner out before the state is compared.
 async function waitJobShownIdle(c: Ctx): Promise<void> {
   await waitFor('job still running on the server', async () => !(await jobRunning(c)));
+  // Each nudge waits for the row to go, not a fixed pause: it is usually
+  // gone within a few ms of the read the nudge armed.
   for (let i = 0; i < 6 && (await c.page.locator('.me-job').count()) > 0; i++) {
     await c.page.clock.fastForward(1_000);
-    await c.page.waitForTimeout(150);
+    await c.page.locator('.me-job').first().waitFor({ state: 'detached', timeout: 150 }).catch(() => {});
   }
 }
 

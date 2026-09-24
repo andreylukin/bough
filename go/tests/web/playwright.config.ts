@@ -2,21 +2,24 @@ import { defineConfig } from '@playwright/test';
 import * as os from 'os';
 import * as path from 'path';
 
-// The longest spec files, longest first: the model walks, where one file
-// is most of the run (orb_lifecycle alone has ~1,700 paths). Playwright
-// queues tests project by project and file by file in name order, so
-// each of these is a project ahead of the rest; a heavy file queued last
-// is a tail with most workers idle.
+// The spec files whose walks run longest, the longest single walk first
+// (measured on a full --workers=3 run, 2026-09-24): session_create's one
+// walk takes ~50 s, a ui_changes walk ~40 s, while orb_lifecycle is the
+// most walk-seconds in all (23 walks, ~400 s). Playwright queues tests
+// project by project and file by file in name order, so each of these is
+// a project ahead of the rest; a long walk queued last is a tail with
+// the other workers idle. Re-measure when a flow's walks change.
 const heavy = [
+  'session_create',
+  'ui_changes',
+  'ui_hooks',
+  'ui_projects',
   'orb_lifecycle',
+  'ui_wiki',
+  'ui_palette',
   'live-transcript-sync',
-  'unseen-trouble-ack',
-  'steer-queue',
   'project_main_threads',
-  'turn-lifecycle',
-  'model-effort-controls',
-  'orb-image-build',
-  'changes-review',
+  'unseen-trouble-ack',
 ];
 const file = (name: string) => new RegExp(`/specs/model/${name}\\.spec\\.ts$`);
 
