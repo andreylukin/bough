@@ -18,10 +18,12 @@ deadlock_detection: false
 # row naming its cause, and the queue behind it stops until the cause
 # goes away.
 #
-# THIS SPEC IS THE INTENDED BEHAVIOUR, NOT TODAY'S. Read against main
-# (app.tsx at 5471918e) the page departs from it in four places; each is
-# named at the step or assertion it breaks, and the MBT/browser stages
-# are expected to go red on them:
+# Written as the intended behaviour: read against main (app.tsx at
+# 5471918e) the page departed from it in four places, each named at the
+# step or assertion it breaks. The Go MBT walk went red on 1 to 3 and
+# app.tsx now holds the queue on row.archived and on a send that failed
+# on the network (until a read answers), and Retry re-queues; 4 is
+# still the page's behaviour:
 # 1. The flush guard has no row.archived check, and flushing.current is
 #    reset on every failures.length change: after an archive every
 #    queued message is posted, refused with 409 and turned into a
@@ -59,6 +61,9 @@ deadlock_detection: false
 #             "archived" (409 ErrArchived), "ask" (409 pending ask),
 #             "network" (fetch failed).
 #   draft     a failure row was put back in the composer by Edit.
+#   killed    an archive killed the child while this tab still shows
+#             its turn (running) or its question (needs-you): the
+#             server has no child and no question any more.
 #   made      messages written so far; the next id and a bound.
 #   troubles  refusal causes started (archive here or elsewhere, serve
 #             down, the racing ask); a bound, and the budget refusals
@@ -66,10 +71,14 @@ deadlock_detection: false
 #   refused   refused POSTs so far. Tracked by the client (adapter).
 #
 # Where this departs from the mapped model, and why:
-# - "ChildExit after Kill" stays a step of its own: SetArchived saves
-#   the flag and then kills, and the row can say running (with the
-#   archived flag) until the child is reaped. The flush guard holds on
-#   `running` in that window anyway. Whether an idle child is still up
+# - "ChildExit after Kill" stays a step of its own, but it is the tab
+#   catching up, not the server: SetArchived saves the flag and Kill
+#   waits for the reap, so once archive has answered there is no child
+#   and no question. (The first version of this spec let a question be
+#   answered after its archive and a POST be refused for it; the MBT
+#   walk got "no pending ask" and 409 archived from serve.) The tab's
+#   row says running or needs-you until it re-reads it; `killed` is
+#   that window. The flush guard holds on `running` in it anyway. Whether an idle child is still up
 #   is not a field: nothing on the page shows it, and it doubled the
 #   graph. "Unarchive never spawns a child" is read off the row instead:
 #   unarchiving changes neither the status nor what is in flight.
@@ -99,6 +108,7 @@ role Session:
         self.failures = []
         self.causes = []
         self.draft = False
+        self.killed = False
         self.made = 0
         self.troubles = 0
         self.refused = 0
@@ -158,6 +168,7 @@ role Session:
         require self.serve == "up" and self.troubles < MAX_TROUBLES
         self.archived = True
         self.seen_archived = True
+        self.killed = self.status != "idle"
         self.troubles = self.troubles + 1
 
     # Another tab (or the CLI) archives: this tab learns it at its next
@@ -166,6 +177,7 @@ role Session:
         require not self.archived and not self.seen_archived
         require self.serve == "up" and self.troubles < MAX_TROUBLES
         self.archived = True
+        self.killed = self.status != "idle"
         self.troubles = self.troubles + 1
 
     # Unarchive (only offered on a row the tab shows archived). It only
@@ -192,7 +204,7 @@ role Session:
     # The question is answered (here or elsewhere); its turn runs on.
     atomic action AnswerAsk:
         require self.status == "needs-you" and self.serve == "up"
-        require not self.archived
+        require not self.archived and not self.killed
         self.status = "running"
 
     # ---- the page, serve and the child ----
@@ -209,7 +221,8 @@ role Session:
 
     # The POST's answer, then deliverTo's refresh. Serve refuses in this
     # order: unreachable, a pending ask (API.prompt checks it before
-    # anything else), archived (Send -> ensure).
+    # anything else; an archive's kill took it), archived (Send ->
+    # ensure). An accepted one starts (or steers) a turn in a live child.
     atomic fair action Post:
         require self.inflight >= 0
         m = self.inflight
@@ -218,13 +231,14 @@ role Session:
         if self.serve == "down":
             cause = "network"
             self.offline = True
-        elif self.status == "needs-you":
+        elif self.status == "needs-you" and not self.killed:
             cause = "ask"
         elif self.archived:
             cause = "archived"
             self.seen_archived = True
         else:
             self.status = "running"
+            self.killed = False
         if cause != "":
             # A failure row goes in by id, so a retried message that
             # fails again takes its old place among the rows.
@@ -235,14 +249,15 @@ role Session:
 
     atomic fair action TurnEnds:
         require self.status == "running" and self.serve == "up"
-        require not self.archived
+        require not self.archived and not self.killed
         self.status = "idle"
 
-    # The archived session's child is reaped; its turn (or question) ends
-    # with it.
+    # The tab re-reads the row of a child an archive killed: its turn (or
+    # question) ended with it.
     atomic fair action ChildExit:
-        require self.archived and self.status != "idle"
+        require self.killed
         self.status = "idle"
+        self.killed = False
 
     # This tab's poll catches up with an archive (or unarchive) it did
     # not make.
