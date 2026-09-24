@@ -8,16 +8,20 @@
 #             compiled and vetted (cross), not tested.
 #   cross   — every release target compiles and vets, so a tag never
 #             discovers a build break on an architecture nobody ran
+#   model   — scripts/model-test.sh: the FizzBee models and their tests
+#   web-dist — bun test, typecheck + design check, and a rebuild of the
+#             committed dist/app.js that must match
 #   web-e2e — Playwright specs against real `bough --web` processes,
-#             sharded 2 ways (setup, not the specs, dominates a shard)
+#             sharded 4 ways; each shard uploads a blob report and
+#             web-e2e-report merges them into one HTML report
 name: ci-go
 
 on:
   push:
     branches: [main]
-    paths: ['go/**', '.github/workflows/ci-go.yml']
+    paths: ['go/**', 'scripts/model-test.sh', '.github/workflows/ci-go.yml']
   pull_request:
-    paths: ['go/**', '.github/workflows/ci-go.yml']
+    paths: ['go/**', 'scripts/model-test.sh', '.github/workflows/ci-go.yml']
 
 # A newer push to the same branch or PR supersedes the run in progress.
 concurrency:
@@ -111,16 +115,31 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run check
       - run: bun run build
       - name: dist/app.js matches a fresh build
         run: git diff --exit-code --stat -- dist/app.js
+
+  # The FizzBee models and the model-based tests that drive the real
+  # code from them. The script fetches its own pinned binaries.
+  model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.sum
+      - run: scripts/model-test.sh
 
   web-e2e:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -140,20 +159,59 @@ jobs:
       - run: npm ci
         working-directory: go/tests/web
       - name: Cache Playwright browsers
+        id: pw-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('go/tests/web/package-lock.json') }}
-      - run: npx playwright install --with-deps chromium
+      # The cache holds the browser but not the apt packages it links
+      # against, so a hit still needs the system deps.
+      - name: Install Playwright chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps --only-shell chromium
         working-directory: go/tests/web
-      - run: npx playwright test --shard=${{ matrix.shard }}/2
+      - name: Install Playwright system deps
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+        working-directory: go/tests/web
+      - run: npx playwright test --shard=${{ matrix.shard }}/4
         working-directory: go/tests/web
         env:
           BOUGH_BIN: ${{ github.workspace }}/bough-go-bin
-      - name: Upload traces
-        if: failure()
+      # Uploaded even when green: the merge job needs every shard's blob.
+      - name: Upload blob report
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-traces-shard-${{ matrix.shard }}
-          path: go/tests/web/test-results/
+          name: blob-report-${{ matrix.shard }}
+          path: go/tests/web/blob-report/
+          retention-days: 3
           if-no-files-found: ignore
+
+  # One HTML report for the whole run instead of four to open.
+  web-e2e-report:
+    if: ${{ !cancelled() }}
+    needs: web-e2e
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go/tests/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: go/tests/web/package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          path: go/tests/web/all-blob-reports
+          pattern: blob-report-*
+          merge-multiple: true
+      - run: npx playwright merge-reports --reporter html ./all-blob-reports
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playwright-html-report
+          path: go/tests/web/playwright-report/
+          retention-days: 14
