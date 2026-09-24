@@ -4762,12 +4762,13 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 <p className="send-failed-prompt">{failed.text}</p>
                 <span className="send-failed-meta">
                   {failed.at && <span className="num">Tried {new Date(failed.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</span>}
-                  <button className="link" onClick={() => drop(failed)}>Discard</button>
+                  <button className="link" onClick={() => { drop(failed); composer.current?.focus(); }}>Discard</button>
                 </span>
               </div>
             </details>
             <span className="send-failed-actions">
-              <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer, failed.ask, failed)}>Retry</button>
+              {/* The row goes with the button that had focus: focus lands in the composer, never on the page. */}
+              <button className="btn" disabled={busy} onClick={() => { void deliver(failed.text, failed.answer, failed.ask, failed); composer.current?.focus(); }}>Retry</button>
               {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
               <button className="btn composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
                 onClick={() => { toDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
@@ -4814,7 +4815,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
             aria-label={(row.archived ? "Read-only" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
-            aria-controls={pickerOpen ? "mention-list" : undefined}
+            // The list exists only once it has rows; a loading or failed picker is a status line with no id to point at.
+            aria-controls={pickerOpen && activeOpt ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             disabled={Boolean(row.ask?.secret) || row.archived}
             placeholder={row.archived ? "Read-only" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}

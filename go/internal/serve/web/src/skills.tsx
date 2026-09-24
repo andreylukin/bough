@@ -64,7 +64,8 @@ export function SkillPicker({ session, onPick, disabled = false }: { session: st
               aria-label="Filter skills" aria-controls="skill-list" role="combobox" aria-expanded="true"
               aria-activedescendant={active >= 0 ? "skill-" + active : undefined}
               onChange={(e) => setQ(e.target.value)} onKeyDown={keys} />
-            <div id="skill-list" ref={listbox} className="skills-list" role="listbox" aria-label="Skills">
+            {/* A listbox only once there are options: loading, failed or empty, it holds a status line, which a listbox may not. */}
+            <div id="skill-list" ref={listbox} className="skills-list" role={hits.length ? "listbox" : undefined} aria-label={hits.length ? "Skills" : undefined}>
               {hits.map((s, i) => (
                 <button key={s.name} id={"skill-" + i} role="option" aria-selected={i === active} data-at={i === active ? 1 : 0}
                   tabIndex={-1} className={"skill" + (i === active ? " skill-on" : "")}
@@ -73,9 +74,10 @@ export function SkillPicker({ session, onPick, disabled = false }: { session: st
                   {s.summary && <span className="skill-sum">{s.summary}</span>}
                 </button>
               ))}
+              {/* Retry goes with the line it is on: focus returns to the filter, or it fell out of the dialog. */}
               {hits.length === 0 && (
                 <p className="skills-empty" role="status">
-                  {error ? <>Couldn’t load skills. <button className="link" onClick={retry}>Retry</button></>
+                  {error ? <>Couldn’t load skills. <button className="link" onClick={() => { retry(); field.current?.focus(); }}>Retry</button></>
                     : !all ? (slow ? <><Spinner /> Loading skills…</> : "")
                     : all.length === 0 ? "No skills installed. Create ~/.claude/skills/<name>/SKILL.md"
                     : `No skills match “${q.trim()}”.`}
