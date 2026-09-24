@@ -47,6 +47,8 @@ type API struct {
 	runningMu sync.Mutex
 	running   map[string]bool
 	runningAt time.Time
+	// runningFor overrides runningTTL when set (SetRunningTTL).
+	runningFor time.Duration
 	// start is the directory serve was started in, the folder first-run
 	// setup offers. getenv and setenv are fields so a test neither reads
 	// the developer's keys nor writes the process environment.

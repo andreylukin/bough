@@ -331,12 +331,14 @@ export function OrbSessions({ orbs, titles = {}, onOpen, onStopOrb, onRemoveOrb,
  * One project's orb: the definition files, the snapshot image and the
  * containers sessions run in. Presentational; ProjectsView fetches.
  */
-export function ProjectOrb({ project, detail, log, error, onSave, onBuild, onStopOrb, onRemoveOrb, onOpen, onRetry, titles = {} }: {
+export function ProjectOrb({ project, detail, log, error, actionError, onSave, onBuild, onStopOrb, onRemoveOrb, onOpen, onRetry, titles = {} }: {
   project: Project; detail?: OrbDetail; log: string;
   /** Session id to title, so a container row names the work. */
   titles?: Record<string, string>;
   /** Why the detail could not be read, when it could not. */
   error?: string;
+  /** Why the last Stop, Remove or Build was refused: `error` shows only without a detail. */
+  actionError?: string;
   /** Rejects with the server's parse error, which stays beside the editor. */
   onSave: (name: OrbFile, text: string) => Promise<void>;
   onBuild: () => void; onStopOrb: (session: string) => void; onRemoveOrb?: (session: string) => void;
@@ -389,6 +391,7 @@ export function ProjectOrb({ project, detail, log, error, onSave, onBuild, onSto
       <section className="orb-sec">
         <h3 className="orb-sec-h">Sessions</h3>
         <OrbSessions orbs={detail.orbs} titles={titles} onOpen={onOpen} onStopOrb={onStopOrb} onRemoveOrb={onRemoveOrb} />
+        {actionError && <p className="callout err" role="alert">{actionError}</p>}
       </section>
 
       <section className="orb-sec">

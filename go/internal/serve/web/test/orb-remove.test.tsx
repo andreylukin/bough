@@ -49,3 +49,15 @@ test("B1: the confirm body keeps its line breaks, mirrored in design/bough.css",
     expect(css).toMatch(/\/\* ORB-B1 \*\/[\s\S]*\.dlg-body\{white-space:pre-line\}[\s\S]*\/\* \/ORB-B1 \*\//);
   }
 });
+
+test("B1: a refused Remove orb says why beside the sessions, with the orb read fine", () => {
+  // The 409 for uncommitted work used to land in the read error, which
+  // shows only while there is no detail, and the reload cleared it: a
+  // refused remove left the page as it was, with no word. Found by the
+  // orb lifecycle model walk (go/tests/web/specs/model).
+  const why = 'serve: api: remove orb "s1": uncommitted changes in /d/web; commit or discard them first';
+  const html = renderToStaticMarkup(<ProjectOrb project={{ id: "p1", name: "Web", slug: "web" } as Project}
+    detail={detail([{ session: "s1", status: "stopped" }])} log="" actionError={why}
+    onSave={async () => {}} onBuild={noop} onStopOrb={noop} onRemoveOrb={noop} onRetry={noop} />);
+  expect(html).toMatch(/role="alert"[^>]*>serve: api: remove orb &quot;s1&quot;: uncommitted changes in \/d\/web; commit or discard them first</);
+});

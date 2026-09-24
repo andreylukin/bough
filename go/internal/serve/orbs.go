@@ -193,9 +193,20 @@ func (a *API) containerUp(session string) bool {
 		return false
 	}
 	name := container.OrbName(session)
+	// A stop serve made since the snapshot makes it stale for this
+	// session. The Stop orb handler drops the snapshot itself, but Kill
+	// (archive, a stopped agent) stops through the supervisor, which
+	// cannot reach it, and a restart then showed the stopped container up.
+	a.sup.mu.Lock()
+	stoppedAt, stopped := a.sup.stoppedAt[session]
+	a.sup.mu.Unlock()
 	a.runningMu.Lock()
 	defer a.runningMu.Unlock()
-	if a.running == nil || time.Since(a.runningAt) > runningTTL {
+	ttl := runningTTL
+	if a.runningFor > 0 {
+		ttl = a.runningFor
+	}
+	if a.running == nil || time.Since(a.runningAt) > ttl || (stopped && !stoppedAt.Before(a.runningAt)) {
 		ctx, cancel := context.WithTimeout(context.Background(), runtimeTimeout)
 		names, err := rt.Running(ctx)
 		cancel()
@@ -592,6 +603,11 @@ func (a *API) sessionBuildLog(w http.ResponseWriter, r *http.Request) {
 	// "ok" and stopped at once.
 	if a.building(st.Project) {
 		state = "building"
+	} else if state == "building" && st.Status != orb.StatusBuilding {
+		// build.json is the project's and a child killed mid-build leaves
+		// it "building": a session not building now waits on no build,
+		// and "building" here kept its log polling a dead one.
+		state = "interrupted"
 	}
 	text := ""
 	if f, err := os.Open(orb.ImageLogPath(home, st.Project)); err == nil {
