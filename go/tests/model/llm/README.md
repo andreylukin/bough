@@ -16,6 +16,10 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 | `{"mode":"slow","text":"a b c","delay_ms":300}` | streams `text` a word per `delay_ms` |
 | `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it) |
 
+While a `block` turn is held, each `<name>.say-<n>` the test writes
+(`control.Say`) is streamed as one live assistant delta and renamed
+`<name>.said-<n>`: text the session shows and never records.
+
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
 hanging. Session titles and other `Complete` calls never take a turn.
