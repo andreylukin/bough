@@ -1,0 +1,409 @@
+# Removing a project session's orb, and what it may delete: the web
+# confirm (GET /api/sessions/{id}/orb/remove, then DELETE on the same
+# path), `bough project rm` and `bough project prune`. One session, one
+# repo, one worktree ~/.bough/orbs/<session>/<repo> on branch
+# bough/<session>. Recipe: go/tests/model/README.md.
+#
+# orb_lifecycle.fizz models Remove with one dirty flag and one owner.
+# This spec is about the gaps between what a plan checks and what Remove
+# deletes:
+#   - PlanRemove (internal/orb/cleanup.go) computes Dirty from
+#     state.json's Worktrees only, while Remove (internal/orb/orb.go)
+#     force-removes every dir entry with a .git file and then RemoveAll's
+#     the orb dir. Prepare rewrites state.json with no Worktrees at its
+#     first write (starting/sync), keeps it empty if the sync fails, and
+#     prepareMounts refills it with the project's CURRENT repos only.
+#   - the CLI's plan is made, printed and confirmed with [y/N];
+#     RemovePlanned then trusts it (its own Dirty check reads the plan).
+#   - serve's ownerAlive trusts a pid it did not spawn only if state.json
+#     was written after this serve started.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - The worktree list is emptied not only when a Prepare fails at
+#     sync: EVERY Prepare writes starting(sync) with no Worktrees, so the
+#     whole sync (a network fetch, seconds to minutes) is a window, and
+#     an owner that dies in it leaves it that way (Resume, OwnerGone).
+#   - A serve restart does not leave serve's own children running:
+#     Supervisor.Close kills them. Only another bough (cli) survives it,
+#     and it reads dead to the new serve until it next writes state.json
+#     (ServeRestart, CliWrites).
+#   - The page never sends ?branches=1 (api.removeOrb): only another
+#     client of the API deletes branches through the web path. The spec
+#     takes the worst case, branches pruned on every path; the web
+#     re-plans at delete time, so its branch decisions are fresh.
+#   - The CLI's owner check is a bare kill(pid, 0): any owner, serve's
+#     or another bough's, fresh or not, refuses at plan time.
+#   - "Removing", "BranchesDeleted" and "PartialFailure" are not states a
+#     client can hold: each remove is one request (or one process) that
+#     runs worktree removal, RemoveAll and `git branch -D` in order.
+#     They are folded into the removing step; RuntimeRemoveFails is the
+#     variant of each step in which the container remove fails.
+#   - Branches are deleted even when Remove itself failed (RemovePlanned
+#     joins the errors and carries on).
+#   - Archived sessions (prune's other reason) are left out: prune
+#     eligibility is modelled as the status reason only.
+#
+# Fields (role Orb):
+#   orb        present | none (dir and container gone) | orphan (dir gone,
+#              container left: no state.json names it any more)
+#   file       state.json status: sync (starting, before the worktrees
+#              are added) | running | failed | stopped | none
+#   tracked    state.json's Worktrees names the worktree
+#   dirty      the worktree has uncommitted changes
+#   branch     bough/<session>: merged (an ancestor of the base, or
+#              pushed) | unmerged | deleted
+#   inYml      the repo is still in project.yml
+#   owner      none | serve (serve's child) | cli (another bough that
+#              wrote since serve started) | clistale (another bough, alive,
+#              whose last write is older than serve)
+#   flow       idle | web (the page's confirm is open) | cli (the CLI's
+#              [y/N] prompt is waiting)
+#   pdirty     the CLI plan's Dirty is non-empty (only while flow == cli)
+#   pdel       the CLI plan marks the branch for deletion (idem)
+#   Ghosts, set only by a remove, which say HOW it went wrong:
+#   lost       a dirty worktree was deleted: "" | untracked (state.json
+#              did not name it) | stale (a CLI plan older than the edit)
+#              | fresh (a fresh plan named it dirty: must never happen)
+#   orphaned   a live owner's orb was deleted: "" | restart (serve read a
+#              live CLI as dead) | stale (the CLI plan's owner check was
+#              older than the resume) | fresh (must never happen)
+#   blost      an unmerged branch was deleted: "" | stale | fresh
+#   killed     a refused remove had ended serve's own child first
+#   reported   the last remove returned an error (container not removed)
+
+role Orb:
+    action Init:
+        # A session that ran and exited cleanly: stopped orb, clean
+        # worktree on a branch that is still at its base.
+        self.orb = "present"
+        self.file = "stopped"
+        self.tracked = True
+        self.dirty = False
+        self.branch = "merged"
+        self.inYml = True
+        self.owner = "none"
+        self.flow = "idle"
+        self.pdirty = False
+        self.pdel = False
+        self.lost = ""
+        self.orphaned = ""
+        self.blost = ""
+        self.killed = False
+        self.reported = False
+
+    # --- the session ---
+
+    # Prepare's first write: state.json starting(sync) with no Worktrees,
+    # PID the new process. serve's child for a web session, another
+    # bough for a CLI one. The orb dir (and the worktree in it) stays; a
+    # removed orb is made again (MkdirAll; its container, if one was left
+    # behind, is found by name).
+    atomic action ResumeByServe:
+        require self.owner == "none"
+        self.owner = "serve"
+        self.prepare()
+
+    atomic action ResumeByCli:
+        require self.owner == "none"
+        self.owner = "cli"
+        self.prepare()
+
+    # SyncRepos passed; prepareMounts re-adds (or keeps) a worktree per
+    # repo in project.yml and names exactly those. Build and container
+    # start are folded in: they write no Worktrees.
+    atomic fair action SyncOk:
+        require self.owner != "none" and self.file == "sync"
+        self.file = "running"
+        self.tracked = self.inYml
+        self.wrote()
+
+    # SyncRepos failed: o.fail writes failed with the still-empty map.
+    atomic action PrepareFailedAtSync:
+        require self.owner != "none" and self.file == "sync"
+        self.file = "failed"
+        self.wrote()
+
+    # The agent edits the mounted worktree; a repo no longer in
+    # project.yml is not mounted, so only a tracked worktree is edited.
+    atomic action AgentEdits:
+        require self.owner != "none" and self.file == "running" and self.tracked and not self.dirty
+        self.dirty = True
+
+    atomic action AgentCommits:
+        require self.owner != "none" and self.file == "running" and self.tracked and self.dirty
+        self.dirty = False
+        self.branch = "unmerged"
+
+    atomic action AgentPushes:
+        require self.owner != "none" and self.file == "running" and self.branch == "unmerged"
+        self.branch = "merged"
+
+    # The session exits (or crashes). A clean exit's Orb.Stop writes
+    # stopped; a crash in sync leaves starting behind, which is the
+    # state prune treats as dead.
+    atomic action OwnerGone:
+        require self.owner != "none"
+        self.owner = "none"
+        if self.file == "running":
+            self.file = "stopped"
+
+    # A live CLI session writes state.json again (an exec restarting the
+    # container, a portal): the new serve believes its pid again.
+    atomic action CliWrites:
+        require self.owner == "clistale" and self.orb == "present"
+        self.owner = "cli"
+
+    # The person drops the repo from project.yml. Its worktree stays in
+    # the orb dir; the next Prepare no longer names it.
+    atomic action RepoRemovedFromProjectYml:
+        require self.inYml and self.orb == "present"
+        self.inYml = False
+
+    # serve restarts: Close kills its children (their orbs stop), and
+    # another bough's pid now predates serve.started.
+    atomic action ServeRestart:
+        require self.owner in ("serve", "cli")
+        if self.owner == "serve":
+            self.owner = "none"
+            if self.file == "running":
+                self.file = "stopped"
+        else:
+            self.owner = "clistale"
+
+    # --- web: Remove orb in the project page ---
+
+    # GET .../orb/remove, shown in the confirm. The page's plan is only
+    # shown: DELETE plans again.
+    atomic action OpenRemovePlan:
+        require self.orb == "present" and self.flow == "idle"
+        self.flow = "web"
+        self.killed = False
+        self.reported = False
+
+    atomic fair action Cancel:
+        require self.flow == "web"
+        self.flow = "idle"
+
+    atomic action Confirm:
+        require self.flow == "web"
+        self.web_delete(False)
+
+    atomic action ConfirmRuntimeRemoveFails:
+        require self.flow == "web"
+        self.web_delete(True)
+
+    # --- CLI: bough project rm <session> --branches / prune --branches ---
+
+    # ownerAlive (pid alive) refuses; otherwise the plan is printed and
+    # the [y/N] prompt waits.
+    atomic action CliRm:
+        require self.orb == "present" and self.flow == "idle" and self.owner == "none"
+        self.cli_plan()
+
+    # prune plans only orbs whose status says nobody resumes them.
+    atomic action CliPrune:
+        require self.orb == "present" and self.flow == "idle" and self.owner == "none"
+        require self.file in ("sync", "failed")
+        self.cli_plan()
+
+    atomic action CliYes:
+        require self.flow == "cli"
+        self.cli_delete(False)
+
+    atomic action CliYesRuntimeRemoveFails:
+        require self.flow == "cli"
+        self.cli_delete(True)
+
+    atomic fair action CliNo:
+        require self.flow == "cli"
+        self.flow = "idle"
+        self.pdirty = False
+        self.pdel = False
+
+    # --yes: plan and remove in one go, no window.
+    atomic action CliRmYes:
+        require self.orb == "present" and self.flow == "idle" and self.owner == "none"
+        self.cli_plan()
+        self.cli_delete(False)
+
+    # --- helpers (atomic: see orb_lifecycle.fizz) ---
+
+    atomic func prepare():
+        if self.orb != "present":
+            # A new orb: the last remove's record is checked already
+            # (every assertion runs on the state right after it).
+            self.orb = "present"
+            self.reported = False
+            self.lost = ""
+            self.orphaned = ""
+            self.blost = ""
+            if self.branch == "deleted":
+                self.branch = "merged"
+        self.file = "sync"
+        self.tracked = False
+        self.killed = False
+        self.wrote()
+
+    atomic func wrote():
+        if self.owner == "clistale":
+            self.owner = "cli"
+
+    atomic func cli_plan():
+        self.flow = "cli"
+        self.killed = False
+        self.reported = False
+        self.pdirty = plan_dirty(self)
+        self.pdel = plan_del(self)
+
+    # removeOrb: 404 without an orb; serve's own child killed first;
+    # another bough refused while ownerAlive; then a fresh plan and its
+    # dirty refusal; then RemovePlanned.
+    atomic func web_delete(rtfail):
+        self.flow = "idle"
+        if self.orb != "present":
+            return
+        if self.owner == "serve":
+            self.killed = True
+            self.owner = "none"
+            if self.file == "running":
+                self.file = "stopped"
+        elif self.owner == "cli":
+            return
+        if plan_dirty(self):
+            return
+        self.killed = False
+        self.remove(plan_del(self), rtfail, False)
+
+    # RemovePlanned on the plan made before the prompt.
+    atomic func cli_delete(rtfail):
+        self.flow = "idle"
+        pd = self.pdirty
+        pdel = self.pdel
+        self.pdirty = False
+        self.pdel = False
+        if self.orb != "present" or pd:
+            return
+        self.remove(pdel, rtfail, True)
+
+    # orb.Remove then the planned `git branch -D`: every worktree dir is
+    # force-removed, the orb dir RemoveAll'd whether or not the container
+    # remove worked; branches are deleted either way.
+    atomic func remove(delb, rtfail, stale):
+        if self.dirty:
+            if not self.tracked:
+                self.lost = "untracked"
+            elif stale:
+                self.lost = "stale"
+            else:
+                self.lost = "fresh"
+        if self.owner != "none":
+            if self.owner == "clistale" and not stale:
+                self.orphaned = "restart"
+            elif stale:
+                self.orphaned = "stale"
+            else:
+                self.orphaned = "fresh"
+        if delb:
+            if self.branch == "unmerged":
+                self.blost = "stale" if stale else "fresh"
+            self.branch = "deleted"
+        self.orb = "orphan" if rtfail else "none"
+        self.reported = rtfail
+        self.file = "none"
+        self.tracked = False
+        self.dirty = False
+
+# PlanRemove: Dirty from the tracked worktree; the branch marked for
+# deletion when merged/pushed, its worktree not dirty, and the repo
+# reachable from project.yml or state.json.
+def plan_dirty(o):
+    return o.tracked and o.dirty
+
+def plan_del(o):
+    return o.branch == "merged" and (o.inYml or o.tracked) and not (o.tracked and o.dirty)
+
+action Init:
+    orb = Orb()
+
+# No remove deletes uncommitted work it was able to see: a worktree a
+# fresh plan names is never deleted dirty. The full claim (lost == "")
+# fails; see UntrackedWorktreeLost and StaleCliPlan below.
+always assertion NoTrackedDirtyWorkLostOnAFreshPlan:
+    return orb.lost in ("", "untracked", "stale")
+
+# A remove never deletes the orb of a session whose owner it could see
+# alive. The full claim (owner != none -> orb present) fails; see
+# ServeRestartForgetsCliOwner and StaleCliPlan below.
+always assertion LiveOwnerKeepsOrb:
+    return orb.orphaned in ("", "restart", "stale") and (orb.owner == "none" or orb.orb == "present" or orb.orphaned != "")
+
+# An unmerged branch is never deleted on a fresh plan. The full claim
+# (blost == "") fails; see StaleCliPlan below.
+always assertion UnmergedBranchKeptOnAFreshPlan:
+    return orb.blost in ("", "stale")
+
+# A refused remove deletes nothing: the orb and its worktree are there.
+# (It may still have ended the session: see KillBeforeDirtyCheck.)
+always assertion RefusedRemoveDeletesNothing:
+    return not orb.killed or (orb.orb == "present" and orb.owner == "none")
+
+# A container a remove left behind was reported as an error. Nothing
+# else names it afterwards: see OrphanContainer.
+always assertion LeftoverContainerReported:
+    return orb.orb != "orphan" or orb.reported
+
+# The CLI plan exists only while its prompt waits.
+always assertion PlanOnlyWhilePrompting:
+    return orb.flow == "cli" or not (orb.pdirty or orb.pdel)
+
+# A remove in progress ends: the confirm and the prompt are answered
+# (Cancel / CliNo are fair: a person eventually closes them).
+always eventually assertion RemoveEnds:
+    return orb.flow == "idle"
+
+# A live owner's sync ends (ok or failed): the empty-Worktrees window
+# closes while its process lives.
+always eventually assertion SyncWindowCloses:
+    return orb.file != "sync" or orb.owner == "none"
+
+# The mapped claims the code breaks. Each was added to this spec as an
+# assertion and fails; fizz's shortest counterexamples (action names
+# from this spec):
+#
+# UntrackedWorktreeLost: no remove path deletes a worktree with
+# uncommitted changes, including dirs state.json does not name.
+#   always assertion NoDirtyWorkLost: lost == ""   (lost == "untracked")
+#   ResumeByServe, SyncOk, AgentEdits, OwnerGone, ResumeByServe,
+#   OwnerGone, CliRmYes: the second start died in its sync, state.json
+#   names no worktree, the plan is clean, Remove force-deletes the dirty
+#   one. The same through the web: ... AgentEdits, ServeRestart,
+#   ResumeByServe, OpenRemovePlan, Confirm (the DELETE kills the child in
+#   its sync first); through prune after PrepareFailedAtSync; and after
+#   RepoRemovedFromProjectYml with a successful resume.
+#
+# StaleCliPlan: a confirmed plan is re-validated (dirty, owner, branch)
+# at delete time. `bough project rm` without --yes:
+#   (lost == "stale")      CliRm, ResumeByServe, SyncOk, AgentEdits, CliYes
+#   (orphaned == "stale")  CliRm, ResumeByServe, CliYes: a session
+#                          resumed at the prompt loses its orb; its next
+#                          exec recreates a container over missing
+#                          worktrees.
+#   (blost != "")          CliRm, ResumeByServe, SyncOk, AgentEdits,
+#                          AgentCommits, CliYes: the plan's "merged into
+#                          <base>" deletes the new unmerged commits.
+#
+# ServeRestartForgetsCliOwner: remove never deletes the orb of a session
+# whose owner is alive in any process.
+#   (orphaned == "restart")  ResumeByCli, ServeRestart, OpenRemovePlan,
+#                            Confirm.
+#
+# KillBeforeDirtyCheck: a refused remove changes nothing.
+#   always assertion RefusalKeepsSession: not killed
+#   ResumeByServe, SyncOk, AgentEdits, OpenRemovePlan, Confirm: 409
+#   "uncommitted changes", and serve's child was SIGKILLed first.
+#
+# OrphanContainer: a remove completes or leaves nothing unnamed.
+#   always assertion NoOrphanContainer: orb != "orphan"
+#   OpenRemovePlan, ConfirmRuntimeRemoveFails: the error is returned, but
+#   the orb dir (the only record naming the container) is gone, so no
+#   later list, prune or remove can find it.
