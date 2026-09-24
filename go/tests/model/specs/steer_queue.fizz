@@ -1,0 +1,293 @@
+---
+# The bounds (MAX_MSGS, MAX_STOPS) end every behaviour in a quiet
+# thread with nothing left to do: that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# Steer vs queue while a turn runs, as one thread's composer sees it
+# (web/src/app.tsx Thread: send/deliver, enqueue, the flush effect, the
+# swallowedByStop timer; serve Supervisor.Send/Interrupt; the headless
+# pump's "steer" service).
+#
+# Enter while the turn is live steers it: the line goes to the child at
+# once and lands at the turn's next boundary, or becomes a turn of its
+# own when it arrives after the last one. Cmd/Ctrl+Enter (or Queue)
+# holds the message in the tab's queue; the queue hands its head to
+# deliver() only when the thread is idle with nothing unlanded, one per
+# ended turn. A Stop can swallow a line already written: after the 4 s
+# settle a swallowed steer becomes a "Steer dropped by Stop" failure and
+# a swallowed message goes back to the front of the queue.
+#
+# Fields (all on the Session role; see go/tests/model/README.md):
+#   status   the row's status: idle (done/stopped), running, needs-you
+#            (an armed tools.ask; the server never calls that running)
+#   draft    text left in the composer: "" | "msg" (a stopped prompt put
+#            back) | "answer". Whether a draft is an answer is decided
+#            when it is started (draftAsk), so an answer outlives its
+#            question and the composer then refuses it (askChanged).
+#   queue    queued message ids, oldest first (sessionStorage)
+#   sending  ids of sent, unlanded non-steer rows (Pending with !steer)
+#   steer    the latest steer: pending (its "Steer pending…" row shows),
+#            dropped (a "Steer dropped by Stop" failure shows), or none.
+#            A landed steer is "none": it is a transcript line like any
+#            other, and keeping it apart only multiplied the states.
+#   made     messages written so far (sent, steered or queued); the
+#            next id, and the bound on the model
+#   stops    Stops pressed; bounds the model (repeated Stops can hold a
+#            queue back forever, which is the person's choice)
+#   stop_send, stop_steer
+#            stoppedIds: which unlanded rows were pending at the Stop.
+#            Tracked by the client (adapter), never shown.
+#
+# Where this departs from the mapped model, and why:
+# - The flushing ref is not a field: deliver() adds the flushed row to
+#   `sending` in the same tick, and the flush guard already requires
+#   nothing unlanded; every path that clears the ref (running, a done
+#   or cancelled turn, a failure) also lands or drops that row here.
+# - Stop does not always end in a swallow. Stop with a prompt the child
+#   has not read is HELD by Supervisor.Interrupt until the child takes
+#   it (ch.unread && !ch.inTurn), so usually the prompt lands and its
+#   turn is cancelled at once, and stoppedPrompt() puts its text back in
+#   an empty composer (Start below). The swallow path (Swallow) is the
+#   line the stop's cancel beat to the child: a steer the loop had taken
+#   but not landed, or a prompt that reached a child the row had not
+#   yet shown running.
+# - A steer written after the turn's last boundary is not lost and not
+#   "sent as input" by the client: the child's pump turns it into a new
+#   turn (Finish / SteerAsTurn). The client lands it by that input.
+# - Enter while a queued message is flushing and unlanded is a steer
+#   (live = running || an unlanded prompt), not a second message.
+
+MAX_MSGS = 2
+MAX_STOPS = 1
+
+role Session:
+    # The flow starts with a turn already running (the first prompt is
+    # not what this flow is about), so both messages can be queued.
+    action Init:
+        self.status = "running"
+        self.draft = ""
+        self.queue = []
+        self.sending = []
+        self.steer = "none"
+        self.made = 0
+        self.stops = 0
+        self.stop_send = False
+        self.stop_steer = False
+
+    func live():
+        return self.status == "running" or len(self.sending) > 0
+
+    # The flush effect's guard (app.tsx: running, row.ask, flushing,
+    # unlanded.length, queued.length). A steer row is unlanded too.
+    func flush_ready():
+        return (self.status == "idle" and len(self.sending) == 0
+                and self.steer != "pending" and len(self.queue) > 0)
+
+    # ---- the person ----
+
+    # Send and Enqueue write the message and press the key in one step:
+    # a message draft sitting in the composer is only ever one a Stop
+    # put back there. Typing while a question waits starts an answer.
+
+    # Enter. While live it steers; otherwise it starts a turn. An answer
+    # draft is never sent as a message: once its question is gone the
+    # composer refuses it (askChanged) until it is cleared. The flush
+    # effect runs in the render that makes it ready, before any key the
+    # person can press, so Enter never beats a ready flush.
+    atomic action Send:
+        require self.draft != "answer" and self.status != "needs-you"
+        ready = self.flush_ready()
+        require not ready
+        require self.made < MAX_MSGS
+        live = self.live()
+        if live:
+            require self.steer != "pending"
+            self.steer = "pending"
+        else:
+            self.sending = self.sending + [self.made]
+        self.made = self.made + 1
+        self.draft = ""
+
+    # Cmd/Ctrl+Enter or the Queue button: only while running, and never
+    # an answer draft (the button is not rendered for one, and
+    # enqueue() refuses a draftAsk).
+    atomic action Enqueue:
+        require self.status == "running" and self.draft != "answer"
+        require self.made < MAX_MSGS
+        self.queue = self.queue + [self.made]
+        self.made = self.made + 1
+        self.draft = ""
+
+    # Typing into a blank composer while a question waits: an answer.
+    atomic action WriteAnswer:
+        require self.status == "needs-you" and self.draft == ""
+        self.draft = "answer"
+
+    # Enter on the answer while its question is still armed.
+    atomic action Answer:
+        require self.status == "needs-you" and self.draft == "answer"
+        self.status = "running"
+        self.draft = ""
+
+    # Clear and Remove are keys too: like Enter they never beat a ready
+    # flush. The browser walk showed it: a thread whose turn just ended
+    # has already handed the queue's head to deliver() before any click.
+    atomic action Clear:
+        require self.draft != ""
+        ready = self.flush_ready()
+        require not ready
+        self.draft = ""
+
+    atomic action RemoveQueued:
+        require len(self.queue) > 0
+        ready = self.flush_ready()
+        require not ready
+        i = oneof range(len(self.queue))
+        self.queue = self.queue[:i] + self.queue[i + 1:]
+
+    # Stop (Esc or the button) while the turn is live. It records which
+    # unlanded rows it may have swallowed; a running turn is cancelled.
+    # A turn stopped before any reply puts its prompt back in an empty
+    # composer (stoppedPrompt), as Start does for a held one; one that
+    # already replied (a steer carried it past a Finish) does not.
+    # Whether it replied is not a field here, hence the choice.
+    atomic action Stop:
+        live = self.live()
+        require live and self.stops < MAX_STOPS
+        self.stops = self.stops + 1
+        self.stop_send = len(self.sending) > 0
+        self.stop_steer = self.steer == "pending"
+        if self.status == "running":
+            self.status = "idle"
+            if self.draft == "":
+                # Through a local: fizz 0.5.3 forks on `self.draft =
+                # any [...]` but keeps the old value on both branches.
+                restored = any ["", "msg"]
+                self.draft = restored
+
+    # ---- the page and the child ----
+
+    # The flush effect: the queue's head goes to deliver().
+    atomic fair action Flush:
+        ready = self.flush_ready()
+        require ready
+        self.sending = self.sending + [self.queue[0]]
+        self.queue = self.queue[1:]
+
+    # The child reads the oldest unlanded line and records its input.
+    # After a Stop that was held for it, the turn is cancelled at once
+    # and stoppedPrompt() puts the text back in an empty composer.
+    atomic fair action Start:
+        require self.status == "idle" and len(self.sending) > 0
+        self.sending = self.sending[1:]
+        if self.stop_send:
+            self.stop_send = False
+            if self.draft == "":
+                self.draft = "msg"
+        else:
+            self.status = "running"
+
+    # A pending steer lands at the running turn's next boundary, or in a
+    # turn a Stop cancelled: the engine records the steers queued before
+    # a cancel first (internal/unreal/session/actor.go cancelTurn), so
+    # the page shows it landed, and the model reads it with the next
+    # input.
+    atomic fair action SteerLands:
+        require self.status == "running" or self.stop_steer
+        require self.steer == "pending"
+        self.steer = "none"
+        self.stop_steer = False
+
+    # A steer line the child reads with no turn open is a turn of its own.
+    atomic fair action SteerAsTurn:
+        require self.status == "idle" and self.steer == "pending"
+        require len(self.sending) == 0
+        self.status = "running"
+        self.steer = "none"
+        self.stop_steer = False
+
+    # The turn ends. A steer that missed the last boundary becomes the
+    # next turn's input, so the thread stays running.
+    atomic fair action Finish:
+        require self.status == "running"
+        if self.steer == "pending":
+            self.steer = "none"
+            self.stop_steer = False
+        else:
+            self.status = "idle"
+
+    # The turn asks the person something (tools.ask).
+    atomic action Ask:
+        require self.status == "running" and self.steer != "pending"
+        self.status = "needs-you"
+
+    # The question goes away without this composer's answer (answered
+    # from another client, or the turn moved on): the turn runs again and
+    # an answer draft written for it stays behind.
+    atomic action AskGone:
+        require self.status == "needs-you"
+        self.status = "running"
+
+    # The swallowedByStop timer: 4 s after a Stop settled with rows it
+    # covered still unlanded. A steer is reported dropped; a message
+    # goes back to the front of the queue.
+    atomic fair action Swallow:
+        require self.status == "idle"
+        require ((self.stop_send and len(self.sending) > 0)
+                 or (self.stop_steer and self.steer == "pending"))
+        if self.stop_steer and self.steer == "pending":
+            self.steer = "dropped"
+        if self.stop_send and len(self.sending) > 0:
+            self.queue = self.sending + self.queue
+            self.sending = []
+        self.stop_send = False
+        self.stop_steer = False
+
+action Init:
+    session = Session()
+
+# At most one sent-but-unlanded message at a time (the flush guard and
+# Enter-steers-while-live).
+always assertion AtMostOneInFlight:
+    return len(session.sending) <= 1
+
+# Queue order: oldest first, and a message restored after a Stop is
+# ahead of everything queued after it.
+always assertion QueueInOrder:
+    for i in range(len(session.queue) - 1):
+        if session.queue[i] >= session.queue[i + 1]:
+            return False
+    return True
+
+# A message is sent (a non-steer row appears) only while the thread is
+# idle: never into a running turn, never while a question is armed.
+transition assertion NoSendWhileRunningOrAsk(before, after):
+    if len(after.session.sending) > len(before.session.sending):
+        return before.session.status == "idle"
+    return True
+
+# The queue's head goes first.
+transition assertion FlushTakesHead(before, after):
+    grew = len(after.session.sending) > len(before.session.sending)
+    if grew and len(after.session.queue) < len(before.session.queue):
+        return after.session.sending[-1] == before.session.queue[0]
+    return True
+
+# Only a message draft is ever queued: an id new to the queue (not one
+# restored from `sending`) never comes from an answer draft.
+transition assertion AnswerNeverQueued(before, after):
+    for m in after.session.queue:
+        if m not in before.session.queue and m not in before.session.sending:
+            if before.session.draft == "answer":
+                return False
+    return True
+
+# Liveness: an idle thread drains its queue (a waiting question holds it,
+# by design, until answered).
+always eventually assertion QueueDrains:
+    return len(session.queue) == 0 or session.status == "needs-you"
+
+# A steer ends up landed (as a steer or its own turn) or reported dropped.
+always eventually assertion SteerResolves:
+    return session.steer != "pending"

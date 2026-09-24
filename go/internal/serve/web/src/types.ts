@@ -18,7 +18,9 @@ export type Status =
 export interface Ask {
   id: string;
   text: string;
-  options: string[];
+  /** null for a question that offers none: serve sends Go's nil slice, and
+   *  reading .length off it blanked the whole page. */
+  options: string[] | null;
   seq: number;
   /** tools.secret: the answer is a credential, typed into its own password field. */
   secret?: boolean;
