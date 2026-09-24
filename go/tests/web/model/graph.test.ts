@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -126,12 +126,15 @@ test('a path into a fork is extended to a settled state', () => {
   assert.deepEqual(out.coverage.transitions.uncovered, []);
 });
 
-test('the checked-in door paths.json is what the generator writes', () => {
-  // go/tests/model/tracecheck replays these traces, so they must not drift.
-  const want = readFileSync(join(testdata, 'door', 'paths.json'), 'utf8');
-  const got = JSON.stringify(generate(loadGraph(join(testdata, 'door'))), null, 2) + '\n';
-  assert.equal(got, want);
-});
+// go/tests/model/tracecheck replays door's traces and the browser model
+// specs walk every other spec's, so none may drift from its graph.
+for (const name of readdirSync(testdata).filter((d) => existsSync(join(testdata, d, 'paths.json')))) {
+  test(`the checked-in ${name} paths.json is what the generator writes`, () => {
+    const want = readFileSync(join(testdata, name, 'paths.json'), 'utf8');
+    const got = JSON.stringify(generate(loadGraph(join(testdata, name))), null, 2) + '\n';
+    assert.equal(got, want, `stale; run: scripts/model-test.sh gen ${name}`);
+  });
+}
 
 test('cli writes the JSON and prints the coverage report', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gen-'));

@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"syscall"
@@ -183,6 +184,36 @@ func checkHistory(t *testing.T, g *tracecheck.Graph, entries []history.Entry, pr
 	if v := g.Check(steps); v != nil {
 		b, _ := json.Marshal(steps)
 		t.Errorf("history trace is not a path in the model: %v\ntrace: %s", v, b)
+	}
+}
+
+// TestSpecFixtures keeps testdata/<spec>/ honest: the browser specs walk
+// the paths generated from that checked-in graph, so it must be the
+// graph specs/<spec>.fizz has now. `scripts/model-test.sh gen <spec>`
+// rewrites it.
+func TestSpecFixtures(t *testing.T) {
+	t.Parallel()
+	fizzTools(t)
+	specs, _ := filepath.Glob(filepath.Join(filepath.Dir(specPath("x")), "*.fizz"))
+	if len(specs) == 0 {
+		t.Fatal("no specs under go/tests/model/specs")
+	}
+	for _, p := range specs {
+		name := strings.TrimSuffix(filepath.Base(p), ".fizz")
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			want, err := tracecheck.Load(filepath.Join(filepath.Dir(p), "..", "testdata", name))
+			if err != nil {
+				t.Fatalf("%v (run: scripts/model-test.sh gen %s)", err, name)
+			}
+			got, err := tracecheck.Load(fizzCheck(t, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("testdata/%s is not the graph of specs/%s.fizz; run: scripts/model-test.sh gen %s", name, name, name)
+			}
+		})
 	}
 }
 
