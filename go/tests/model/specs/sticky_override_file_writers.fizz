@@ -354,8 +354,12 @@ role Page:
     atomic action Unpin:
         require self.scene == "triage" and self.mreq == "none"
         require shown_k(self) == "pinned"
-        self.mk = "shown"
-        self.movr = "shown"
+        # Mark unpin only drops the pin: a row the page shows pinned over
+        # a dismissal (PinDismissReordered) stays dismissed, and the
+        # answer says so.
+        if self.mk == "pinned":
+            self.mk = "shown"
+        self.movr = self.mk
         self.merr = False
         self.mpolled = False
 
