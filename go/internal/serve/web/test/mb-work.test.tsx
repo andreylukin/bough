@@ -65,3 +65,9 @@ test("MB-WORK: the Work button carries a glyph, and a job head dots only its fai
 test("MB-WORK: a queued agent's row has Stop, though it is not live", () => {
   expect(dialog([w("1", { life: "queued", live: false, canStop: true })])).toContain('aria-label="Stop agent"');
 });
+
+test("MB-WORK: an agent still starting says Starting, not Running", () => {
+  const html = dialog([w("1", { life: "running", starting: true, canStop: true })]);
+  expect(html).toContain('<span class="work-word">Starting</span>');
+  expect(html).not.toContain('<span class="work-word">Running</span>');
+});

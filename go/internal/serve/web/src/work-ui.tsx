@@ -344,7 +344,11 @@ export function useChildren(row: Row, rows: Row[], tick: number): { children: Ro
   const [children, setChildren] = useState<Row[] | null>(null);
   const [state, setState] = useState<ChildState>(has ? "loading" : "idle");
   const [nonce, setNonce] = useState(0);
-  const sig = `${row.agents?.running ?? 0}:${row.agents?.queued ?? 0}:${row.agents?.total ?? 0}:${tick}`;
+  // A child that goes from starting to running changes no count: its list
+  // row (status, and whether it has recorded anything) is what says it
+  // did, or the dialog kept "Starting" for an agent long under way.
+  const kidRows = rows.filter((r) => r.spawnedBy === row.id).map((r) => `${r.id}/${r.status}/${r.live}/${r.entries > 0}`).join(",");
+  const sig = `${row.agents?.running ?? 0}:${row.agents?.queued ?? 0}:${row.agents?.total ?? 0}:${tick}:${kidRows}`;
   useEffect(() => {
     // No agents left (Stop and archive drops a queued one outright): the
     // last list must go too, or Work kept counting an agent that is gone.
@@ -619,7 +623,7 @@ function WorkRow({ w, now, parent, inReview, inHistory, open, onToggle, onPin, o
       <div className="work-row-meta">
         {[
           // In Finished the check says "Finished"; the meta starts at the kind.
-          !(inHistory && w.life === "finished") && <span key="s" className="work-state" data-life={w.life}><span className="work-word">{LIFE_WORD[w.life]}</span>{w.life === "failed" && w.exit !== undefined && <span className="work-exit"> · exit {w.exit}</span>}</span>,
+          !(inHistory && w.life === "finished") && <span key="s" className="work-state" data-life={w.life}><span className="work-word">{w.starting ? "Starting" : LIFE_WORD[w.life]}</span>{w.life === "failed" && w.exit !== undefined && <span className="work-exit"> · exit {w.exit}</span>}</span>,
           kind && <span key="k">{kind}</span>,
           cause && <span key="c" className="work-cause">{cause}</span>,
           fresh && <span key="n" className="work-new"><span className="work-dot work-dot-accent" aria-hidden="true" />New</span>,
