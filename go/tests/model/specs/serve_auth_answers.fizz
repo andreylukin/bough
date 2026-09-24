@@ -18,8 +18,9 @@ deadlock_detection: false
 #
 # This spec is the behaviour serve and the page OWE, not the code as it
 # stands. Each constant below names a design choice the claims depend
-# on; flipping it to False is the code as it is today (except REFRESH,
-# which already holds), and is also the mutation that shows the claim
+# on; flipping it to False is the code as the spec found it (REFRESH
+# already held; PORT_SCOPED and WAIT_TOKEN hold since the server walk,
+# mbt/serve_auth_answers_test.go), and is also the mutation that shows the claim
 # guarding it can fail:
 #
 #   PORT_SCOPED  the cookie a tab sends is set only by its own serve.
@@ -29,6 +30,7 @@ deadlock_detection: false
 #                another port) overwrites the first serve's cookie and
 #                every /api call of the first tab then answers 401; a
 #                Reload of the first breaks the second the same way.
+#                Now the cookie is named for serve's port (CookieName).
 #   REAUTH_401   a 401 is shown as "reload to re-authorize". Today the
 #                list shows the raw "serve: missing or wrong token" as if
 #                it were any other failure.
@@ -42,7 +44,7 @@ deadlock_detection: false
 #                throws. ContextPage reads c.providers?. and is safe.)
 #   WAIT_TOKEN   a LoadToken inside another's O_EXCL-create-then-write
 #                window returns the creator's token. Today it fails
-#                "serveclient: token file ... is empty".
+#                "serveclient: token file ... is empty". Now it waits.
 #   REFRESH      a child re-reads the token file on every call. True
 #                today, so the suspected "a child's cached token is never
 #                refreshed" does not hold; False shows why it matters.
@@ -79,7 +81,8 @@ deadlock_detection: false
 #            refused_intact (its last call was 401 although the token
 #            file was there to read)
 #   loader   a second LoadToken (another serve starting, a CLI) inside
-#            the create-then-write window: none | error
+#            the create-then-write window: none | waiting (for the
+#            write; it returns that token when it lands) | error
 #
 # Corrections to the mapped model, from the code:
 # - "ClientCachedStale" is only reachable when the token file is gone
@@ -104,8 +107,6 @@ APP = ["loopback", "proxy", "remote"]
 
 # What an /api request from tab A gets back right now.
 def answer(r):
-    if r.via == "unknown":
-        return "403"
     if r.via == "proxy" and r.proxy == "down":
         return "net"
     if r.serve != "up":
@@ -114,6 +115,10 @@ def answer(r):
         if r.via == "proxy":
             return "html502"
         return "net"
+    # Guard refuses a Host it does not answer to, but only a serve that
+    # is listening can refuse anything.
+    if r.via == "unknown":
+        return "403"
     if r.jar_a != "fresh":
         return "401"
     return "ok"
@@ -148,10 +153,13 @@ role Room:
         self.loader = "none"
 
     # GET / on via v, then the page's first list read. The cookie comes
-    # only from a loopback or --host request.
+    # only from a loopback or --host request that reached serve: a load
+    # while serve is not listening (or the proxy is down) gets the
+    # proxy's page or nothing, and no cookie.
     atomic func load(v):
         self.via = v
-        if v in REAUTHORIZABLE:
+        reached = self.serve == "up" and (v != "proxy" or self.proxy != "down")
+        if v in REAUTHORIZABLE and reached:
             self.jar_a = "fresh"
             if not PORT_SCOPED and self.other:
                 self.jar_b = "other"
@@ -279,13 +287,18 @@ role Room:
             self.jar_a = "stale"
         if self.child == "fresh":
             self.child = "stale"
+        if self.loader == "waiting":
+            self.loader = "none"
 
     # A second LoadToken inside the create-then-write window. Owed: it
-    # waits for the write and returns that token, which changes nothing
-    # here (a waiting state only doubled the graph around the window).
+    # waits for the write and returns that token. The wait is a state
+    # of its own: an action that changed nothing would be no link in
+    # the graph, and no walk would ever race a LoadToken.
     atomic action ConcurrentLoadToken:
         require self.disk == "empty" and self.loader == "none"
-        if not WAIT_TOKEN:
+        if WAIT_TOKEN:
+            self.loader = "waiting"
+        else:
             self.loader = "error"
 
     # A child session calls serve (tools.spawn background) with the

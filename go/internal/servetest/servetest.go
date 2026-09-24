@@ -52,6 +52,12 @@ type Options struct {
 	Dir string
 	// ReadyTimeout bounds the wait for /api/health; default 30s.
 	ReadyTimeout time.Duration
+	// Args are more `bough serve` flags (--host=NAME, --insecure-bind).
+	Args []string
+	// Bind is the host serve listens on, "" for 127.0.0.1. Clients
+	// still dial 127.0.0.1: a wildcard bind ("0.0.0.0", with
+	// --insecure-bind) is how a test gets a serve that is not loopback.
+	Bind string
 }
 
 // Server is one running `bough serve --run`.
@@ -75,7 +81,12 @@ type Server struct {
 
 // launch starts serve from bin on s's HOME and address.
 func (s *Server) launch(bin string) error {
-	cmd := exec.Command(bin, "serve", "--run", s.Addr)
+	addr := s.Addr
+	if s.opts.Bind != "" {
+		_, port, _ := net.SplitHostPort(s.Addr)
+		addr = net.JoinHostPort(s.opts.Bind, port)
+	}
+	cmd := exec.Command(bin, append(append([]string{"serve"}, s.opts.Args...), "--run", addr)...)
 	cmd.Dir = filepath.Join(s.Home, s.opts.Dir)
 	if err := os.MkdirAll(cmd.Dir, 0o755); err != nil {
 		return err
