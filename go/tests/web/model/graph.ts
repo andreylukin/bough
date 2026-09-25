@@ -195,7 +195,8 @@ export function walks(g: Graph, cover: Cover, maxSteps = 50): Output {
   const done = (links: number[]) => {
     for (const i of links) { coveredLinks.add(i); seen.add(g.links[i].dest); want.delete(cover === 'states' ? g.links[i].dest : i); }
   };
-  want.delete(0);
+  // Node 0 is where every walk starts; link 0 is a transition to take.
+  if (cover === 'states') want.delete(0);
   const paths: Path[] = [];
   let stuck = 0;
   while (want.size && stuck < 2) {
