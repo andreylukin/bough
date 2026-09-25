@@ -114,7 +114,6 @@ export const QUARANTINED: Record<string, string> = {
   wiki_review: 'ToActivity after an ingest reads the wrong state',
   skills_mentions: 'PickSkill reads the wrong state',
   // Pass locally, fail on a CI runner (2026-09-24, run 35993131696):
-  setup_welcome: 'KeyRejected then SaveKey times out under load (CI; flaky locally)',
   ui_me: "the brief bar's text reads clipped after Refresh on a CI runner",
 };
 
