@@ -111,7 +111,9 @@ jobs:
           GORACE: atexit_sleep_ms=0
         run: |
           set -euo pipefail
-          pkgs=$(go list ./... | grep -v /internal/vtreal | scripts/test-shards.sh ${{ matrix.shard }} 4)
+          # The model job runs MBT with its pinned Fizz tools and a
+          # budget for the complete generated walks.
+          pkgs=$(go list ./... | grep -Ev '/internal/vtreal$|/tests/model/mbt$' | scripts/test-shards.sh ${{ matrix.shard }} 4)
           echo "$pkgs"
           go test -race -parallel 4 -timeout 20m $pkgs
       - name: test (PTY suite)
@@ -183,7 +185,7 @@ jobs:
   model:
     runs-on: ubuntu-latest
     # A push walks every state; the nightly run takes every transition.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 180 || 30 }}
+    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 180 }}
     env:
       MODEL_COVER: ${{ github.event_name == 'schedule' && 'transitions' || '' }}
     steps:

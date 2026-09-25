@@ -63,7 +63,11 @@ export FIZZBEE_MBT_SERVER="$("$root/scripts/fizz.sh" path mbt-server)"
 export FIZZBEE_MBT_BIN="$("$root/scripts/fizz.sh" path mbt-runner)"
 # -count=1: the MBT and llm-control tests build and run the bough binary,
 # a change to which go test's cache cannot see.
-(cd "$root/go" && go test -count=1 -race -parallel 4 -p 4 ./tests/model/...)
+# The complete state walks now exceed Go's default ten-minute timeout;
+# nightly transition coverage walks many more paths through the same code.
+mbt_timeout=90m
+if [ "${MODEL_COVER:-}" = transitions ]; then mbt_timeout=4h; fi
+(cd "$root/go" && go test -count=1 -race -parallel 4 -p 4 -timeout "$mbt_timeout" ./tests/model/...)
 
 # node strips the TS types itself (22.18+); the generator has no deps.
 (cd "$root/go/tests/web" && npm run --silent test:model)
