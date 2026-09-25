@@ -56,6 +56,7 @@ interface Ctx {
   id: string;
   dir: string;
   edited: boolean;  // the world: the agent has written a and b
+  kept: string;     // the page's cards that hold a patch: a closed card shows no DOM, so the walk remembers which answers it let through
   held: Held[];
   pass: Set<Kind>;  // kinds let through for now
   inflight: number; // let through, not answered yet
@@ -147,6 +148,7 @@ function failHeld(c: Ctx, kinds: Kind[]): void {
 // again): what the last one sent is dead, and let go.
 async function remount(c: Ctx, act: () => Promise<void>): Promise<void> {
   const gen = ++c.gen;
+  c.kept = '';
   await act();
   await waitHeld(c, ['edits', 'changes'], gen);
   for (const h of c.held.filter((h) => h.gen < gen && h.kind !== 'diff')) { c.held.splice(c.held.indexOf(h), 1); go(c, h.route); }
@@ -238,6 +240,7 @@ async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
     pick: dom.picks.join(','),
     diff: dom.diff.length === 0 ? 'none' : dom.diff.join(','),
     edited: c.edited,
+    kept: c.kept,
   };
 }
 
@@ -321,7 +324,7 @@ async function invariants(c: Ctx, errors: string[], where: string, route: string
 
 const init = async (page: Page, serve: Serve): Promise<Ctx> => {
   const c: Ctx = {
-    page, serve, id: '', dir: fs.mkdtempSync(path.join(serve.work, 'chg-')), edited: false,
+    page, serve, id: '', dir: fs.mkdtempSync(path.join(serve.work, 'chg-')), edited: false, kept: '',
     held: [], pass: new Set(), inflight: 0, gen: 0, back: 'body', scope: 'session', turns: [],
   };
   checkout(c);
@@ -414,8 +417,9 @@ const actions: Record<string, (c: Ctx) => Promise<void>> = {
     await remount(c, () => c.page.keyboard.press('Escape'));
     c.scope = 'session';
   },
-  ToSession: async (c) => (await tab(c, 'Session edits')).click(),
-  ToTree: async (c) => (await tab(c, 'Working tree')).click(),
+  // A scope switch mounts new cards: none holds a patch yet.
+  async ToSession(c) { await (await tab(c, 'Session edits')).click(); c.kept = ''; },
+  async ToTree(c) { await (await tab(c, 'Working tree')).click(); c.kept = ''; },
   SelectA: (c) => select(c, 'a'),
   SelectH: (c) => select(c, 'h'),
   async Retry(c) {
@@ -460,6 +464,9 @@ const actions: Record<string, (c: Ctx) => Promise<void>> = {
   async DiffAnswer(c) {
     await waitHeld(c, ['diff'], 0);
     await letThrough(c, ['diff']);
+    // The open page card now holds its patch, and keeps it when shut.
+    const open = await onPage(c).locator('details.chg-card[open] .chg-card-path b').allTextContents();
+    for (const f of open) if (!c.kept.includes(f)) c.kept = f === 'a' ? f + c.kept : c.kept + f;
   },
   async PollFails(c) {
     await poll(c);

@@ -339,6 +339,9 @@ modelTests<Ctx>({
       queue(c.dir, c.next, { mode: 'block' });
       releaseCall(c.dir, c.held, { call: { name: 'bash', args: { command: `while [ ! -e ${c.gateF} ]; do sleep 0.05; done; echo gate open` } } });
       c.held = '';
+      // A second call in the same turn runs again: the last one's end no
+      // longer names the running row (the exhaustive walk read native_done).
+      c.callEnded = false;
     },
     CallEnd: (c) => endCall(c),
     async Finish(c) {
