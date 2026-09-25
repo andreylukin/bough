@@ -123,6 +123,30 @@ func TestFreshSessionOnlyMetaIsRemoved(t *testing.T) {
 	}
 }
 
+// A session serve named (session-id) is not a stray: serve answered its
+// create with that id and the page has it open. A child stopped before it
+// recorded its first prompt exits cleanly with only meta, and removing
+// the file made the open thread a 404.
+func TestNamedSessionOnlyMetaIsKept(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := kernel.NewContext()
+	ctx.Provide("session-id", "given-1")
+	if err := (plugin{}).Apply(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	s, err := kernel.Get[*Store](ctx, "history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.Unmount()
+	if filepath.Base(s.Path()) != "given-1.jsonl" {
+		t.Fatalf("path %s, want the given id's file", s.Path())
+	}
+	if _, err := os.Stat(s.Path()); err != nil {
+		t.Fatalf("meta-only session serve named was removed: %v", err)
+	}
+}
+
 func TestPreferCwdAndLastPrompt(t *testing.T) {
 	infos := []SessionInfo{
 		{ID: "a", Cwd: "/x"}, {ID: "b", Cwd: "/here"}, {ID: "c"}, {ID: "d", Cwd: "/here"},

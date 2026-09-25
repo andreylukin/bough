@@ -404,6 +404,17 @@ func askEnded(ev Event, call string) bool {
 	return (t == "ask" || t == "secret") && (call == "" || id == call)
 }
 
+// hlStopped is set once the process has been interrupted (StopInput).
+var hlStopped atomic.Bool
+
+// StopInput stops routing stdin: the launcher calls it the moment a
+// SIGINT/SIGTERM arrives, which always ends the process. serve writes a
+// first prompt while the child is still mounting its rows, and a Stop in
+// that gap reaches a child whose pump has not started yet; the launcher
+// finished the mount anyway, so the pump read the "/" or "!" line and
+// ran it (a shell command the person had just stopped) before the exit.
+func StopInput() { hlStopped.Store(true) }
+
 // hlTyped is BOUGH_TYPED_ANSWERS, which serve sets on every child it
 // runs: an answer then arrives as {"answer", "ask"} naming its question,
 // and an untyped line is never an answer. Guarded by hlMu for tests.
@@ -411,6 +422,9 @@ var hlTyped = os.Getenv("BOUGH_TYPED_ANSWERS") != ""
 
 // hlLineIn routes one stdin line and says where it went.
 func hlLineIn(line string) string {
+	if hlStopped.Load() {
+		return "drop"
+	}
 	// A typed answer goes to the question it names or nowhere: serve
 	// wrote it while that question was armed, and the child may have
 	// timed it out (and asked the next, a secret perhaps) since.

@@ -802,16 +802,18 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	} else {
-		fresh, created = true, true
+		created = true
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("history: home dir: %w", err)
 		}
 		// serve mints a queued background agent's id before its process
-		// exists, so the child must create exactly that file.
+		// exists, so the child must create exactly that file. A session
+		// serve named is never a stray: its create answered with the id,
+		// and removing the file 404ed the thread the page had open.
 		id, _ := kernel.Get[string](ctx, "session-id")
 		if id == "" {
-			id = NewID()
+			fresh, id = true, NewID()
 		}
 		name := id + ".jsonl"
 		if s, err = Open(filepath.Join(home, ".bough", "history", name)); err != nil {
