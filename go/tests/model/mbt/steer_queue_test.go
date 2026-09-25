@@ -345,7 +345,15 @@ func (a *steerQueueAdapter) SteerLands() error {
 		return nil
 	}
 	p := *a.steerRow
-	row, lines, err := a.wait("the steer's input", func(_ serve.Row, ls []serve.Line) bool { return landedAt(ls, p) != 0 })
+	// After a Stop the steer lands in the turn the Stop cancels: the
+	// engine records it before the cancel, so the row still says running
+	// for a moment. The spec's step is the landing together with that
+	// cancel (the thread stays idle); reading the row between the two
+	// reported running (path 47 of the exhaustive walk).
+	stopped := a.stopSteer
+	row, lines, err := a.wait("the steer's input", func(r serve.Row, ls []serve.Line) bool {
+		return landedAt(ls, p) != 0 && (!stopped || r.Status != serve.StatusRunning)
+	})
 	if err != nil {
 		// Written while the message ahead of it was still unlanded, the
 		// line can reach the child before that message opens the turn:
