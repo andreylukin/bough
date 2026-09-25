@@ -916,6 +916,8 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 		// Wait only after both pipes are drained: reaping first closes
 		// them under the readers and loses the child's last lines.
 		wg.Wait()
+		// A model test holds the lease of an exited child open here.
+		testhold.At(fmt.Sprintf("%d.drop", cmd.Process.Pid))
 		err := cmd.Wait()
 		s.mu.Lock()
 		leased := ch.id != "" && s.kids[ch.id] == ch

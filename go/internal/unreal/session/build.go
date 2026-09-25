@@ -220,11 +220,34 @@ func cancelledLast(entries []history.Entry) bool {
 			if e.Data["canceled"] != true {
 				return false
 			}
-		case "input", "assistant", "error", "system":
+		case "system":
+			// A slash command's output (command, [model], system) is not
+			// a turn: a /model after the cancel left the turn cancelled.
+			if j := commandBefore(entries, i); j >= 0 {
+				i = j
+				continue
+			}
+			return false
+		case "input", "assistant", "error":
 			return false
 		}
 	}
 	return false
+}
+
+// commandBefore is the index of the "command" whose output the "system"
+// at i is, or -1 when it is the engine's own (a heartbeat, a cut-off).
+func commandBefore(entries []history.Entry, i int) int {
+	for j := i - 1; j >= 0; j-- {
+		switch entries[j].Kind {
+		case "command":
+			return j
+		case "model":
+		default:
+			return -1
+		}
+	}
+	return -1
 }
 
 // replay seeds both mirrors and the projector from every store item.

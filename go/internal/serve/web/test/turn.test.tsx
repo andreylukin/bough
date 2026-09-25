@@ -56,6 +56,10 @@ test("Stop rescues only rows unsent at Stop, once the turn ended after them", ()
   expect(swallowedByStop([p], new Set(["a"]), [])).toEqual([]);
   expect(swallowedByStop([p], new Set(["a"]), [done])).toEqual([p]);
   expect(swallowedByStop([p], new Set(["a"]), [done, { seq: 7, kind: "input", text: "hi", at: at(2) } as Line])).toEqual([]);
+  // A respawned child closing the turn a dead one left open is not the
+  // stop ending: the row was re-sent as if the stop had swallowed it.
+  const respawn: Line = { seq: 6, kind: "cancelled", at: at(1), data: { interrupted: true } } as Line;
+  expect(swallowedByStop([p], new Set(["a"]), [respawn])).toEqual([]);
 });
 
 // R2-C: Esc mid-stream keeps the partial answer above the Stopped footer.

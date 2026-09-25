@@ -3858,10 +3858,12 @@ export function PendingThread({ sending }: { sending: Pending[] }) {
 }
 
 /** Rows a Stop swallowed: unsent when Stop was pressed, and a done or
- * cancel was recorded after them with no input of theirs. */
+ * cancel was recorded after them with no input of theirs. An interrupted
+ * cancel is a respawned child closing a turn its dead one left open, not
+ * the stop ending anything. */
 export function swallowedByStop(unlanded: Pending[], stopped: Set<string>, lines: Line[]): Pending[] {
   return unlanded.filter((p) => stopped.has(p.id)
-    && lines.some((l) => (l.kind === "done" || l.kind === "cancelled") && l.seq > p.after)
+    && lines.some((l) => (l.kind === "done" || (l.kind === "cancelled" && !l.data?.interrupted)) && l.seq > p.after)
     && !lines.some((l) => l.kind === "input" && l.seq > p.after));
 }
 
@@ -4117,7 +4119,7 @@ export function moveDraft(from: string, to: string, store: Pick<Storage, "getIte
   if (up) { uploads.delete(from); uploads.set(to, up); }
 }
 
-export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject, offline = false }: {
+export function Thread({ row: shown, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject, offline = false }: {
   /** A send failed on the network and no poll has answered since: the queue waits. */
   offline?: boolean;
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
@@ -4143,6 +4145,14 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   /** This session's unrecorded sends, kept by the app across session switches. */
   sending?: Pending[]; setSending?: (f: (q: Pending[]) => Pending[]) => void;
 }) {
+  // An answer serve took (a 200) has left serve's arm, but the question
+  // stays open in history until the turn reads the answer, which a Stop
+  // can beat for good. Shown meanwhile, its options were live and every
+  // click a 409. Keyed by its seq too: a respawned child numbers its asks
+  // afresh, and the next question hid under the old one's id.
+  const [answered, setAnswered] = useState("");
+  const askKeyOf = (a?: { id: string; seq: number }) => (a ? `${a.id}@${a.seq}` : "");
+  const row = useMemo(() => (answered && askKeyOf(shown.ask) === answered ? { ...shown, ask: undefined } : shown), [shown, answered]);
   // The parent still holds the session just left for a render: never show it under this title.
   const lines = loading ? noLines : given;
   // Read once the transcript is: id and length change in the same render, so a switch reads each once.
@@ -4575,8 +4585,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const unlanded = loading ? sending : sending.filter((p) => isCmd(p) ? !cmdLanded(p) && !cmdPassed(p) : inputs.filter((l) => l.seq > p.after && !p.seen?.includes(`${l.seq}|${l.at}`)).length <= prompts.indexOf(p) && !sameText(p));
   // R3-C: a turn is live from the moment its prompt is sent, not only once
   // the row says running: Esc in that gap must stop it, and a message sent
-  // then steers it.
-  const live = running || unlanded.some((p) => !p.steer);
+  // then steers it. A turn waiting on your answer is still one: without
+  // it here the page offered no Stop while a question was up.
+  const live = running || row.status === "needs-you" || unlanded.some((p) => !p.steer);
   // Sends still on their way to the server: a stop waits for them, or it
   // would reach a session with nothing to stop and the prompt would run.
   const inflight = useRef(new Set<Promise<unknown>>());
@@ -4639,6 +4650,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     inflight.current.add(req);
     const error = await req.finally(() => inflight.current.delete(req));
     if (answer) setAnswering(null);
+    if (answer && !error && ask === row.ask?.id) setAnswered(askKeyOf(row.ask));
     if (error) setSending((q) => q.filter((p) => p.id !== id));
     else if (!answer) setSending((q) => q.map((p) => (p.id === id ? { ...p, accepted: true } : p)));
     // Each request is its own row; a retry that fails again replaces its own.
@@ -5615,6 +5627,13 @@ export default function App() {
     retryRef.current = () => { clearTimeout(timer); backoff = 4000; catchUp(); };
     return () => { live = false; clearTimeout(retry); clearTimeout(timer); stop(); };
   }, [selected, loadTry]);
+  // A line recorded with no event after it reached the page only with the
+  // next one: the headless child prints no input, and a model that has not
+  // answered yet sends nothing, so a prompt the turn had already taken
+  // still read "Steer pending…". The list poll's entry count says more
+  // was recorded.
+  const openEntries = rows.find((r) => r.id === selected)?.entries ?? 0;
+  useEffect(() => { if (openEntries && loadedFor === selected) retryRef.current(); }, [openEntries]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The filter reads transcripts too, as ⌘K does: what you remember is
   // often something said ("bg-done"), which no title or branch holds.
@@ -6111,7 +6130,7 @@ export default function App() {
         id: "s:fail", group: "This session", label: "Jump to latest failed call", suggest: true,
         run: () => { setView("sessions"); setSub(null); setPane("thread"); setJump({ id: row.id, turn: 0, seq: latestFail, at: Date.now() }); },
       }] : []),
-      ...(row.status === "running" ? [{
+      ...(row.status === "running" || row.status === "needs-you" ? [{
         id: "s:stop", group: "This session", label: "Stop this turn", suggest: true,
         run: () => act(() => api.interrupt(row.id), "stop the turn"),
       }] : []),

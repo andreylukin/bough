@@ -16,6 +16,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/linegate"
 	"github.com/andreylukin/bough/internal/stepgate"
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -341,7 +342,15 @@ func headlessPump() {
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
 	cwd, _ := os.Getwd()
 	gate := linegate.Open("in", cwd)
+	held := testhold.Dir() != ""
 	for n := 0; sc.Scan(); n++ {
+		if held {
+			go func(n int, line string) {
+				testhold.Line(n, line)
+				hlLineIn(line)
+			}(n+1, sc.Text())
+			continue
+		}
 		done := gate.Hold("")
 		stepped := hlGate.Hold(fmt.Sprintf("in.%d", n))
 		done(hlLineIn(sc.Text()))
