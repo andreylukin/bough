@@ -1,0 +1,325 @@
+# A modal layer up while the route changes under it
+# (go/tests/model/README.md): which subject a dialog still up acts on,
+# which keys may open a second modal over it, and where focus lands when
+# it goes. ui_dialogs.fizz models the dialogs on a fixed route and leaves
+# Back out; ui_narrow.fizz names the popstate gap and requires no dialog
+# for Back. The stack of non-modal layers under a modal, and which one
+# Escape closes, is overlay_escape_stack.fizz (the flow split in two: one
+# spec with both was ~30k states).
+#
+# This spec is the CONTRACT, not a transcript of the code: where the code
+# does something else today, the comment on that action says so, and the
+# mutation that models the code fails one of the claims below. The web
+# code (go/internal/serve/web/src):
+#   dialog.tsx   DialogHost (125-196): push() replaces `req` without
+#                resolving the one up (138-143); no popstate/hashchange
+#                listener at all; the opener is refocused only if still
+#                connected and no aria-modal is up (150-155), else focus
+#                stays on <body>; showShortcuts (93-96) no-ops under any
+#                aria-modal.
+#   app.tsx      the hash router (5376-5385): popstate/hashchange re-read
+#                the route and focusAppOnRoute (273-278) puts focus on
+#                .app unless it is in a field or a [role=dialog]; "/"
+#                (571-585) opens the sidebar search from anything that is
+#                not typing, modal or not; ⌘P/⌥N skip under .dlg-scrim
+#                (5497-5509); archiveRow (5591-5605) awaits askConfirm
+#                with the row it was called for and archives that row;
+#                start (5611-5626) opens the new session by pushState and
+#                closes only the palette; <Thread key={r.id}> (5773).
+#   palette.tsx  usePaletteKey (696-707): ⌘K checks nothing;
+#                closeOnNavigate (160-171): hashchange, popstate and the
+#                720px query close the palette; a pick nulls its opener
+#                (536) and runs after the close (afterClose, 157-160).
+#   projects.tsx GroupMenu's Delete... (187-222): the item unmounts as the
+#                menu closes, so the dialog's opener is gone.
+#
+# Fields:
+#   page    what fills the screen: "A" (session A's thread), "B" (another
+#           session; the one a create lands on) or "projects" (the
+#           Projects page, with project P).
+#   back    the history entry Back returns to, "" for none; fwd likewise
+#           for Forward. Depth one: a push sets back to the page left and
+#           clears fwd; Back swaps the page with back and drops back,
+#           Forward the mirror. Deep enough for "a page left with a
+#           dialog up" and "a page returned to".
+#   layer   the one modal up: "" (none), "palette" (⌘K), "keys" (the ?
+#           sheet), "archive" (askConfirm "Archive this session?" about
+#           A) or "delete" (askText "Delete P?").
+#   about   the subject a DialogHost dialog names: "A", "P" or "".
+#   opener  where focus goes when the layer closes: "page" (the control
+#           that opened it), "app" (.app), "body", or "gone" (it
+#           unmounted: a palette pick, GroupMenu's item); "" with none up.
+#   focus   document.activeElement: "page", "layer" (inside the modal),
+#           "app" or "body".
+#   creating  a create is in flight ("Starting a session...").
+#   archived  A was archived; deleted: P was deleted. Each at most once:
+#           they only take options away (archive_unarchive.fizz,
+#           project_lifecycle.fizz have the way back).
+#   lost    an ask* promise was dropped unresolved.
+#
+# The contract this asks of the code:
+# - A route change (Back, Forward, a create landing) dismisses the layer
+#   up, a DialogHost ask resolving as dismissed.
+# - ⌘K, ? and "/" do nothing while a DialogHost dialog is up.
+# - A layer closing puts focus on its opener, or on .app when the opener
+#   is gone: never on <body> unless focus was already there.
+#
+# Abstractions: the viewport width is not a field: crossing 720px only
+# closes the palette (Resize). "/" on a phone would also swap the pane to
+# the list under the dialog (onShowList = setPane("list")): the contract
+# keeps "/" off under a dialog, so it is one self-loop either way.
+# Cancel, Close and a scrim click are Escape. askChoice (archive with
+# agents) and rename's askText go through the same push: archive stands
+# for them. A failed request is left out (ui_dialogs.fizz).
+#
+# Fairness: the create's answer (CreateLands) is weakly fair; nothing the
+# person does is.
+
+DIALOGS = ("keys", "archive", "delete")
+
+# Where focus lands when the layer closes.
+def land(opener):
+    if opener == "gone":
+        return "app"
+    return opener
+
+role Page:
+    action Init:
+        self.page = "A"
+        self.back = "projects"
+        self.fwd = ""
+        self.layer = ""
+        self.about = ""
+        self.opener = ""
+        self.focus = "page"
+        self.creating = False
+        self.archived = False
+        self.deleted = False
+        self.lost = False
+
+    # Settings > Archive...: closeMore(true) leaves focus on the Settings
+    # button, which becomes the opener; a safe confirm starts on Cancel.
+    atomic action ArchiveMenu:
+        require self.page == "A" and self.layer == "" and not self.archived
+        self.layer = "archive"
+        self.about = "A"
+        self.opener = "page"
+        self.focus = "layer"
+
+    # A project's ... > Delete...: the opener is gone before it is up.
+    atomic action DeleteMenu:
+        require self.page == "projects" and self.layer == "" and not self.deleted
+        self.layer = "delete"
+        self.about = "P"
+        self.opener = "gone"
+        self.focus = "layer"
+
+    atomic action CmdK:
+        require self.layer == ""
+        self.layer = "palette"
+        self.opener = self.focus
+        self.focus = "layer"
+
+    atomic action Question:
+        require self.layer == ""
+        self.layer = "keys"
+        self.opener = self.focus
+        self.focus = "layer"
+
+    # ⌘K, "/" and ? under a DialogHost dialog: nothing moves; the tests
+    # take the step and check that. CODE: ⌘K opens the palette as a
+    # second aria-modal over the dialog, and a pick from it pushes a new
+    # ask over the one up, whose promise never settles; "/" unfolds the
+    # sidebar and focuses its inert search, and on a phone shows the list
+    # under the dialog.
+    atomic action CmdKUnderDialog:
+        require self.layer in DIALOGS
+        self.layer = self.layer
+
+    atomic action SlashUnderDialog:
+        require self.layer in DIALOGS
+        self.layer = self.layer
+
+    atomic action QuestionUnderDialog:
+        require self.layer in DIALOGS
+        self.layer = self.layer
+
+    # Palette picks run after the palette has closed (afterClose), with
+    # its opener nulled: the command decides focus. A pick that asks
+    # pushes onto DialogHost; with a request already up that request's
+    # promise would be dropped (push never resolves it), which only the
+    # ⌘K guard keeps unreachable.
+    atomic action PickArchive:
+        require self.layer == "palette" and self.page == "A" and not self.archived
+        if self.about != "":
+            self.lost = True
+        self.layer = "archive"
+        self.about = "A"
+        self.opener = "gone"
+        self.focus = "layer"
+
+    atomic action PickKeys:
+        require self.layer == "palette"
+        if self.about != "":
+            self.lost = True
+        self.layer = "keys"
+        self.about = ""
+        self.opener = "gone"
+        self.focus = "layer"
+
+    # A Start drops focus to <body> (as ui_dialogs.fizz has it).
+    atomic action PickStart:
+        require self.layer == "palette" and not self.creating
+        self.layer = ""
+        self.opener = ""
+        self.focus = "body"
+        self.creating = True
+
+    atomic action PickProjects:
+        require self.layer == "palette" and self.page != "projects"
+        self.back = self.page
+        self.fwd = ""
+        self.page = "projects"
+        self.layer = ""
+        self.opener = ""
+        self.focus = "app"
+
+    # The viewport crosses 720px: closeOnNavigate closes the palette.
+    atomic action Resize:
+        require self.layer == "palette"
+        self.layer = ""
+        self.focus = land(self.opener)
+        self.opener = ""
+
+    # Escape, Cancel, Close or the scrim: dismissed, nothing asked.
+    atomic action Escape:
+        require self.layer != ""
+        self.layer = ""
+        self.about = ""
+        self.focus = land(self.opener)
+        self.opener = ""
+
+    # The primary button: acts on the subject the dialog names.
+    atomic action Confirm:
+        require self.layer in ("archive", "delete")
+        if self.layer == "archive":
+            self.archived = True
+        else:
+            self.deleted = True
+        self.layer = ""
+        self.about = ""
+        self.focus = land(self.opener)
+        self.opener = ""
+
+    # A nav link or a row: nothing behind a modal is clickable. Pushes.
+    atomic action GoProjects:
+        require self.layer == "" and self.page != "projects"
+        self.back = self.page
+        self.fwd = ""
+        self.page = "projects"
+        self.focus = "page"
+
+    atomic action GoA:
+        require self.layer == "" and self.page != "A"
+        self.back = self.page
+        self.fwd = ""
+        self.page = "A"
+        self.focus = "page"
+
+    atomic action GoB:
+        require self.layer == "" and self.page != "B"
+        self.back = self.page
+        self.fwd = ""
+        self.page = "B"
+        self.focus = "page"
+
+    # Browser Back / Forward (or the phone's edge swipe), with anything
+    # up. The layer is dismissed and focus goes to .app. CODE: the palette
+    # closes (closeOnNavigate) but DialogHost has no popstate listener:
+    # "Archive this session?" stays over the other page, and Confirm
+    # archives A, which is no longer on screen; "Delete P?" stays over a
+    # session.
+    atomic action Back:
+        require self.back != ""
+        self.fwd = self.page
+        self.page = self.back
+        self.back = ""
+        self.layer = ""
+        self.about = ""
+        self.opener = ""
+        self.focus = "app"
+
+    atomic action Forward:
+        require self.fwd != ""
+        self.back = self.page
+        self.page = self.fwd
+        self.fwd = ""
+        self.layer = ""
+        self.about = ""
+        self.opener = ""
+        self.focus = "app"
+
+    # The create's answer: B opens by pushState, the layer up is
+    # dismissed and focus goes to .app. CODE: start closes only the
+    # palette, so an archive confirm opened while it ran stays over B,
+    # still about A.
+    atomic fair action CreateLands:
+        require self.creating
+        self.creating = False
+        if self.page != "B":
+            self.back = self.page
+            self.fwd = ""
+        self.page = "B"
+        if self.layer != "":
+            self.focus = "app"
+        self.layer = ""
+        self.about = ""
+        self.opener = ""
+
+action Init:
+    page = Page()
+
+# A dialog about S is never up while S's page is not on screen.
+always assertion DialogOnItsPage:
+    if page.layer == "archive":
+        return page.about == "A" and page.page == "A"
+    if page.layer == "delete":
+        return page.about == "P" and page.page == "projects"
+    return page.about == ""
+
+# At most one aria-modal surface: the layer field holds one, so a second
+# modal can only show up as a modal opened while one was up.
+transition assertion OneModal(before, after):
+    if before.page.layer != "" and after.page.layer != "" and after.page.layer != before.page.layer:
+        return before.page.layer == "palette"
+    return True
+
+# Every ask* promise resolves: a second push never orphans the first.
+always assertion EveryAskResolves:
+    return not page.lost
+
+# While a modal is up focus is inside it; with none up, not in one.
+always assertion FocusWithLayer:
+    return (page.layer != "") == (page.focus == "layer")
+
+# Confirm acts only on the subject the dialog names, while it is on screen.
+transition assertion ConfirmOnSubject(before, after):
+    if after.page.archived != before.page.archived:
+        return before.page.layer == "archive" and before.page.about == "A" and before.page.page == "A"
+    if after.page.deleted != before.page.deleted:
+        return before.page.layer == "delete" and before.page.about == "P" and before.page.page == "projects"
+    return True
+
+# A layer closing never drops focus to <body>: it lands on the opener
+# (on <body> only if focus was there when the layer opened) or on .app.
+# A picked Start decides focus itself.
+transition assertion FocusNotDropped(before, after):
+    if before.page.layer == "" or after.page.layer != "" or after.page.focus != "body":
+        return True
+    if after.page.creating and not before.page.creating:
+        return True
+    return before.page.opener == "body"
+
+# Liveness: a create in flight lands, whatever is up when it answers.
+always eventually assertion CreateSettles:
+    return not page.creating
