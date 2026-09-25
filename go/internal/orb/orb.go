@@ -192,11 +192,19 @@ func (o *Orb) run(ctx context.Context) error {
 		if ok, ierr := rt.ImageExists(ctx, tag); ierr != nil || ok {
 			return fail(err)
 		}
+		// Building again, and state.json must say so: the session's build
+		// view reads a "building" build.json under a session that is not
+		// building as a builder that died, and stopped following this one.
+		o.state.Status = StatusBuilding
+		o.state.begin(PhaseBuild)
+		writeState(home, o.state)
 		if tag, err = EnsureImage(ctx, rt, home, p, nil); err != nil {
 			return fail(err)
 		}
 		o.state.Image, o.spec.Image = tag, tag
 		o.state.Spec = specKey(o.spec, p.Def.Ports)
+		o.state.Status = StatusStarting
+		o.state.begin(PhaseContainer)
 		writeState(home, o.state)
 		if err := startErr(rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 			return fail(err)
