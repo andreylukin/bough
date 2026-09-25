@@ -1,0 +1,357 @@
+---
+# The bounds (MAX_MSGS, MAX_TROUBLES) end every behaviour in a quiet
+# thread with nothing left to do: that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# The composer's queue draining into a refusal, as one tab sees it
+# (web/src/app.tsx Thread: enqueue, the flush effect, deliver() and its
+# failure rows, Retry/Edit/Discard on a row; App: deliverTo, archiveRow;
+# serve: API.prompt's 409 on a pending ask, Supervisor.Send's
+# ErrArchived, SetArchived).
+#
+# A queued message waits in the tab until the turn ends; the flush effect
+# then hands its head to deliver(). That POST can be refused: the session
+# was archived (here, or in another tab this one has not polled yet),
+# serve is down, or a question (tools.ask) armed between the flush's
+# decision and the POST. The refused head becomes a "Not sent" failure
+# row naming its cause, and the queue behind it stops until the cause
+# goes away.
+#
+# Written as the intended behaviour: read against main (app.tsx at
+# 5471918e) the page departed from it in four places, each named at the
+# step or assertion it breaks. The Go MBT walk went red on 1 to 3 and
+# app.tsx now holds the queue on row.archived and on a send that failed
+# on the network (until a read answers), and Retry re-queues; 4 is
+# still the page's behaviour:
+# 1. The flush guard has no row.archived check, and flushing.current is
+#    reset on every failures.length change: after an archive every
+#    queued message is posted, refused with 409 and turned into a
+#    failure, one per render (Flush; OneRefusalPerTrouble).
+# 2. Nothing holds the queue after a network failure, so with serve
+#    down the same cascade empties the queue into failures (Flush,
+#    `offline`; OneRefusalPerTrouble).
+# 3. Retry calls deliver() at once: while a turn runs it is a steer, so
+#    a retried message lands in the middle of the turn a younger queued
+#    message started (Retry; RetryWaitsItsTurn).
+# 4. A retry that fails again is appended at the end of the failure
+#    rows, not in its place (Post; FailuresInOrder). Out of reach at
+#    these bounds: it takes a third refusal (two rows, then the older
+#    one retried into a third cause), and MAX_TROUBLES = 3 is ~2200
+#    states. The insert by id is kept so the claim reads right.
+#
+# Fields (all on the Session role):
+#   status    the row's status: running | idle | needs-you (an armed
+#             ask). The tab's view equals the server's except for
+#             `archived` (below); a row the page cannot poll (serve
+#             down) does not change here, so the turn only ends while
+#             serve is up.
+#   archived  meta.Archived on the server.
+#   seen_archived  row.archived as this tab has it: set at once when this
+#             tab archives, after a poll (or the refresh after a refused
+#             send) when another tab did.
+#   serve     "up" | "down".
+#   offline   this tab saw a request fail on the network and holds its
+#             queue until serve answers again.
+#   queue     queued message ids, oldest first (sessionStorage).
+#   inflight  the id whose POST the flush (or nothing) has outstanding,
+#             -1 when none. The flushing ref of app.tsx.
+#   failures  failure rows' message ids, oldest first.
+#   causes    each failure row's cause, parallel to `failures`:
+#             "archived" (409 ErrArchived), "ask" (409 pending ask),
+#             "network" (fetch failed).
+#   draft     a failure row was put back in the composer by Edit.
+#   killed    an archive killed the child while this tab still shows
+#             its turn (running) or its question (needs-you): the
+#             server has no child and no question any more.
+#   made      messages written so far; the next id and a bound.
+#   troubles  refusal causes started (archive here or elsewhere, serve
+#             down, the racing ask); a bound, and the budget refusals
+#             are counted against. Tracked by the client (adapter).
+#   refused   refused POSTs so far. Tracked by the client (adapter).
+#
+# Where this departs from the mapped model, and why:
+# - "ChildExit after Kill" stays a step of its own, but it is the tab
+#   catching up, not the server: SetArchived saves the flag and Kill
+#   waits for the reap, so once archive has answered there is no child
+#   and no question. (The first version of this spec let a question be
+#   answered after its archive and a POST be refused for it; the MBT
+#   walk got "no pending ask" and 409 archived from serve.) The tab's
+#   row says running or needs-you until it re-reads it; `killed` is
+#   that window. The flush guard holds on `running` in it anyway. Whether an idle child is still up
+#   is not a field: nothing on the page shows it, and it doubled the
+#   graph. "Unarchive never spawns a child" is read off the row instead:
+#   unarchiving changes neither the status nor what is in flight.
+# - The ask race is a turn another client starts (or a steer the pump
+#   made a turn) that asks while this tab's flushed POST is on its way:
+#   the only way an ask can arm while the tab saw the row idle.
+# - "serve_back" and "retry_in_flight" are not fields: ServeBack clears
+#   `offline`, and a retry goes back to the queue's front and is then
+#   flushed like any queued message (`inflight`).
+# - Answers (failure rows with answer=true) are left out: the queue
+#   never holds an answer.
+
+MAX_MSGS = 2
+MAX_TROUBLES = 2
+
+role Session:
+    # A turn is already running (its prompt is not what this flow is
+    # about), so messages can be queued behind it.
+    action Init:
+        self.status = "running"
+        self.archived = False
+        self.seen_archived = False
+        self.serve = "up"
+        self.offline = False
+        self.queue = []
+        self.inflight = -1
+        self.failures = []
+        self.causes = []
+        self.draft = False
+        self.killed = False
+        self.made = 0
+        self.troubles = 0
+        self.refused = 0
+
+    # ---- the person ----
+
+    # Cmd/Ctrl+Enter or Queue while the turn runs. With an edited failure
+    # in the composer, that text is what is queued (as a new message).
+    atomic action Enqueue:
+        require self.status == "running" and not self.seen_archived
+        require self.made < MAX_MSGS
+        self.queue = self.queue + [self.made]
+        self.made = self.made + 1
+        self.draft = False
+
+    # Remove on the newest queued row. Rows are acted on at fixed places
+    # (this one, and the oldest failure row below), not through a oneof:
+    # fizzbee-mbt checks a step against the fork's intermediate node, and
+    # the forks alone pushed the graph past 1900 nodes.
+    atomic action RemoveQueued:
+        require len(self.queue) > 0
+        self.queue = self.queue[:-1]
+
+    # Retry on the oldest failure row: the message rejoins the queue in
+    # its place, ahead of every younger one, and waits its turn there. It
+    # is never posted past the one-per-turn rule (a steer into a turn a
+    # younger message started). Today it is posted at once (departure 3).
+    atomic fair action Retry:
+        require len(self.failures) > 0
+        m = self.failures[0]
+        j = len([q for q in self.queue if q < m])
+        self.queue = self.queue[:j] + [m] + self.queue[j:]
+        self.failures = self.failures[1:]
+        self.causes = self.causes[1:]
+
+    # Edit on the oldest failure row: the text back in an empty
+    # composer, the row gone.
+    atomic fair action Edit:
+        require len(self.failures) > 0 and not self.draft
+        self.failures = self.failures[1:]
+        self.causes = self.causes[1:]
+        self.draft = True
+
+    atomic fair action Discard:
+        require len(self.failures) > 0
+        self.failures = self.failures[1:]
+        self.causes = self.causes[1:]
+
+    atomic action ClearDraft:
+        require self.draft
+        self.draft = False
+
+    # Archive... in this tab: the row is marked at once (archiveRow's
+    # mark) and serve saves the flag, then kills the child.
+    atomic action ArchiveHere:
+        require not self.archived and not self.seen_archived
+        require self.serve == "up" and self.troubles < MAX_TROUBLES
+        self.archived = True
+        self.seen_archived = True
+        self.killed = self.status != "idle"
+        self.troubles = self.troubles + 1
+
+    # Another tab (or the CLI) archives: this tab learns it at its next
+    # poll, or from the refresh after a refused send.
+    atomic action ArchiveElsewhere:
+        require not self.archived and not self.seen_archived
+        require self.serve == "up" and self.troubles < MAX_TROUBLES
+        self.archived = True
+        self.killed = self.status != "idle"
+        self.troubles = self.troubles + 1
+
+    # Unarchive (only offered on a row the tab shows archived). It only
+    # clears the flag: nothing is spawned until a message is accepted.
+    atomic action Unarchive:
+        require self.archived and self.seen_archived and self.serve == "up"
+        self.archived = False
+        self.seen_archived = False
+
+    atomic action ServeDown:
+        require self.serve == "up" and self.troubles < MAX_TROUBLES
+        self.serve = "down"
+        self.troubles = self.troubles + 1
+
+    # A turn another client started asks while this tab's flushed POST
+    # is on its way (the ask race).
+    atomic action AskArrives:
+        require self.status == "idle" and self.inflight >= 0
+        require not self.archived and self.serve == "up"
+        require self.troubles < MAX_TROUBLES
+        self.status = "needs-you"
+        self.troubles = self.troubles + 1
+
+    # The question is answered (here or elsewhere); its turn runs on.
+    atomic action AnswerAsk:
+        require self.status == "needs-you" and self.serve == "up"
+        require not self.archived and not self.killed
+        self.status = "running"
+
+    # ---- the page, serve and the child ----
+
+    # The flush effect: one queued message per ended turn. Held while the
+    # tab shows the row archived and while it knows serve is unreachable
+    # (departures 1 and 2: today neither holds it).
+    atomic fair action Flush:
+        require self.status == "idle" and self.inflight == -1
+        require len(self.queue) > 0
+        require not self.seen_archived and not self.offline
+        self.inflight = self.queue[0]
+        self.queue = self.queue[1:]
+
+    # The POST's answer, then deliverTo's refresh. Serve refuses in this
+    # order: unreachable, a pending ask (API.prompt checks it before
+    # anything else; an archive's kill took it), archived (Send ->
+    # ensure). An accepted one starts (or steers) a turn in a live child.
+    atomic fair action Post:
+        require self.inflight >= 0
+        m = self.inflight
+        self.inflight = -1
+        cause = ""
+        if self.serve == "down":
+            cause = "network"
+            self.offline = True
+        elif self.status == "needs-you" and not self.killed:
+            cause = "ask"
+        elif self.archived:
+            cause = "archived"
+            self.seen_archived = True
+        else:
+            self.status = "running"
+            self.killed = False
+        if cause != "":
+            # A failure row goes in by id, so a retried message that
+            # fails again takes its old place among the rows.
+            i = len([f for f in self.failures if f < m])
+            self.failures = self.failures[:i] + [m] + self.failures[i:]
+            self.causes = self.causes[:i] + [cause] + self.causes[i:]
+            self.refused = self.refused + 1
+
+    atomic fair action TurnEnds:
+        require self.status == "running" and self.serve == "up"
+        require not self.archived and not self.killed
+        self.status = "idle"
+
+    # The tab re-reads the row of a child an archive killed: its turn (or
+    # question) ended with it.
+    atomic fair action ChildExit:
+        require self.killed
+        self.status = "idle"
+        self.killed = False
+
+    # This tab's poll catches up with an archive (or unarchive) it did
+    # not make.
+    atomic fair action Poll:
+        require self.serve == "up" and self.seen_archived != self.archived
+        self.seen_archived = self.archived
+
+    # Serve answers again; the tab's next poll sees it and lets the
+    # queue go.
+    atomic fair action ServeBack:
+        require self.serve == "down"
+        self.serve = "up"
+        self.offline = False
+
+action Init:
+    session = Session()
+
+# While the tab shows the row archived, or knows serve is down, the
+# queue is never flushed; and never into a running turn or an ask.
+transition assertion FlushOnlyWhenFree(before, after):
+    if after.session.inflight >= 0 and before.session.inflight == -1:
+        if before.session.seen_archived or before.session.offline:
+            return False
+        return before.session.status == "idle"
+    return True
+
+# A refusal stops the queue: each cause (an archive seen here or not, a
+# serve outage, a racing ask) costs at most one refused request, so a
+# tab that has not seen archived=true sends at most one, and the rest of
+# the queue stays queued.
+always assertion OneRefusalPerTrouble:
+    return session.refused <= session.troubles
+
+# The refused head is the only thing a refusal turns into a failure row.
+transition assertion RefusalKeepsQueue(before, after):
+    if len(after.session.failures) > len(before.session.failures):
+        if len(after.session.failures) != len(before.session.failures) + 1:
+            return False
+        return after.session.queue == before.session.queue
+    return True
+
+# Failure rows are in message order and each names its cause.
+always assertion FailuresInOrder:
+    if len(session.failures) != len(session.causes):
+        return False
+    for c in session.causes:
+        if c not in ("archived", "ask", "network"):
+            return False
+    for i in range(len(session.failures) - 1):
+        if session.failures[i] >= session.failures[i + 1]:
+            return False
+    return True
+
+# The queue is in message order: a retried message goes back in front of
+# the younger ones still queued behind it.
+always assertion QueueInOrder:
+    for i in range(len(session.queue) - 1):
+        if session.queue[i] >= session.queue[i + 1]:
+            return False
+    return True
+
+# Retry never posts by itself, and the message goes back ahead of every
+# younger message still queued.
+transition assertion RetryWaitsItsTurn(before, after):
+    back = [m for m in before.session.failures
+            if m in after.session.queue or m == after.session.inflight]
+    if back:
+        m = back[0]
+        if after.session.inflight == m:
+            return False
+        seen = False
+        for q in after.session.queue:
+            if q == m:
+                seen = True
+            elif q > m and not seen:
+                return False
+    return True
+
+# Unarchive never spawns a child or sends anything by itself: the row's
+# status and what is in flight are what they were.
+transition assertion UnarchiveSpawnsNothing(before, after):
+    if before.session.archived and not after.session.archived:
+        if after.session.inflight != before.session.inflight:
+            return False
+        return after.session.status == before.session.status
+    return True
+
+# Liveness: once serve is back, the row unarchived (and seen so) and the
+# ask answered, the queue drains.
+always eventually assertion QueueDrains:
+    return ((len(session.queue) == 0 and session.inflight == -1)
+            or session.archived or session.seen_archived
+            or session.status == "needs-you")
+
+# Every failure row is eventually retried, edited or discarded.
+always eventually assertion FailuresResolve:
+    return len(session.failures) == 0
