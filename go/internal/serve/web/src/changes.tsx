@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { api, type Change, type Scope } from "./api";
 import { Back } from "./app";
 import { changedPath, callFailed, callRunning, isNativeCall, sessionTitle } from "./render";
@@ -394,11 +394,9 @@ function FileCards({ row, files, scope, at, open, turn }: {
 
 function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Change & { patch?: boolean }; scope: Scope; at?: number; first: boolean; turn?: number }) {
   const [open, setOpen] = useState(first);
-  const [diff, setDiff] = useState<{ text: string | null; failed?: boolean }>({ text: null });
+  const [diff, setDiff] = useState<CardDiff>({ text: null });
   const [nonce, setNonce] = useState(0);
   const ref = useRef<HTMLDetailsElement>(null);
-  const shown = changedPath(file.path, row.cwd);
-  const cut = shown.lastIndexOf("/");
   const canDiff = file.patch !== false && file.add >= 0;
   useEffect(() => { if (first) requestAnimationFrame(() => ref.current?.scrollIntoView({ block: "start" })); }, []);
   useEffect(() => {
@@ -409,13 +407,27 @@ function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Chang
       () => { if (live) setDiff({ text: null, failed: true }); });
     return () => { live = false; };
   }, [open, row.id, file.path, scope, at, nonce, canDiff, turn]);
+  return <FileCardView ref={ref} row={row} file={file} scope={scope} open={open} onToggle={setOpen} diff={diff}
+                       onRetry={() => setNonce((n) => n + 1)} />;
+}
+
+type CardDiff = { text: string | null; failed?: boolean };
+
+/** One card as a function of whether it is open and what its patch read returned. */
+export function FileCardView({ ref, row, file, open, onToggle, diff, onRetry }: {
+  ref?: Ref<HTMLDetailsElement>; row: Row; file: Change & { patch?: boolean }; scope: Scope; open: boolean;
+  onToggle: (open: boolean) => void; diff: CardDiff; onRetry: () => void;
+}) {
+  const shown = changedPath(file.path, row.cwd);
+  const cut = shown.lastIndexOf("/");
+  const canDiff = file.patch !== false && file.add >= 0;
   return (
     // The copy button sits beside the summary, over its end: inside it, a
     // button nested in the summary's own button role is announced badly
     // and trips axe's nested-interactive.
     <div className="chg-card-wrap">
     <CopyIcon text={file.path} />
-    <details ref={ref} className="chg-card" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+    <details ref={ref} className="chg-card" open={open} onToggle={(e) => onToggle(e.currentTarget.open)}>
       <summary className="chg-card-head" title={file.path}>
         <svg className="chg-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
@@ -434,8 +446,8 @@ function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Chang
       {open && (file.patch === false ? null
         : !canDiff ? <p className="rt-label chg-card-note">Binary file: no text diff to show</p>
         : diff.text != null ? <DiffBody text={diff.text} />
-        : diff.failed ? <p className="chg-card-note"><InlineFail what="Couldn’t read the diff" onRetry={() => setNonce((n) => n + 1)} /></p>
-        : <div className="chg-card-note"><Pending what="Diff" inline onRetry={() => setNonce((n) => n + 1)} /></div>)}
+        : diff.failed ? <p className="chg-card-note"><InlineFail what="Couldn’t read the diff" onRetry={onRetry} /></p>
+        : <div className="chg-card-note"><Pending what="Diff" inline onRetry={onRetry} /></div>)}
     </details>
     </div>
   );
@@ -451,13 +463,11 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
   /** The full page: every file as a card with its own lazy diff. */
   cards?: boolean;
 }) {
-  const read = (s: Scope) => (s === "session" ? data.session : s === "turn" ? data.turn ?? empty : data.tree);
-  const r = read(scope);
+  const r = readOf(data, scope);
   const [pick, setPick] = useState<string | null>(hashFile);
-  const [diff, setDiff] = useState<{ path: string; text: string | null; failed?: boolean } | null>(null);
+  const [diff, setDiff] = useState<PopDiff | null>(null);
   const files = r.files ?? [];
-  const only = files.length === 1 && files[0].patch !== false ? files[0].path : null;
-  const path = pick ?? only;
+  const path = pick ?? onlyOf(files);
   const file = files.find((f) => f.path === path);
   const first = useRef(true);
   useEffect(() => { if (first.current) { first.current = false; return; } setPick(null); }, [scope]);
@@ -470,7 +480,25 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
     return () => { live = false; };
     // A re-read of the same file set re-fetches its patch too.
   }, [row.id, path, scope, r.at, cards]);
+  return <ChangesBodyView row={row} data={data} scope={scope} onScope={onScope} cards={cards} pick={pick} onPick={setPick} diff={diff} />;
+}
 
+type PopDiff = { path: string; text: string | null; failed?: boolean };
+const readOf = (data: ReturnType<typeof useChanges>, s: Scope) => (s === "session" ? data.session : s === "turn" ? data.turn ?? empty : data.tree);
+/** The one file a list shows at once, with no list. */
+const onlyOf = (files: (Change & { patch?: boolean })[]) => (files.length === 1 && files[0].patch !== false ? files[0].path : null);
+
+/** ChangesBody as a function of the picked file and the patch read for it. */
+export function ChangesBodyView({ row, data, scope, onScope, cards, pick, onPick, diff }: {
+  row: Row; data: ReturnType<typeof useChanges>; scope: Scope; onScope: (s: Scope) => void; cards?: boolean;
+  pick: string | null; onPick: (p: string | null) => void; diff: PopDiff | null;
+}) {
+  const read = (s: Scope) => readOf(data, s);
+  const r = read(scope);
+  const files = r.files ?? [];
+  const only = onlyOf(files);
+  const path = pick ?? only;
+  const file = files.find((f) => f.path === path);
   return (
     <div className="chg">
       <div className={cards ? "chg-toolbar" : "chg-bar"}>
@@ -536,7 +564,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
               <button className={"rt-link rt-file" + (f.path === path ? " chg-on" : "")} title={f.patch === false ? `${f.path} · ${NO_DIFF} See Working tree.` : f.path}
                       aria-current={f.path === path || undefined} disabled={f.patch === false}
                       onClick={() => {
-                        setPick(f.path === pick ? null : f.path);
+                        onPick(f.path === pick ? null : f.path);
                         // The diff sits under the list: bring it into view.
                         requestAnimationFrame(() => document.querySelector(".chg-diff")?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
                       }}>
