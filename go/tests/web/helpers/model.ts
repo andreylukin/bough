@@ -112,7 +112,6 @@ export const QUARANTINED: Record<string, string> = {
   steer_queue: 'Stop leaves the queued message sending, and the draft is not cleared',
   ui_composer: 'a second Skills click shows the cached list; the spec expects loading',
   wiki_review: 'ToActivity after an ingest reads the wrong state',
-  skills_mentions: 'PickSkill reads the wrong state',
   // Pass locally, fail on a CI runner (2026-09-24, run 35993131696):
   ui_me: "the brief bar's text reads clipped after Refresh on a CI runner",
 };
