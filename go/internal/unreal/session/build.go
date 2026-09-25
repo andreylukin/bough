@@ -181,10 +181,30 @@ func (r *Runtime) open(ctx context.Context) error {
 	// results. This process starts unparked, and the coordinator built
 	// at the next input would send those results on their own, ahead of
 	// that input: the model answering an Esc'd call by itself.
-	if cancelledLast(entries) {
-		r.gate.Park(r.sync.calls(), nil)
+	//
+	// A request the dead process had in flight is the same: its input's
+	// turn is over (history closed it as cancelled, or never recorded
+	// it: a full disk lost the input). Unparked, the coordinator sent it
+	// again beside the next input's, and the two took two model answers
+	// for one turn (tests/model/specs/history_io_failure.fizz).
+	if lost := lostInputs(a.m); cancelledLast(entries) || len(lost) > 0 {
+		r.gate.Park(r.sync.calls(), lost)
 	}
 	return nil
+}
+
+// lostInputs are the inputs of the request a dead process left in flight.
+func lostInputs(m *Mirror) []string {
+	if !m.Inflight {
+		return nil
+	}
+	var ids []string
+	for _, r := range m.TurnReasons {
+		if kind, id, _ := strings.Cut(r, ":"); kind == "input" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // cancelledLast: the last turn in history closed as cancelled, by Esc,

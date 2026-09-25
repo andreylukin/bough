@@ -100,6 +100,26 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return true
 		}
 		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask, steer, notify))
+		// Whether history is being saved is a "history" event, so serve
+		// can tell the page (and stop telling it): kept for the loop's
+		// TakeErr, a failed append only ever reached the transcript as a
+		// line, and never on the engine. Installed once runHeadless has
+		// subscribed: a run of failures already under way (a resume's
+		// first appends) is reported on install, and must be printed.
+		if s, ok := hlog.(interface{ SetErrorSink(func(error)) }); ok {
+			s.SetErrorSink(func(err error) {
+				if n, ok := err.(interface{ Notice() string }); ok {
+					fmt.Fprintf(os.Stderr, "bough: history: %s\n", n.Notice())
+					return
+				}
+				_, saved := err.(interface{ Saved() bool })
+				text := "history not saved: " + err.Error()
+				if saved {
+					text = err.Error()
+				}
+				b.publish(Event{Kind: "history", Text: text, Data: map[string]any{"saved": saved}})
+			})
+		}
 		return nil
 	}
 

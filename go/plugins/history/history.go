@@ -6,6 +6,7 @@ package history
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/andreylukin/bough/internal/orb"
@@ -61,9 +63,18 @@ type Store struct {
 	// is the first error of that streak until TakeErr hands it over.
 	failing bool
 	failErr error
-	onErr   func(error)         // SetErrorSink; nil = keep it for TakeErr
-	shared  bool                // another writer's entries were seen (warned once)
-	redact  func(string) string // SetRedact; nil = entries are kept as given
+	// pending are lines a failed write left off the file, oldest first.
+	// They used to be dropped: the disk then lacked a turn's done for
+	// good, and the session read "running" beside an idle child. Every
+	// write puts them down first, and the retry tick (Flush) does while
+	// the child idles.
+	pending [][]byte
+	// faultDir is BOUGH_TEST_HISTORY_FAULT_DIR: while <faultDir>/full
+	// exists every write fails with ENOSPC, the disk a test can fill.
+	faultDir string
+	onErr    func(error)         // SetErrorSink; nil = keep it for TakeErr
+	shared   bool                // another writer's entries were seen (warned once)
+	redact   func(string) string // SetRedact; nil = entries are kept as given
 }
 
 // ConcurrentWriter is reported (to the SetErrorSink, else stderr) the
@@ -78,13 +89,28 @@ func (e ConcurrentWriter) Notice() string {
 	return fmt.Sprintf("another bough is writing this session (its entry seq %d); this instance continues on its own branch", e.Seq)
 }
 
+// Saved is reported to the error sink when a run of failed appends
+// ends: every pending line is on disk again.
+type Saved struct{}
+
+func (Saved) Error() string { return "history saved again" }
+
+// Saved marks the value for sinks that cannot import this package.
+func (Saved) Saved() bool { return true }
+
 // SetErrorSink routes append write errors to f instead of stderr — the
 // TUI owns the terminal, and a stderr line lands over its alt screen.
-// f is called once per run of failures, under the store's lock.
+// f is called once per run of failures, and with Saved when it ends,
+// under the store's lock. A run already under way is reported at once:
+// the store's first appends (resume's) happen before any sink mounts.
 func (s *Store) SetErrorSink(f func(error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onErr = f
+	if f != nil && s.failing && s.failErr != nil {
+		f(s.failErr)
+		s.failErr = nil
+	}
 }
 
 // SetRedact installs a rewrite applied to every string of an entry's data
@@ -141,7 +167,8 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("history: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	// Read as well as append: a torn last line is found by reading back.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("history: %w", err)
 	}
@@ -221,22 +248,40 @@ func readEntries(path string) ([]Entry, error) {
 	}
 	defer f.Close()
 	var entries []Entry
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	line := 0
-	for sc.Scan() {
+	err = eachLine(f, func(b []byte) {
 		line++
 		var e Entry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		if err := json.Unmarshal(b, &e); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: history: %s:%d: skipping corrupt line: %v\n", path, line, err)
-			continue
+			return
 		}
 		entries = append(entries, e)
-	}
-	if err := sc.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	return entries, nil
+}
+
+// eachLine calls fn with every line of r, the last one too when it has
+// no newline. No length cap: Append writes an entry of any size (a huge
+// tool result), and bufio.Scanner's 4 MiB cap made such a file unreadable
+// as a whole — the session vanished from the list and could not resume.
+func eachLine(r io.Reader, fn func([]byte)) error {
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		b, err := br.ReadBytes('\n')
+		if len(b) > 0 {
+			fn(bytes.TrimSuffix(b, []byte("\n")))
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // NewID is a session id: a UUIDv7, so it is unique per session (two
@@ -413,9 +458,20 @@ var (
 )
 
 func List(dir string) ([]SessionInfo, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	// Not filepath.Glob: it ignores I/O errors, so a sessions dir that
+	// could not be read listed as no sessions at all, an empty 200.
+	ents, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("history: list %s: %w", dir, err)
+	}
+	var paths []string
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), ".jsonl") {
+			paths = append(paths, filepath.Join(dir, e.Name()))
+		}
 	}
 	var infos []SessionInfo
 	home, _ := os.UserHomeDir()
@@ -435,8 +491,15 @@ func List(dir string) ([]SessionInfo, error) {
 			continue
 		}
 		entries, err := readEntries(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // removed since the listing
+		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "bough: history: skipping %s: %v\n", p, err)
+			// Still a session: leaving it out made serve answer 404
+			// "unknown session" for a file that exists. Readers of it
+			// get the read error instead.
+			fmt.Fprintf(os.Stderr, "bough: history: %s: %v\n", p, err)
+			infos = append(infos, SessionInfo{ID: strings.TrimSuffix(filepath.Base(p), ".jsonl"), Path: p, ModTime: st.ModTime(), Mode: "local"})
 			continue
 		}
 		title, summary, cwd, from := "", "", "", ""
@@ -575,28 +638,121 @@ func (s *Store) Append(kind string, data map[string]any) Entry {
 	s.last = e.Seq
 	s.entries = append(s.entries, e)
 	line, err := json.Marshal(e)
-	if err == nil {
-		line = append(line, '\n')
+	if err != nil {
+		s.failed(err)
+		return e
+	}
+	s.pending = append(s.pending, append(line, '\n'))
+	s.flushLocked()
+	return e
+}
+
+// Flush writes what failed appends left pending, in order. The retry
+// tick calls it, so a freed disk catches up while the session idles.
+func (s *Store) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) == 0 {
+		return
+	}
+	unlock := lockFile(s.f)
+	defer unlock()
+	s.catchUp()
+	s.flushLocked()
+}
+
+// flushLocked puts the pending lines down, oldest first, after cutting
+// off a torn last line: a write cut part way (ENOSPC mid-line, a crash)
+// leaves a fragment with no newline, and the next line glued to it was
+// skipped as corrupt on every read, so the entry after a failure was the
+// one lost. Caller holds s.mu and the file lock.
+func (s *Store) flushLocked() {
+	err := s.fault()
+	if err == nil && !s.closed {
+		var size int64
+		if size, err = dropTornTail(s.f); err == nil {
+			s.off = min(s.off, size)
+		}
+	}
+	for err == nil && len(s.pending) > 0 {
+		line := s.pending[0]
 		if err = s.write(line); err == nil {
 			s.off += int64(len(line))
+			s.pending = s.pending[1:]
 		}
 	}
 	if err != nil {
-		// A bufio.Writer stays failed after its first error; drop the
-		// lost line so a later append can land once space frees up.
+		// A bufio.Writer stays failed after its first error; reset it
+		// so a later attempt can land once space frees up.
 		s.w.Reset(s.f)
-		if !s.failing {
-			s.failing = true
-			if s.onErr != nil {
-				s.onErr(err)
-			} else {
-				s.failErr = err
+		s.failed(err)
+		return
+	}
+	if s.failing {
+		s.failing = false
+		s.failErr = nil
+		if s.onErr != nil {
+			s.onErr(Saved{})
+		}
+	}
+}
+
+// failed reports the first error of a run of failures.
+func (s *Store) failed(err error) {
+	if s.failing {
+		return
+	}
+	s.failing = true
+	if s.onErr != nil {
+		s.onErr(err)
+	} else {
+		s.failErr = err
+	}
+}
+
+// retryEvery is how often a store with pending lines tries them again.
+const retryEvery = 5 * time.Second
+
+// retry runs the retry tick until the returned func is called. Under
+// the test seam the tick is the test's clock instead: it fires when
+// <faultDir>/<id>.flush appears and removes the file once flushed, so a
+// freed disk stays pending until the test says the tick came.
+func (s *Store) retry() (stop func()) {
+	done := make(chan struct{})
+	every, tick := retryEvery, ""
+	if s.faultDir != "" {
+		every = 20 * time.Millisecond
+		tick = filepath.Join(s.faultDir, strings.TrimSuffix(filepath.Base(s.path), ".jsonl")+".flush")
+	}
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+			}
+			if tick == "" {
+				s.Flush()
+			} else if _, err := os.Stat(tick); err == nil {
+				s.Flush()
+				os.Remove(tick)
 			}
 		}
-	} else {
-		s.failing = false
+	}()
+	return func() { close(done) }
+}
+
+// fault is the test seam's full disk (BOUGH_TEST_HISTORY_FAULT_DIR).
+func (s *Store) fault() error {
+	if s.faultDir == "" {
+		return nil
 	}
-	return e
+	if _, err := os.Stat(filepath.Join(s.faultDir, "full")); err == nil {
+		return fmt.Errorf("history: write %s: %w", s.path, syscall.ENOSPC)
+	}
+	return nil
 }
 
 // catchUp raises seq past any entries other writers appended to the
@@ -612,12 +768,12 @@ func (s *Store) catchUp() {
 	if err != nil || st.Size() <= s.off {
 		return
 	}
-	sc := bufio.NewScanner(io.NewSectionReader(f, s.off, st.Size()-s.off))
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	forked := false
-	for sc.Scan() {
+	// Uncapped, like readEntries: a huge entry another writer appended
+	// must still raise seq past it.
+	_ = eachLine(io.NewSectionReader(f, s.off, st.Size()-s.off), func(b []byte) {
 		var e Entry
-		if json.Unmarshal(sc.Bytes(), &e) == nil && e.Seq > s.seq {
+		if json.Unmarshal(b, &e) == nil && e.Seq > s.seq {
 			s.seq = e.Seq
 			// serve's "notice" is a message dropped in the mailbox, not a
 			// second instance writing the session: it must not warn.
@@ -625,7 +781,7 @@ func (s *Store) catchUp() {
 				forked = true
 			}
 		}
-	}
+	})
 	s.off = st.Size()
 	if !s.shared && forked && s.seq > s.last {
 		s.shared = true
@@ -761,6 +917,9 @@ func (s *Store) Close() error {
 	if s.closed {
 		return nil // unmount can run twice; closing twice is not an error
 	}
+	if len(s.pending) > 0 {
+		s.flushLocked() // a last try: what stays pending is lost with the process
+	}
 	s.closed = true
 	if err := s.w.Flush(); err != nil {
 		return err
@@ -820,6 +979,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	}
+	s.faultDir = os.Getenv("BOUGH_TEST_HISTORY_FAULT_DIR")
+	stopRetry := s.retry()
 	// "origin" is who is running this process (main provides it:
 	// $BOUGH_ORIGIN, else the ui mode). It is bookkeeping for listings;
 	// the loop's projection never reads meta or origin entries.
@@ -902,6 +1063,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		ctx.Provide("checkpoints", c)
 	}
 	ctx.Effect(func() {
+		stopRetry()
 		if err := s.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: history close: %v\n", err)
 		}

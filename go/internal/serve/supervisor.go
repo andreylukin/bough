@@ -298,6 +298,11 @@ type Supervisor struct {
 	// row is listed and another tab can send to it; ensure must not
 	// spawn `-r <id>` beside it.
 	creating map[string]bool
+	// unsaved marks a session whose child said its history is not being
+	// saved (a "history" event with saved false). It stays after that
+	// child exits, whose pending entries are then lost for good, until a
+	// new child starts: that one reports again if its appends fail too.
+	unsaved map[string]bool
 }
 
 type spawnSpec struct{ args, env []string }
@@ -351,6 +356,7 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		running:   map[string]bool{},
 		waitStops: map[string]bool{},
 		creating:  map[string]bool{},
+		unsaved:   map[string]bool{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {
@@ -391,6 +397,13 @@ func (s *Supervisor) Entries(id string) ([]history.Entry, error) {
 		return nil, fmt.Errorf("serve: supervisor: read %s: %w", id, err)
 	}
 	return entries, nil
+}
+
+// Unsaved says whether the session's history is not being saved.
+func (s *Supervisor) Unsaved(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unsaved[id]
 }
 
 func (s *Supervisor) List() ([]history.SessionInfo, error) {
@@ -796,6 +809,10 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 	args = append(args, more...)
 	if id != "" {
 		args = append(args, "-r", id)
+		// A new child: whether its history is saved is its own to say.
+		s.mu.Lock()
+		delete(s.unsaved, id)
+		s.mu.Unlock()
 	}
 	cmd := exec.Command(s.exe, args...)
 	cmd.Dir = dir
@@ -1100,6 +1117,8 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 		// ask still waits, and disarming on it made the page's answer 409
 		// while the question stayed on screen.
 		delete(s.asks, id)
+	case "history":
+		s.unsaved[id] = extra["saved"] != true
 	case "result", "call":
 		// The ask returned with no answer (a timeout). StatusOf stops
 		// showing it on the same entry (endsAsk), and an arm kept past it
