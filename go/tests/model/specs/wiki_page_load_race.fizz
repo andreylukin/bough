@@ -1,0 +1,218 @@
+# A wiki page's route changing under its in-flight reads (web/src/wiki.tsx:
+# useLoad, WikiPage, WikiPageView), and the editor and Save that read the
+# page on screen.
+#
+# The world: two pages, A and B, and the rest of the wiki ("away": the
+# index, Review, Activity; all three are one useLoad each and leave the
+# page view unmounted). Moving between them is a link, the palette or
+# Back/Forward: each is a new route, and the model does not tell them
+# apart.
+#
+# The product as it is. useLoad's effect clears data and error when its
+# key changes and starts a read; the read's .then calls setData/setErr
+# with nothing checking the key is still the one it was started for, so
+# every read ever started lands on whatever screen is up when it answers
+# (`live` only stops the next poll). Page reads do not poll.
+# WikiPageView's head is `at = page?.path ?? path`: the path of the data
+# shown, else the route's. Its reset effect (editor, history) is keyed on
+# `at`, so it fires when the shown page changes, not when the route does.
+# Edit seeds the editor with the shown page's body; Save PUTs it to
+# route.path as it was when Save was clicked, then reloads that path with
+# the load of that render.
+#
+# The claims the flow was mapped with, which the product does not meet;
+# each was added as an assertion and fizz found the counterexample:
+#   DataMatchesRoute (route in ["A","B"] -> shown in ["", route]):
+#     Init, OpenA, OpenB, AnswerA: A's page under route B.
+#   EditorMatchesRoute (editing in ["", route]):
+#     ... AnswerA, Edit: the editor on route B holds A's body.
+#   PutWritesItsOwnPath (not wrongwrite):
+#     ... Edit, Save, SaveOk: A's body PUT to B, committed as an edit of B.
+#   LateReadChangesNothing (not late):
+#     Init, OpenA, OpenB, AnswerA.
+#   always eventually ShowsItsPage (route away, or shown == route, or an
+#   error): fizz's cycle reopens A and B around a late AnswerA; the
+#   plainest is Init, OpenA, OpenB, AnswerB, AnswerA, after which nothing
+#   is in flight and route B shows A for good.
+# And one the mapping did not name: an editor open on route B over a late
+# A is closed, text and all, when B's own read lands (the head moves).
+# The same unguarded useLoad backs the index, Review, Activity and the
+# source pane; they are outside this flow.
+#
+# Fields:
+#   route      "away" | "A" | "B": the hash route.
+#   shown      "" | "A" | "B": useLoad's page data (whose page it is).
+#              Kept "" while away: a late answer there sets data the
+#              unmounted view never shows, and the next Open clears it.
+#   err        "" | "A" | "B": the read whose failure is on screen. Only
+#              while nothing is shown: WikiPageView renders pageError only
+#              when page is null, and setData(null) clears both together.
+#   readA/B    a read of A / B is in flight. Two reads of one path
+#              collapse into one (they answer with the same page).
+#   editing    "" | "A" | "B": the editor is open with that page's body.
+#   put        "" | "A>B" ...: the PUT in flight, body's page > path.
+#              Save is disabled while one is (saving); a remount after
+#              leaving the page would allow a second, which the model does
+#              not take.
+#   wrongwrite ghost: a PUT wrote one page's body to another's path.
+#   late       ghost: a read answered on a screen whose key had changed,
+#              and changed what it shows.
+
+PAGES = ["A", "B"]
+
+# WikiPageView's head: the shown page's path, else the route's.
+def head(w):
+    return w.shown if w.shown != "" else w.route
+
+role Wiki:
+    action Init:
+        self.route = "away"
+        self.shown = ""
+        self.err = ""
+        self.readA = False
+        self.readB = False
+        self.editing = ""
+        self.put = ""
+        self.wrongwrite = False
+        self.late = False
+
+    atomic func startRead(p):
+        if p == "A":
+            self.readA = True
+        else:
+            self.readB = True
+
+    atomic func endRead(p):
+        if p == "A":
+            self.readA = False
+        else:
+            self.readB = False
+
+    # setData / setErr with the view's reset effect after it: the editor
+    # closes when the head moves.
+    atomic func land(p, ok):
+        self.endRead(p)
+        if self.route == "away":
+            return
+        before = head(self)
+        if ok:
+            self.shown = p
+            self.err = ""
+        elif self.shown == "":
+            self.err = p
+        self.late = self.late or (p != self.route and (ok or self.shown == ""))
+        if head(self) != before:
+            self.editing = ""
+
+    # A new page route: the key changes, data and error clear, a read of
+    # the new path starts. The view stays mounted from page to page, so
+    # the editor survives when the head does not move.
+    atomic func open(p):
+        before = head(self) if self.route != "away" else ""
+        self.route = p
+        self.shown = ""
+        self.err = ""
+        self.startRead(p)
+        if head(self) != before:
+            self.editing = ""
+
+    # --- the person ----------------------------------------------------
+
+    atomic action OpenA:
+        require self.route != "A"
+        self.open("A")
+
+    atomic action OpenB:
+        require self.route != "B"
+        self.open("B")
+
+    # To the index, Review or Activity: the page view unmounts.
+    atomic action Away:
+        require self.route != "away"
+        self.route = "away"
+        self.shown = ""
+        self.err = ""
+        self.editing = ""
+
+    # The error's Retry: setErr(""), the current key's read again.
+    atomic action Retry:
+        require self.route != "away" and self.shown == "" and self.err != ""
+        self.err = ""
+        self.startRead(self.route)
+
+    # Edit (header button or the menu): seeded from the page shown.
+    atomic action Edit:
+        require self.route != "away" and self.shown != "" and self.editing == ""
+        self.editing = self.shown
+
+    atomic action Cancel:
+        require self.editing != "" and self.shown != ""
+        self.editing = ""
+
+    atomic action Save:
+        require self.editing != "" and self.shown != "" and self.put == ""
+        self.put = self.editing + ">" + self.route
+
+    # --- the server ----------------------------------------------------
+
+    atomic fair action AnswerA:
+        require self.readA
+        self.land("A", True)
+
+    atomic fair action AnswerB:
+        require self.readB
+        self.land("B", True)
+
+    atomic action FailA:
+        require self.readA
+        self.land("A", False)
+
+    atomic action FailB:
+        require self.readB
+        self.land("B", False)
+
+    # The PUT commits; the editor closes (setEditing(null) on whatever
+    # page the view now shows, if it is mounted) and the saved path is
+    # read again with the load of the render Save was clicked in.
+    atomic fair action SaveOk:
+        require self.put != ""
+        body = self.put[0]
+        path = self.put[2]
+        self.wrongwrite = self.wrongwrite or body != path
+        self.put = ""
+        self.editing = ""
+        self.startRead(path)
+
+    # The editor stays open with its text and the error above it.
+    atomic action SaveFail:
+        require self.put != ""
+        self.put = ""
+
+action Init:
+    wiki = Wiki()
+
+# The editor holds the body of the page at the view's head: the reset
+# effect closes it whenever the shown page changes.
+always assertion EditorHoldsHeadPage:
+    return wiki.editing == "" or (wiki.route != "away" and wiki.editing == head(wiki))
+
+# A PUT carries the text of a page the editor was opened on, to the route
+# it was clicked on.
+always assertion PutIsEditorToRoute:
+    return wiki.put == "" or (wiki.put[0] in PAGES and wiki.put[2] in PAGES)
+
+# A failure is on screen only over nothing shown.
+always assertion ErrorOnlyOverNothing:
+    return wiki.err == "" or (wiki.shown == "" and wiki.route != "away")
+
+# A page route does not stay loading: it shows a page or an error.
+always eventually assertion PageRouteSettles:
+    return wiki.route == "away" or wiki.shown != "" or wiki.err != ""
+
+# Saving always ends.
+always eventually assertion SavingEnds:
+    return wiki.put == ""
+
+# No "every read ends" claim: a person who keeps reopening a page keeps a
+# read of it in flight, and fizz rightly finds that fair cycle. Each read
+# answering is what AnswerA/AnswerB's fairness says.
