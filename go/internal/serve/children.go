@@ -500,6 +500,7 @@ func LastTurn(entries []history.Entry) (reply string, errored bool) {
 // The event is only the trigger: the closing entry on disk decides, so
 // the reply the parent reads is the one the child actually recorded.
 func (s *Supervisor) report(id, parent, trigger string, stopped bool) {
+	s.hold("report-"+id, nil)
 	if trigger == "exit" {
 		s.mu.Lock()
 		waitStopped := s.waitStops[id]
