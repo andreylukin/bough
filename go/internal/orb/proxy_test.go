@@ -175,6 +175,42 @@ func TestShimNeedsOnlyBashAndBase64(t *testing.T) {
 	}
 }
 
+// A request past the relay's 8 MiB is refused with a reason and exit 1,
+// like every other refusal. The relay answers 400 and closes after
+// reading 8 MiB, while the shim is still writing: bash died of SIGPIPE
+// on the rest and the guest saw its call end with nothing said.
+func TestShimExplainsTooLargeRequest(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	if !strings.Contains(shimScript, " -gt "+strconv.Itoa(relayMaxBody)+" ]") {
+		t.Fatal("the shim's size check is not relayMaxBody")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "host-bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho ran\n"), 0o755)
+	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	scratch := t.TempDir()
+	if err := writeShim(scratch); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command(filepath.Join(shimDir(scratch), "bough"), "mcp", "call", "x/y")
+	c.Env = append(os.Environ(), "BOUGH_HOST="+p.URL())
+	c.Stdin = strings.NewReader(strings.Repeat("x", relayMaxBody))
+	var stderr strings.Builder
+	c.Stderr = &stderr
+	out, err := c.Output()
+	ee, ok := err.(*exec.ExitError)
+	if !ok || ee.ExitCode() != 1 || !strings.Contains(stderr.String(), "too large") || len(out) != 0 {
+		t.Fatalf("oversized call: err %v, stdout %q, stderr %q", err, out, stderr.String())
+	}
+}
+
 func TestProxyForwardsHTTPAndConnect(t *testing.T) {
 	t.Parallel()
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

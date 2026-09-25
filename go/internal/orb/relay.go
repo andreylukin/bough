@@ -43,6 +43,9 @@ var relayedCommands = map[string]bool{"mcp": true, "project": true, "browser": t
 
 const relayTimeout = 10 * time.Minute
 
+// relayMaxBody bounds a framed request: args and stdin, base64'd.
+const relayMaxBody = 8 << 20
+
 // The guest speaks a base64 framing rather than JSON: a project may
 // bring its own Dockerfile, and then the only interpreter it is fair to
 // assume is bash. Base64 keeps arbitrary argv and stdin (newlines,
@@ -83,7 +86,7 @@ func writeRelayBody(w io.Writer, stdout, stderr string, exit int) {
 }
 
 func (p *proxy) relayExec(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, relayMaxBody))
 	if err != nil {
 		http.Error(w, "orb relay: "+err.Error(), http.StatusBadRequest)
 		return
@@ -273,6 +276,13 @@ $body"
 
 if ! exec 3<>"/dev/tcp/$host/$port"; then
   echo "bough: cannot reach the host relay at $host:$port" >&2
+  exit 1
+fi
+# The relay stops reading at relayMaxBody and answers 400 while a bigger
+# body is still being written, which killed bash with SIGPIPE: say why.
+# After the connect, so an unreachable relay is still said to be that.
+if [ "${#body}" -gt 8388608 ]; then
+  echo "bough: request too large for the host relay (args and stdin, base64-encoded, over 8 MiB)" >&2
   exit 1
 fi
 printf '%s' "$req" >&3
