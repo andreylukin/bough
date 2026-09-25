@@ -18,6 +18,10 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 | `{"mode":"call","tool":"ask","args":{"question":"why?"}}` | answers with one call of `tool`; its result goes out on the next request, which takes the next queued turn |
 | `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it, `{"call":{"name":"ask","args":{...}}}` answers with that tool call after its text, `{"mode":"call",…}` makes the call, `{"bash":"cmd"}` answers with one bash tool call running `cmd`, after which the engine asks again and takes the next queued turn) |
 
+Every taken turn also leaves `<name>.req`, the request's input items as
+JSON: what reached the model, for a notice that lands inside a running
+turn and has no history entry of its own when it is sent.
+
 While a `block` turn is held, each `<name>.say-<n>` the test writes
 (`control.Say`) is streamed as one live assistant delta and renamed
 `<name>.said-<n>`: text the session shows and never records.

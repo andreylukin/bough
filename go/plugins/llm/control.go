@@ -308,6 +308,12 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 	if !ok {
 		return a.reply(ctx, "[llm-control: no turn queued in "+a.c.dir+"]", 0)
 	}
+	// What the request carried, for a test asking whether something
+	// reached the model: a notice that lands inside a running turn is
+	// sent on the next request and has no history entry of its own then.
+	if b, err := json.Marshal(r.Input); err == nil {
+		os.WriteFile(filepath.Join(a.c.dir, name+".req"), b, 0o644)
+	}
 	switch turn.Mode {
 	case "ok", "":
 		if len(turn.Calls) > 0 {

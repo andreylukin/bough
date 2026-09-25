@@ -1270,3 +1270,18 @@ func TestCreateWithPreMintedID(t *testing.T) {
 		t.Errorf("starts = %q", st)
 	}
 }
+
+func TestSupervisorStderrLeavesAskArmed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.sup.mu.Lock()
+	f.sup.emitLocked("sess-err", "ask", "which?", map[string]any{"id": "ask-1"})
+	f.sup.mu.Unlock()
+	f.sup.pumpStderr(newChild("sess-err"), strings.NewReader("bough: reloaded bough.yml\n"))
+	if f.sup.PendingAsk("sess-err") == nil {
+		t.Fatal("a stderr line disarmed the pending ask")
+	}
+	if !hasKind(f.sup.Recent("sess-err"), "error") {
+		t.Fatal("the stderr line was not relayed")
+	}
+}

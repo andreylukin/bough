@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -360,6 +361,45 @@ func TestStoredNoticeDeliveredOnce(t *testing.T) {
 			t.Fatalf("%d notice-delivered entries, want 1", n)
 		}
 	})
+}
+
+// A notice stored while job-notices is missing (the tools row reloading
+// or failed) is delivered once the service is back, with no further
+// write to the file. The poll used to move its size mark on regardless,
+// so an idle parent sat on the notice until something else wrote to its
+// file. Found by tests/model/mbt/child_notice_delivery_test.go.
+func TestStoredNoticeWaitsOutMissingJobNotices(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, nil)
+	h, err := kernel.Get[loop.History](r.ctx, "history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	no := &fakeNotices{wake: make(chan struct{})}
+	var up atomic.Bool
+	notify := func() func(string) {
+		if up.Load() {
+			return no.Notify
+		}
+		return nil
+	}
+	stop := make(chan struct{})
+	defer close(stop)
+	go pollStoredNotices(h, notify, stop)
+	h.Append("notice", map[string]any{"id": "n1", "to": "01TEST", "text": "child finished"})
+	time.Sleep(2500 * time.Millisecond) // two polls while job-notices is missing
+	up.Store(true)
+	deadline := time.Now().Add(5 * time.Second)
+	for len(no.texts()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the notice stored during the gap was never delivered")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if got := no.texts(); !slices.Equal(got, []string{"child finished"}) {
+		t.Fatalf("delivered %v", got)
+	}
 }
 
 func TestConfigErrorsNameTheRow(t *testing.T) {
