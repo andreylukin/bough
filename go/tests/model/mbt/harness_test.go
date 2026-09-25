@@ -217,33 +217,7 @@ func runMBT(t *testing.T, spec string, model fmbt.Model, actions map[string]map[
 	runDir := fizzCheck(t, spec)
 	lockMBT(t)
 	startGraphServer(t, runDir)
-	defer shortTempDir(t)()
 	return fmbt.RunTests(t, model, actions, opts)
-}
-
-// shortTempDir points TMPDIR at a short symlink to os.TempDir() while the
-// lib runs, and returns the restore. fmbt.RunTests binds its plugin
-// socket at $TMPDIR/fizzbee-mbt-<n>/plugin.sock, and a unix socket path
-// is capped at 104 bytes on darwin: under a long TMPDIR every random run
-// failed with "bind: invalid argument" before it took a step. The link
-// keeps the files where they were; only the name is shorter. Callers
-// hold the MBT lock, so no two runs swap TMPDIR at once.
-func shortTempDir(t *testing.T) func() {
-	t.Helper()
-	long := os.TempDir()
-	if len(long)+len("/fizzbee-mbt-4294967295/plugin.sock") < 100 {
-		return func() {}
-	}
-	link := fmt.Sprintf("/tmp/bough-mbt-%d", os.Getpid())
-	os.Remove(link)
-	if err := os.Symlink(long, link); err != nil {
-		t.Fatal(err)
-	}
-	os.Setenv("TMPDIR", link)
-	return func() {
-		os.Setenv("TMPDIR", long)
-		os.Remove(link)
-	}
 }
 
 // sessionHistory reads a serve session's transcript off disk: the
