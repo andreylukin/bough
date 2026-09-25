@@ -53,6 +53,10 @@ type WatcherStatus struct {
 	Error    string     `json:"error"`
 	LastRun  *time.Time `json:"lastRun"`
 	LastWoke *time.Time `json:"lastWoke"`
+	// Queued is the news waiting for the session to go idle, oldest
+	// first: a watcher that fired while the agent was busy says so
+	// rather than looking like it saw nothing.
+	Queued []string `json:"queued"`
 }
 
 // watcher is one loaded file plus everything the safety rules need to
@@ -324,6 +328,7 @@ func (e *Engine) Status() []WatcherStatus {
 			Name: w.name, Path: w.path, Every: every,
 			Failing: w.failing, Error: w.err,
 			LastRun: w.lastRun, LastWoke: w.lastWoke,
+			Queued: append([]string{}, w.queued...),
 		})
 	}
 	return out
