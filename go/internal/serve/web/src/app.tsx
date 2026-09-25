@@ -5167,6 +5167,10 @@ export default function App() {
     // Never show one session's transcript under another's header while loading.
     setLines([]);
     setLoadedFor(null);
+    // Nor a lookup's row from an earlier visit: Back to an unlisted
+    // session showed its old header over a lookup still in flight, and
+    // kept showing it when that lookup then said "not found".
+    setLooked(null);
     lastSeq.current = 0; // the cursor belongs to the session just left
     // Starting holds across its own retries: a thread that is booting is
     // listed already, and clearing this on each try flashed its row's

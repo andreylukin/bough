@@ -211,20 +211,29 @@ func (c *controlLLM) take() (name string, t controlTurn, ok bool, err error) {
 		return "", t, false, nil
 	}
 	slices.Sort(names)
-	name = names[0]
-	src := filepath.Join(c.dir, name+".json")
-	b, err := os.ReadFile(src)
-	if err != nil {
-		return "", t, false, err
+	// The rename is the claim. Each session is its own process with its
+	// own mutex over this dir, so another may list the same first name
+	// and rename it first: that name is gone, and the next one is ours
+	// to try, not an error that fails the turn.
+	for _, name = range names {
+		taken := filepath.Join(c.dir, name+".taken")
+		if err := os.Rename(filepath.Join(c.dir, name+".json"), taken); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return "", t, false, err
+		}
+		b, err := os.ReadFile(taken)
+		if err != nil {
+			return "", t, false, err
+		}
+		if err := json.Unmarshal(b, &t); err != nil {
+			return "", t, false, fmt.Errorf("llm-control: %s.json: %w", name, err)
+		}
+		c.n++
+		return name, t, true, nil
 	}
-	if err := json.Unmarshal(b, &t); err != nil {
-		return "", t, false, fmt.Errorf("llm-control: %s.json: %w", name, err)
-	}
-	if err := os.Rename(src, filepath.Join(c.dir, name+".taken")); err != nil {
-		return "", t, false, err
-	}
-	c.n++
-	return name, t, true, nil
+	return "", t, false, nil
 }
 
 type controlAdapter struct {
