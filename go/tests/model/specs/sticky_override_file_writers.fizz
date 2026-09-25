@@ -1,0 +1,507 @@
+# Small shared files with more than one writer, read through a sticky
+# client override or a per-process cache: ~/.bough/off.yml (the Hooks and
+# Context pages' off switches, the composer's skill catalogue, a session
+# child's skill commands) and the Me page's triage.json. Recipe:
+# go/tests/model/README.md.
+#
+# Code this is checked against:
+#   plugins/offlist/offlist.go  Load (cache keyed on mtime+size), Set
+#                               (parse fresh, refuse a malformed file,
+#                               re-marshal, no lock)
+#   serve/off.go                setOff (POST /api/off)
+#   web/src/hooks.tsx           OffToggle (flip POSTs !off, shows "Did not
+#                               save" on error), useOffs (the override)
+#   web/src/context.tsx         SkillRow: isOff(id, wire) / mark(id)
+#   serve/skills.go             GET /api/skills?session (drops off skills)
+#   web/src/mention.tsx         useSkills: module-wide `catalogue`
+#   plugins/skills/skills.go    registerCommands (at mount, on skills
+#                               only), Inject (skips an off skill)
+#   plugins/ui/headless.go      hlDispatch ("unknown command: /x")
+#   web/src/me.tsx              MeView: `triage` override from the answer
+#   serve/wiki.go               meTriage: Mark, then Rule
+#   plugins/wiki/triage.go      Mark (unlocked read-modify-write), Rule
+#
+# The flow is three independent scenes, picked by the first action, so
+# the state count is their sum rather than their product. Fields of the
+# scenes not picked keep their Init values.
+#
+#   toggle   the off switch of skill "a" on a Hooks/Context page, with
+#            another tab (another client) that sets "a" or "b", hand
+#            edits of off.yml, and the page's poll.
+#   caches   skill "a" as the readers in other places see it: the
+#            composer's catalogue (module-wide in the page), serve's and
+#            the session child's offlist caches, and the child's
+#            "/a" command registered when it mounted.
+#   triage   one Me signal row "k" and a second key "j" another tab
+#            pins, with the page's triage override.
+#
+# Where the mapped model was corrected against the code:
+# - off_absent / X_off_on_disk are disk_a False/True; "remounted" is the
+#   LeaveAndReturn action (React state gone), and a full reload is a
+#   separate action (Reload): the skill catalogue is a module variable,
+#   so leaving the route and coming back keeps it.
+# - An off skill sent as "/a" is not always "unknown command". The child
+#   registers "/a" only for skills on when it mounted and never again.
+#   Off at mount: "unknown command: /a (try /help)" (told, not why).
+#   Switched off after mount: "/a" is submitted as plain text, Inject
+#   skips the off skill, and nobody is told (sent == "plain"). Switched
+#   on after mount: "unknown command" for a skill that is on.
+# - The mtime+size cache misses more than a hand edit: two Sets inside
+#   one mtime tick that swap two same-length ids ("skill:a" off and
+#   "skill:b" on) leave the file the same size. Both caches are keyed
+#   that way; Set drops serve's own cache entry but cannot reach a
+#   child's. SameStampRewrite stands for either.
+# - Dismiss with a rule on a profile-less wiki is not "Mark refused": the
+#   Mark is written first and then Rule answers 409, so the page toasts
+#   "Couldn't dismiss" over a dismissal that happened.
+# - While off.yml is malformed every reader treats nothing as off (Load
+#   keeps the parse error and an empty list), and Set refuses: the page
+#   shows "Did not save" and nothing is written.
+#
+# All state lives in the Page role (fizzbee-mbt compares role state).
+
+# Pure helpers.
+
+# What the switch row shows: the page's own override over the last poll.
+def shown_a(p):
+    if p.ovr_a == "none":
+        return p.wire_a
+    return p.ovr_a == "off"
+
+# off.yml as every reader parses it: malformed reads as nothing off.
+def eff_a(p):
+    return p.disk_a and not p.bad
+
+# What serve's / the child's Load returns for "a": a cache whose stamp
+# still matches holds the value from before the same-stamp rewrite.
+def serve_a(p):
+    return p.disk_a != p.serve_stale
+
+def child_a(p):
+    return p.disk_a != p.child_stale
+
+# The Me row as shown: the answer's triage over the poll's.
+def shown_k(p):
+    if p.movr == "none":
+        return p.mwire
+    return p.movr
+
+# The child's answer to "/a": a command it never registered is refused
+# with "unknown command"; a registered one submits "/a" and Inject reads
+# off.yml through the child's cache.
+def send(p):
+    if not p.reg_a:
+        return "unknown"
+    if child_a(p):
+        return "plain"
+    return "ran"
+
+role Page:
+    action Init:
+        self.scene = "start"
+
+        # --- toggle -----------------------------------------------------
+        self.disk_a = False      # "skill:a" listed in off.yml
+        # "skill:b" as the other tab set it: b_moved says it set b while
+        # the page's Set was in flight; lost_b that off.yml no longer
+        # holds what the other tab last set (a Set wrote the b it read).
+        self.b_moved = False
+        self.lost_b = False
+        self.bad = False         # off.yml is malformed (hand edit)
+        # A hand-written comment in off.yml: none | kept | lost (a Set
+        # re-marshalled the file without it).
+        self.comment = "none"
+        self.wire_a = False      # "a" is off as the last poll said
+        self.ovr_a = "none"      # useOffs: none | on | off
+        # The page's POST /api/off in flight: none | write | noop (Set
+        # found the entry already so) | refused (malformed file).
+        self.req = "none"
+        self.err = False         # "Did not save" beside the switch
+        self.wrote = False       # the last answered request wrote off.yml
+        self.polled = False      # a poll ran since the last disk change
+
+        # --- caches -----------------------------------------------------
+        self.serve_stale = False # serve's cache stamp matches, content not
+        self.child_stale = False # the child's likewise
+        self.reg_a = True        # the child registered "/a" at mount
+        self.cat = "unloaded"    # catalogue: unloaded | offers | omits
+        self.picker = "closed"   # closed | offers | omits
+        self.sent = ""           # "" | ran | unknown | plain
+
+        # --- triage -----------------------------------------------------
+        self.mk = "shown"        # k on disk: shown | pinned | dismissed
+        # j as another tab pinned or unpinned it: j_moved while the
+        # page's Mark was in flight, lost_j once that Mark wrote the j it
+        # read over the other tab's.
+        self.j_moved = False
+        self.lost_j = False
+        self.mwire = "shown"     # k as the last poll said
+        self.movr = "none"       # the answer's triage for k, or none
+        self.mreq = "none"       # a Pin in flight: none | pin
+        self.merr = False        # "Couldn't dismiss" toast
+        self.mpolled = False
+
+    # --- scenes -----------------------------------------------------------
+
+    atomic action StartToggle:
+        require self.scene == "start"
+        self.scene = "toggle"
+        self.polled = True
+
+    atomic action StartCaches:
+        require self.scene == "start"
+        self.scene = "caches"
+
+    atomic action StartTriage:
+        require self.scene == "start"
+        self.scene = "triage"
+        self.mpolled = True
+
+    # --- toggle: the switch of "a" ----------------------------------------
+
+    atomic fair<strong> action HooksPoll:
+        # GET /api/context (or /api/hooks) every few seconds. Modelled
+        # between requests only: a poll with one in flight reads the
+        # same file.
+        require self.scene == "toggle" and self.req == "none"
+        require not self.polled
+        self.wire_a = eff_a(self)
+        self.polled = True
+
+    atomic action Toggle:
+        # OffToggle.flip: POST {id: "skill:a", off: !shown}. Set parses
+        # off.yml at once (modelled here) and writes it at Answer.
+        require self.scene == "toggle" and self.req == "none"
+        # The click asks for not shown_a; the row does not change until
+        # the answer (no poll is modelled in flight), so Answer reads it
+        # off the row again.
+        self.err = False
+        if self.bad:
+            self.req = "refused"
+        elif self.disk_a != shown_a(self):
+            self.req = "noop"
+        else:
+            self.req = "write"
+
+    atomic fair action Answer:
+        require self.scene == "toggle" and self.req != "none"
+        want = not shown_a(self)
+        self.wrote = self.req == "write"
+        if self.req == "refused":
+            self.err = True
+        else:
+            if self.req == "write":
+                # Set writes the entries it read plus/minus a: whatever
+                # happened to b since is overwritten.
+                self.disk_a = want
+                if self.b_moved:
+                    self.lost_b = True
+                if self.comment == "kept":
+                    self.comment = "lost"
+                self.polled = False
+            if want:
+                self.ovr_a = "off"
+            else:
+                self.ovr_a = "on"
+        self.req = "none"
+        self.b_moved = False
+
+    atomic action OtherTabToggleA:
+        # Another tab's switch for a: a complete Set.
+        require self.scene == "toggle" and self.req == "none" and not self.bad
+        self.disk_a = not self.disk_a
+        if self.comment == "kept":
+            self.comment = "lost"
+        self.polled = False
+
+    atomic action OtherTabToggleB:
+        # Another tab's switch for b: a complete Set, which also puts b
+        # back as that tab wants it. Modelled while the page's write is
+        # in flight (the race) or to repair a lost b; otherwise b does not
+        # touch anything the flow shows. A refusal there is that tab's
+        # own error.
+        require self.scene == "toggle" and not self.bad
+        require (self.req == "write" and not self.b_moved) or (self.req == "none" and self.lost_b)
+        if self.req == "write":
+            self.b_moved = True
+        self.lost_b = False
+        if self.comment == "kept":
+            self.comment = "lost"
+
+    atomic action HandComment:
+        # The person adds a "# why" line to off.yml; entries unchanged.
+        require self.scene == "toggle" and self.req == "none"
+        require self.comment != "kept" and not self.bad
+        self.comment = "kept"
+
+    atomic action HandBreak:
+        # The person leaves off.yml unparseable.
+        require self.scene == "toggle" and self.req == "none" and not self.bad
+        self.bad = True
+        self.polled = False
+
+    atomic action HandFix:
+        require self.scene == "toggle" and self.req == "none" and self.bad
+        self.bad = False
+        self.polled = False
+
+    atomic action LeaveAndReturn:
+        # Another route and back: useOffs and the error are gone, and the
+        # page reads the file again on mount.
+        require self.scene in ("toggle", "triage")
+        require self.req == "none" and self.mreq == "none"
+        if self.scene == "toggle":
+            self.ovr_a = "none"
+            self.err = False
+            self.wire_a = eff_a(self)
+            self.polled = True
+        else:
+            self.movr = "none"
+            self.merr = False
+            self.mwire = self.mk
+            self.mpolled = True
+
+    # --- caches: who reads "a" where --------------------------------------
+
+    atomic action SetA:
+        # The Context page's switch for a (a complete, answered Set):
+        # the file's size changes, so every cache reloads on next read;
+        # serve's entry is dropped anyway.
+        require self.scene == "caches" and self.picker == "closed"
+        self.disk_a = not self.disk_a
+        self.serve_stale = False
+        self.child_stale = False
+        self.sent = ""
+
+    atomic action SameStampRewrite:
+        # off.yml rewritten with a and a same-length id swapped and the
+        # same size and mtime: a hand edit inside one mtime tick, or two
+        # Sets (a off, b on) inside one. Both caches hold their entry.
+        require self.scene == "caches" and self.picker == "closed"
+        require not self.serve_stale and not self.child_stale
+        self.disk_a = not self.disk_a
+        self.serve_stale = True
+        self.child_stale = True
+        self.sent = ""
+
+    atomic action OpenPicker:
+        # "/" in the composer or the Skills button: useSkills reads
+        # /api/skills once per page load (a non-empty answer is kept;
+        # skill "c" is always on, so the answer is never empty).
+        require self.scene == "caches" and self.picker == "closed"
+        if self.cat == "unloaded":
+            if serve_a(self):
+                self.cat = "omits"
+            else:
+                self.cat = "offers"
+        self.picker = self.cat
+
+    atomic action ClosePicker:
+        require self.scene == "caches" and self.picker != "closed"
+        self.picker = "closed"
+
+    atomic action PickSend:
+        # Pick "/a" in the picker and Send.
+        require self.scene == "caches" and self.picker == "offers"
+        self.picker = "closed"
+        self.sent = send(self)
+
+    atomic action TypeSend:
+        # Type "/a" by hand (no picker) and Send.
+        require self.scene == "caches" and self.picker == "closed"
+        self.sent = send(self)
+
+    atomic action Reload:
+        # A full page load: the module catalogue is gone.
+        require self.scene == "caches" and self.picker == "closed"
+        self.cat = "unloaded"
+
+    atomic action RestartChild:
+        # The session's child starts again (serve restart, resume): a
+        # fresh process registers "/a" if a is on now and has no cache.
+        require self.scene == "caches" and self.picker == "closed"
+        self.reg_a = not self.disk_a
+        self.child_stale = False
+        self.sent = ""
+
+    # --- triage: the Me row k ---------------------------------------------
+
+    atomic fair<strong> action MePoll:
+        require self.scene == "triage" and self.mreq == "none"
+        require not self.mpolled
+        self.mwire = self.mk
+        self.mpolled = True
+
+    atomic action PinSend:
+        # POST /api/me/triage {pin, k}: Mark reads triage.json here...
+        require self.scene == "triage" and self.mreq == "none"
+        require shown_k(self) == "shown"
+        self.mreq = "pin"
+        self.merr = False
+
+    atomic fair action PinAnswer:
+        # ...and writes it here, j as it read it; the page shows the
+        # answer's triage.
+        require self.scene == "triage" and self.mreq == "pin"
+        self.mk = "pinned"
+        if self.j_moved:
+            self.lost_j = True
+        self.j_moved = False
+        self.movr = "pinned"
+        self.mreq = "none"
+        self.mpolled = False
+
+    atomic action Unpin:
+        require self.scene == "triage" and self.mreq == "none"
+        require shown_k(self) == "pinned"
+        # Mark unpin only drops the pin: a row the page shows pinned over
+        # a dismissal (PinDismissReordered) stays dismissed, and the
+        # answer says so.
+        if self.mk == "pinned":
+            self.mk = "shown"
+        self.movr = self.mk
+        self.merr = False
+        self.mpolled = False
+
+    atomic action Dismiss:
+        # "Just this one".
+        require self.scene == "triage" and self.mreq == "none"
+        require shown_k(self) in ("shown", "pinned")
+        self.mk = "dismissed"
+        self.movr = "dismissed"
+        self.merr = False
+        self.mpolled = False
+
+    atomic action DismissRule:
+        # "Nothing from <repo>" with no profile.md: Mark writes the
+        # dismissal, Rule answers 409, the page toasts and keeps its
+        # override as it was.
+        require self.scene == "triage" and self.mreq == "none"
+        require shown_k(self) in ("shown", "pinned")
+        self.mk = "dismissed"
+        self.merr = True
+        self.mpolled = False
+
+    atomic action PinDismissReordered:
+        # Pin, then Dismiss before Pin's answer: serve applies both in
+        # order (k dismissed) and the answers arrive the other way round,
+        # so Pin's triage is the one the page keeps.
+        require self.scene == "triage" and self.mreq == "none"
+        require shown_k(self) == "shown"
+        self.mk = "dismissed"
+        self.movr = "pinned"
+        self.merr = False
+        self.mpolled = False
+
+    atomic action OtherTabUndismiss:
+        # Another client's POST {undismiss, k} (the API has it; this page
+        # has no button for it).
+        require self.scene == "triage" and self.mreq == "none"
+        require self.mk == "dismissed"
+        self.mk = "shown"
+        self.mpolled = False
+
+    atomic action OtherTabPinJ:
+        # Another tab pins or unpins j: while the page's Pin is in flight
+        # (the race), or to repair a lost j.
+        require self.scene == "triage"
+        require (self.mreq == "pin" and not self.j_moved) or (self.mreq == "none" and self.lost_j)
+        if self.mreq == "pin":
+            self.j_moved = True
+        self.lost_j = False
+
+action Init:
+    page = Page()
+
+# --- invariants the product keeps --------------------------------------
+
+# After a poll the page's own read of off.yml is the disk (a malformed
+# file read as nothing off).
+always assertion PollReadsDisk:
+    return not page.polled or page.wire_a == eff_a(page)
+
+# A malformed off.yml is never rewritten by a switch: Set refuses it.
+always assertion MalformedNeverRewritten:
+    return page.req != "write" or not page.bad
+
+# "Did not save" means off.yml was not written: the only refusal is a
+# malformed file, which Set leaves as it is.
+always assertion OffErrorWroteNothing:
+    return not page.err or not page.wrote
+
+# The picker shows the catalogue it has, nothing newer.
+always assertion PickerShowsCatalogue:
+    return page.picker == "closed" or page.picker == page.cat
+
+# A skill runs from "/a" only through a command the child registered.
+always assertion RanOnlyRegistered:
+    return page.sent != "ran" or page.reg_a
+
+# After a Me poll the row's wire state is the disk.
+always assertion MePollReadsDisk:
+    return not page.mpolled or page.mwire == page.mk
+
+# --- liveness ----------------------------------------------------------
+
+# Every request the page sends is answered (Answer / PinAnswer are fair)
+# and, between requests, a poll runs (HooksPoll / MePoll are fair).
+always eventually assertion RequestsAnswered:
+    return page.req == "none" and page.mreq == "none"
+
+always eventually assertion PagesPoll:
+    return page.polled or page.scene != "toggle"
+
+# --- KNOWN GAPS --------------------------------------------------------
+# Each of these is a mapped invariant the product breaks; fizz fails it
+# with the trace given. Not asserted, so the graph stays the product's.
+#
+# Two toggles of different ids both persist (NoLostToggle):
+#     return not page.lost_b
+#   StartToggle, Toggle, OtherTabToggleB, Answer: Set wrote the b it read.
+#
+# Each row's shown state matches disk after a poll (ShownAfterPoll):
+#     return not page.polled or shown_a(page) == eff_a(page)
+#   StartToggle, Toggle, Answer, OtherTabToggleA, HooksPoll: useOffs never
+#   drops its entry. Clicking then POSTs the value already on disk (noop).
+#
+# Hand-written comments are not silently dropped (CommentsKept):
+#     return page.comment != "lost"
+#   StartToggle, HandComment, Toggle, Answer: Set re-marshals the file.
+#
+# A write returning ok is honoured by the next child read (ChildHonoursWrites):
+#     return not page.child_stale
+#   StartCaches, SameStampRewrite.
+#
+# The picker never offers an off skill (PickerNoOffSkill):
+#     return page.picker != "offers" or not page.disk_a
+#   StartCaches, OpenPicker, ClosePicker, SetA, OpenPicker.
+# ...and offers a newly-on one at next open (PickerNewlyOn):
+#     return page.picker != "omits" or page.disk_a
+#
+# An off skill sent as "/a" is not run and the person is told why (OffSkillToldWhy):
+#     return page.sent != "plain"
+#   StartCaches, SetA, TypeSend: registered at mount, Inject skips it
+#   silently. With a stale child cache it even runs (sent == "ran" with
+#   disk_a): StartCaches, SameStampRewrite, TypeSend.
+# An on skill sent as "/a" runs (OnSkillRuns):
+#     return page.sent != "unknown" or page.disk_a
+#   StartCaches, SetA, RestartChild, SetA, TypeSend.
+#
+# Two Marks of different ids both persist (NoLostMark):
+#     return not page.lost_j
+#   StartTriage, PinSend, OtherTabPinJ, PinAnswer.
+#
+# The Me row matches disk after a poll (MeShownAfterPoll):
+#     return not page.mpolled or shown_k(page) == page.mk
+#   StartTriage, Dismiss, OtherTabUndismiss, MePoll: the answer's triage
+#   masks every later poll; PinDismissReordered, MePoll shows pinned over
+#   a dismissal.
+#
+# An error toast means nothing changed on disk (TriageErrorWroteNothing):
+#     return not page.merr
+#   StartTriage, DismissRule.
+#
+# An idle page converges to disk within one poll (liveness, Converges):
+#     always eventually assertion Converges:
+#         return shown_a(page) == eff_a(page) and shown_k(page) == page.mk
+#   A sticky override on a HooksPoll/MePoll-only cycle never converges.
