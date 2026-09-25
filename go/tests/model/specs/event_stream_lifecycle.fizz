@@ -1,0 +1,301 @@
+---
+deadlock_detection: false
+---
+
+# event_stream_lifecycle: one open thread's event stream across a serve
+# restart, and the EventSource's terminal errors (go/tests/model/README.md).
+# live_transcript_sync covers one serve with a non-empty ring and a
+# channel-full drop; serve_restart_resume covers status and the banner.
+# This flow is the transcript lines and the EventSource state machine
+# when the serve behind the stream is replaced.
+#
+# Server (go/cmd/bough/serve.go serveForeground, internal/serve):
+# - SIGINT/SIGTERM runs srv.Shutdown, which closes the listener and runs
+#   the OnShutdown hook that cancels every request's context, so every
+#   /events stream ends (its handler returns and unsubscribes). Only
+#   then does the deferred sup.Close kill and reap the children. Until
+#   the kill lands the child still runs and records entries to its
+#   history file, and its reaper emits "exit" into a ring nobody is
+#   subscribed to (supervisor.go Close, the reap goroutine in start).
+# - NewSupervisor starts with empty events/seq/subs maps: serve B's ring
+#   for the session is empty and its seq starts again at 1 until a child
+#   of serve B records something.
+# - GET /api/sessions/{id}/events answers 404 before any header for an
+#   unknown session, and Guard answers 401/403 before the API; Last-Event-ID
+#   is ignored, so a reconnect replays the whole (possibly empty) ring.
+#
+# Page (web/src/api.ts subscribe, web/src/app.tsx the `selected` effect):
+# - subscribe sets only onmessage. EventSource on a network error (serve
+#   down, connection refused) stays CONNECTING and retries on its own; on
+#   a non-200 answer (a 502 from a reverse proxy such as `tailscale serve`
+#   while serve is down, 404, 401, 403) it fails for good: readyState
+#   CLOSED, an error event nobody listens to.
+# - A recorded frame arms a 120ms catch-up, GET ?since=<last line's
+#   history seq>. A failed catch-up shows "Updates paused" and re-arms on
+#   a backoff; its Retry runs the catch-up now and nothing else (it never
+#   re-subscribes). Only frames arm it: a stream that delivers nothing
+#   (an empty ring) arms nothing.
+# - The list poll refreshes the rows (status) but never the lines. It runs
+#   every 12s instead of 4s whenever a thread is selected.
+#
+# Mapped states, as field values:
+#   Idle_OPEN / TurnRunning        serve "a", es "open" (turn open|closed)
+#   ShutdownBegun                  serve "draining", es "connecting"
+#   TailWritten                    serve "draining", disk > lines
+#   ChildKilled / ServeDown        serve "down" (the exit went into A's ring)
+#   ServeBUp (empty ring)          serve "b", ring False
+#   Reconnected_NoCatchUp          serve "b", es "open", not ring, not timer
+#   NetworkDrop_Reconnected        es "connecting" -> "open" with ring
+#   Non200 / ClosedForGood         es "closed"
+#   SilentStale                    es "open", lines < disk, not timer, not paused
+#   RowOnlyUpdates                 row == status, lines < disk
+#   Resynced                       lines == disk
+#
+# Corrections to the mapped model, from the code:
+# - SigTerm and ShutdownEndsStreams are one step: Shutdown closes the
+#   listener and cancels the request context together, so the page sees
+#   its stream end and its reconnects refused at the same time. There is
+#   no step at which the stream is open while the listener is closed.
+# - Delta is not modelled: a Seq-0 frame arms nothing and holds no line;
+#   what it draws is live_transcript_sync's preview, not state here.
+# - Delivery is folded into the Record that fans out (no channel here):
+#   live_transcript_sync models the channel.
+# - The poll slows (x3) whenever a thread is SELECTED
+#   (`streaming = selected !== null`), not while a stream is open: the
+#   page has no idea whether its EventSource is open. poll is "slow" in
+#   every state of this flow.
+# - 401 across a restart is not the common Non200: the token is read
+#   from its file (serveclient.LoadToken), so serve B keeps it. The
+#   common one is a proxy's 502 while serve is down, which makes the
+#   fatal status reachable from a plain restart behind `--host`.
+#   EventsNon200 is enabled in every state with the EventSource
+#   CONNECTING, whatever the serve.
+# - "No event fanned out after Close" holds by construction: the streams
+#   unsubscribed at Shutdown, Subscribe refuses once closed, and Close
+#   closes whatever subscriber is left. Here that is StreamsEndWithServe.
+#
+# Abstractions, to keep the graph small:
+# - one session, one serve restart (A -> B). The turn is running under
+#   serve A when the flow starts, with one entry recorded and shown.
+# - disk is the count of history entries; lines is how many the page
+#   shows. The page's lines are always a prefix of disk (catch-ups append
+#   from the cursor, deduped by history seq), so a count is enough.
+# - ring is only whether the serve's ring holds a frame for the session.
+# - a catch-up is one step (sent and landed): live_transcript_sync
+#   models the in-flight races. Backoff timing is not modelled.
+# - NextPrompt's `-r` start on serve B also closes the dangling turn as
+#   cancelled: two entries, counted as one.
+#
+# Fairness: the page's timers and EventSource retries, the list poll and
+# the catch-up are strongly fair; Close and launchd's restart are weakly
+# fair. The person (Retry, Reselect), the child (Record, Finish,
+# NextPrompt), the signal and the network (SigTerm, NetworkDrop,
+# EventsNon200) are not.
+#
+# PRODUCT GAPS. Four claims do not hold in the product. Each is written
+# as the claim, with an exemption behind a GAP_* flag that names the
+# gap. Setting the flag to False makes fizz fail with the trace in its
+# comment; a product fix sets it to False and the spec must still pass.
+
+MAXDISK = 3
+
+# Serve B's ring is empty, so a reconnect to it replays nothing and arms
+# no catch-up: the tail the dying child wrote between Shutdown and Close
+# stays off the page until the next prompt or a reselect.
+GAP_EMPTY_RING = True
+# No onerror: a non-200 on /events closes the EventSource for good and
+# the page still renders the thread live. Retry re-runs the catch-up but
+# never re-subscribes, so nothing but a reselect or reload recovers it.
+GAP_NO_ONERROR = True
+# The list poll stays slow while a thread is selected, even when its
+# stream is closed or connecting and delivers nothing.
+GAP_SLOW_POLL = True
+
+def status_of(turn, child):
+    # internal/serve/status.go StatusOf, reduced: an open turn with a
+    # live child runs, without one it was interrupted.
+    if turn == "closed":
+        return "done"
+    if child:
+        return "running"
+    return "interrupted"
+
+def up(serve):
+    return serve in ("a", "b")
+
+role Stream:
+    action Init:
+        self.serve = "a"        # a | draining | down | b
+        self.child = True       # the session's child is alive
+        self.turn = "open"      # open | closed (history)
+        self.disk = 1           # entries on disk
+        self.lines = 1          # entries on the page
+        self.ring = True        # the current serve's ring holds a frame
+        self.es = "open"        # EventSource: open | connecting | closed
+        self.timer = False      # a catch-up is armed
+        self.paused = False     # "Updates paused"
+        self.row = "running"    # the status the page shows
+        self.poll = "slow"      # list poll rate: slow (12s) | fast (4s)
+
+    # --- the child (and the person's prompt) ---
+
+    atomic action Record:
+        # An entry recorded while serve A runs, or the tail the dying
+        # child writes between Shutdown and Close (ChildWritesTail).
+        require self.child and self.turn == "open" and self.disk < MAXDISK
+        self.disk = self.disk + 1
+        self.ring = True
+        if self.es == "open":
+            self.timer = True
+
+    atomic action Finish:
+        require self.child and self.turn == "open" and self.disk < MAXDISK
+        self.disk = self.disk + 1
+        self.turn = "closed"
+        self.ring = True
+        if self.es == "open":
+            self.timer = True
+
+    atomic action NextPrompt:
+        # POST /prompt: ensure adopts the session (`-r`) when no child
+        # holds it, else writes to the idle one.
+        require up(self.serve) and (self.turn == "closed" or not self.child) and self.disk < MAXDISK
+        self.child = True
+        self.turn = "open"
+        self.disk = self.disk + 1
+        self.ring = True
+        if self.es == "open":
+            self.timer = True
+
+    # --- serve ---
+
+    atomic action SigTerm:
+        require self.serve == "a"
+        self.serve = "draining"
+        if self.es == "open":
+            self.es = "connecting"
+
+    atomic fair action CloseKills:
+        require self.serve == "draining"
+        self.serve = "down"
+        self.child = False
+
+    atomic fair action ServeStart:
+        require self.serve == "down"
+        self.serve = "b"
+        # Empty maps (NewSupervisor): no ring, and its event seq starts
+        # at 1 again. The page never keys a line by that number (its
+        # cursor is the last line's history seq): LinesNeverAhead and
+        # LinesNeverShrink hold it to that.
+        self.ring = False
+
+    # --- network and the EventSource ---
+
+    atomic action NetworkDrop:
+        require self.es == "open" and up(self.serve)
+        self.es = "connecting"
+
+    atomic fair<strong> action EventSourceRetry:
+        # Reconnect: the whole ring comes again (Last-Event-ID ignored).
+        require self.es == "connecting" and up(self.serve)
+        self.es = "open"
+        if self.ring:
+            self.timer = True
+
+    atomic action EventsNon200:
+        require self.es == "connecting"
+        self.es = "closed"
+
+    # --- the page ---
+
+    atomic fair<strong> action CatchUp:
+        require self.timer
+        if up(self.serve):
+            self.lines = self.disk
+            self.row = status_of(self.turn, self.child)
+            self.paused = False
+            self.timer = False
+        else:
+            self.paused = True
+
+    atomic fair<strong> action ListPoll:
+        require up(self.serve) and self.row != status_of(self.turn, self.child)
+        self.row = status_of(self.turn, self.child)
+
+    atomic action Retry:
+        # ThreadStripRetry: catch-up only, never a new EventSource.
+        require self.paused
+        if up(self.serve):
+            self.lines = self.disk
+            self.row = status_of(self.turn, self.child)
+            self.paused = False
+            self.timer = False
+        else:
+            self.timer = True
+
+    atomic action Reselect:
+        # Selecting the thread again (or reloading the page): the whole
+        # transcript, a new EventSource, the ring replayed.
+        require up(self.serve)
+        self.lines = self.disk
+        self.row = status_of(self.turn, self.child)
+        self.paused = False
+        self.es = "open"
+        self.timer = self.ring
+
+action Init:
+    stream = Stream()
+
+# No event reaches the page after Shutdown: the stream is never open
+# against a serve that is draining or gone.
+always assertion StreamsEndWithServe:
+    return stream.es != "open" or up(stream.serve)
+
+# Seq restart on serve B never merges or duplicates a line: the page
+# never shows more entries than the file holds.
+always assertion LinesNeverAhead:
+    return stream.lines <= stream.disk
+
+# ... and never drops one it showed.
+transition assertion LinesNeverShrink(before, after):
+    return after.stream.lines >= before.stream.lines
+
+# Connected to a serve, the page is never short with nothing armed and
+# nothing said. Gap: Reconnected_NoCatchUp on serve B's empty ring. With
+# GAP_EMPTY_RING False fizz fails on SigTerm, Record (the tail),
+# CloseKills, ServeStart, EventSourceRetry.
+always assertion NoSilentStale:
+    s = stream
+    if not (up(s.serve) and s.es == "open" and s.lines < s.disk and not s.timer and not s.paused):
+        return True
+    return GAP_EMPTY_RING and s.serve == "b" and not s.ring
+
+# A closed EventSource is shown as not live. Gap: no onerror. With
+# GAP_NO_ONERROR False fizz fails on SigTerm, EventsNon200 (a proxy's 502).
+always assertion ClosedIsSurfaced:
+    return stream.es != "closed" or stream.paused or GAP_NO_ONERROR
+
+# The list poll runs fast whenever no stream delivers. Gap: it slows for
+# any selected thread. With GAP_SLOW_POLL False fizz fails on SigTerm.
+always assertion PollFastWithoutStream:
+    return stream.es == "open" or stream.poll == "fast" or GAP_SLOW_POLL
+
+# With a serve up, the page eventually shows every entry on disk without
+# a person's action. Gaps: the empty ring (stuck in Reconnected_NoCatchUp)
+# and the closed EventSource (records never reach the page).
+always eventually assertion ConvergesToDisk:
+    s = stream
+    if not up(s.serve) or s.lines == s.disk:
+        return True
+    if GAP_EMPTY_RING and s.serve == "b" and not s.ring and s.es == "open" and not s.timer:
+        return True
+    return GAP_NO_ONERROR and s.es == "closed"
+
+# A fatal-status stream is eventually re-subscribed. Gap: no onerror, and
+# Retry only catches up; only a reselect or reload makes a new one.
+always eventually assertion FatalStreamRecovers:
+    return stream.es != "closed" or GAP_NO_ONERROR
+
+# "Updates paused" clears once serve is back.
+always eventually assertion PausedClears:
+    return not stream.paused
