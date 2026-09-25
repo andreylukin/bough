@@ -50,6 +50,11 @@ type OrbSummary struct {
 	// project.yml a guest wrote through the mounted project dir left the
 	// editor showing the old file, whose next Save wrote it back.
 	Files string `json:"files,omitempty"`
+	// Def fingerprints project.yml. The orb panel re-reads its detail
+	// when the summary changes, and an edit the image does not see (a
+	// remote's token, a base branch) moved nothing else: the panel kept
+	// the old preflight until someone pressed Re-check.
+	Def string `json:"def,omitempty"`
 }
 
 // OrbState is a session's state.json as the wire sees it. Up says the
@@ -272,6 +277,10 @@ func pidAlive(pid int) bool {
 func (a *API) orbSummary(ctx context.Context, slug string) (OrbSummary, string) {
 	sum := OrbSummary{Slug: slug}
 	home := a.sup.Home()
+	if b, err := os.ReadFile(filepath.Join(projectdef.Root(home), slug, projectdef.FileYAML)); err == nil {
+		h := sha256.Sum256(b)
+		sum.Def = hex.EncodeToString(h[:6])
+	}
 	if b, err := orb.ReadBuild(home, slug); err == nil {
 		sum.Build = b.State
 	}
