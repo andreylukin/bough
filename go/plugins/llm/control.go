@@ -309,6 +309,9 @@ func (c *controlLLM) take(r ullm.Request) (name string, t controlTurn, ok bool, 
 		} else if err := os.WriteFile(filepath.Join(c.dir, name+".request"), b, 0o644); err != nil {
 			return "", t, false, err
 		}
+		if err := writeToolResults(filepath.Join(c.dir, name+".tool-results"), r); err != nil {
+			return "", t, false, err
+		}
 		// Taken also promises the request snapshot is ready to inspect.
 		if err := os.Rename(claimed, filepath.Join(c.dir, name+".taken")); err != nil {
 			return "", t, false, err
@@ -317,6 +320,31 @@ func (c *controlLLM) take(r ullm.Request) (name string, t controlTurn, ok bool, 
 		return name, t, true, nil
 	}
 	return "", t, false, nil
+}
+
+// writeToolResults records the tool results a request carries, call id to
+// the text the model reads: what a hook's refusal or rewrite told the
+// model is visible nowhere else.
+func writeToolResults(path string, r ullm.Request) error {
+	results := map[string]string{}
+	for _, it := range r.Input {
+		tr, ok := it.Data.(ullm.ToolResult)
+		if !ok {
+			continue
+		}
+		var text []string
+		for _, o := range tr.Output {
+			if o.Kind == ullm.ToolResultText {
+				text = append(text, o.Value)
+			}
+		}
+		results[tr.CallID] = strings.Join(text, "\n")
+	}
+	b, err := json.Marshal(map[string]any{"tool_results": results})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
 }
 
 type controlAdapter struct {

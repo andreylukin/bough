@@ -605,3 +605,25 @@ func TestControlRecordsRawRequest(t *testing.T) {
 		t.Fatalf("001.req does not carry the prompt:\n%s", b)
 	}
 }
+
+func TestControlRecordsToolResults(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "ok", Calls: []Call{{ID: "c1", Name: "bash", Args: map[string]any{"command": "echo recorded-output"}}}})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "read it"})
+	r.send("hello")
+	r.waitFor("[assistant] read it")
+	if code, out := r.finish(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	got, err := ToolResults(r.dir(), "002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got["c1"], "recorded-output") {
+		t.Fatalf("request 002 carried %q, want the bash output for c1", got)
+	}
+	if first, err := ToolResults(r.dir(), "001"); err != nil || len(first) != 0 {
+		t.Fatalf("request 001 carried %q (%v), want no tool results", first, err)
+	}
+}

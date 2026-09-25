@@ -44,6 +44,11 @@ request carried (`control.Request`), written before the `.taken`
 rename: an input sent at a request boundary, like a job's `[notice]`,
 is recorded nowhere else.
 
+Each request that takes a turn also leaves `<name>.tool-results`, written
+before `.taken`: the tool results it carried, call id to text
+(`ToolResults`), so a test can check what the model was told about a
+call.
+
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
 hanging. Session titles and other `Complete` calls never take a turn.

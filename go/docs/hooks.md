@@ -20,7 +20,7 @@ does against the loop's whole block, and the payload also names the tool.
 |----------------------|-------------------------------------------|-------------------------------------------|----------------------|
 | `session-start`      | the session's first model build           | `{}`                                      | `context` → frozen into the system prompt |
 | `user-prompt-submit` | each line you send                        | `{input}`                                 | `block` → refuse the line; `input` → rewrite (shown to you) |
-| `pre-code-exec`      | before each native call                   | `{code, tool, args, call}`                | `deny` → the model reads `Error: blocked by hook: <reason>`; `args` (an object) → replace the call's arguments |
+| `pre-code-exec`      | before each native call                   | `{code, tool, args, call}`                | `deny` or `block` (a string or `true`) → the model reads `Error: blocked by hook: <reason>`; `args` (an object) → replace the call's arguments |
 | `post-result`        | after each native call                    | `{code, tool, call, result, error}`       | `result` → rewrite what the model reads |
 | `stop`               | when a turn ends                          | `{reply}`                                 | `block` → the model is asked to continue with that text |
 | `session-end`        | at unmount                                | `{}`                                      | none |
@@ -31,8 +31,8 @@ does against the loop's whole block, and the payload also names the tool.
 - `call` is the provider's call id, the same id the call row shows.
 - `error` is the call's error text, `""` when it succeeded. `result` is the
   output without the `Error:` line.
-- A `code` rewrite from `pre-code-exec` is ignored on the engine. Return `args`
-  instead.
+- A `code` rewrite from `pre-code-exec` is ignored on the engine, and the
+  ledger records that fire as passed, not rewrote. Return `args` instead.
 - `view_image` is the harness's own tool, not a bough call, and gets the same
   two events: `pre-code-exec` with the path as `code` (a `deny` refuses it),
   and `post-result` once the image has loaded or failed. Its `result` is not

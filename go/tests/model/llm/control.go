@@ -342,3 +342,17 @@ func BootPID(dir, id string) int {
 	fmt.Sscanf(string(b), "%d", &pid)
 	return pid
 }
+
+func ToolResults(dir, name string) (map[string]string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, name+".tool-results"))
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		ToolResults map[string]string `json:"tool_results"`
+	}
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, fmt.Errorf("llm-control: %s.tool-results: %w", name, err)
+	}
+	return r.ToolResults, nil
+}
