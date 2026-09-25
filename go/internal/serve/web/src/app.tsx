@@ -2741,7 +2741,8 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
   // R3-G: the metrics fold into one "…", cache first, then tests, cost,
   // edits and context, until the title group (status and all) and the strip
   // each fit their room. A phone folds them all. A new pane width starts over.
-  const [fold, setFold] = useState(0);
+  // A phone starts folded: its first paint showed every chip, then folded them a frame later.
+  const [fold, setFold] = useState(() => (typeof window !== "undefined" && window.matchMedia?.("(max-width:720px)").matches ? 5 : 0));
   // The chip's tab lives here: a fold (a phone, a narrow pane) moves the
   // chip under "Details" and back, which mounts it anew each time.
   const [chgScope, setChgScope] = useState<Scope>("session");
@@ -3946,6 +3947,54 @@ export function ComposerHint({ pickerOpen, steering, live }: { pickerOpen: boole
   );
 }
 
+/**
+ * The header's Session settings popover as Thread draws it while open:
+ * its open state, the focus move and the viewport fit are Thread's, so any
+ * state of it renders statically (test/model-narrow.test.tsx).
+ */
+export function SessionSettings({ row, projects, catalogue, failedLoad, onModel, onEffort, onAssign, onRename, onArchive, onClose: closeMore }: {
+  row: Row; projects: Project[]; catalogue: ReturnType<typeof useCatalogue>; failedLoad: boolean;
+  onModel: (m: string, plugin?: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
+  onRename: (t: string) => Promise<void>; onArchive: () => void;
+  /** refocus: give focus back to the Settings button. */
+  onClose: (refocus: boolean) => void;
+}) {
+  return (
+    <div className="head-pop" role="dialog" aria-label="Session settings" id={"more-" + row.id} tabIndex={-1} onKeyDown={(e) => {
+      // Non-modal: tabbing past either end closes it, back on Settings.
+      if (e.key !== "Tab") return;
+      const all = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input")].filter((el) => el.offsetParent);
+      const first = all[0], last = all[all.length - 1];
+      const here = document.activeElement;
+      if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); closeMore(true); }
+    }}>
+      <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} /></div>
+      <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" catalogue={catalogue} />
+      <button className="head-pop-item" onClick={async () => {
+        closeMore(false);
+        // Empty is allowed: it hands the title back to the session.
+        await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true, onSubmit: onRename });
+      }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 20h4L19 9l-4-4L4 16z" />
+        </svg>
+        Rename…
+      </button>
+      <button className={"head-pop-item" + (row.archived ? "" : " head-pop-danger")} onClick={() => { closeMore(true); onArchive(); }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />
+        </svg>
+        {row.archived ? "Unarchive" : "Archive…"}
+      </button>
+    </div>
+  );
+}
+
+/** App mounts the phone's bottom bar on the list and on any view that is not the conversation. */
+export function phoneNav(narrow: boolean, pane: "list" | "thread", view: View): boolean {
+  return narrow && (pane === "list" || view !== "sessions");
+}
+
 export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
@@ -4594,7 +4643,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const send = async () => {
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.
-    if (!t || busy || uploading || askChanged || row.archived) return;
+    // Nor before the transcript is read: what landed is judged against it.
+    if (!t || loading || busy || uploading || askChanged || row.archived) return;
     // A tag whose content is gone is never sent as its placeholder.
     const lost = lostTags(t, images.current, pastes.current);
     if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.join(", ")}`); return; }
@@ -4742,33 +4792,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               </svg>
             </button>
             {more && (
-              <div className="head-pop" role="dialog" aria-label="Session settings" id={"more-" + row.id} tabIndex={-1} onKeyDown={(e) => {
-                // Non-modal: tabbing past either end closes it, back on Settings.
-                if (e.key !== "Tab") return;
-                const all = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input")].filter((el) => el.offsetParent);
-                const first = all[0], last = all[all.length - 1];
-                const here = document.activeElement;
-                if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); closeMore(true); }
-              }}>
-                <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} /></div>
-                <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" catalogue={catalogue} />
-                <button className="head-pop-item" onClick={async () => {
-                  closeMore(false);
-                  // Empty is allowed: it hands the title back to the session.
-                  await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true, onSubmit: onRename });
-                }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M4 20h4L19 9l-4-4L4 16z" />
-                  </svg>
-                  Rename…
-                </button>
-                <button className={"head-pop-item" + (row.archived ? "" : " head-pop-danger")} onClick={() => { closeMore(true); onArchive(); }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />
-                  </svg>
-                  {row.archived ? "Unarchive" : "Archive…"}
-                </button>
-              </div>
+              <SessionSettings row={row} projects={projects} catalogue={catalogue} failedLoad={failedLoad} onModel={onModel} onEffort={onEffort}
+                               onAssign={onAssign} onRename={onRename} onArchive={onArchive} onClose={closeMore} />
             )}
           </div>
         </div>
@@ -5045,7 +5070,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 </button>
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
-              {live && (stopping === "failed"
+              {/* Not before the transcript is read: the header names no status until then, and a Stop beside it claimed a turn it could not show. */}
+              {live && !loading && (stopping === "failed"
                 ? <button className="btn composer-stop-retry" onClick={stop} title="Stop (Esc)" aria-keyshortcuts="Escape">Retry stop</button>
                 : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
                           aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Stop (Esc)" aria-keyshortcuts="Escape">
@@ -5056,7 +5082,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 <button className="btn composer-queue" onClick={enqueue} disabled={uploading > 0 || askChanged}
                         title={modKey() + "Enter"}>Queue</button>
               )}
-              <button className="btn btn-primary" onClick={send} disabled={failedLoad || busy || uploading > 0 || blank || askChanged || row.archived}
+              <button className="btn btn-primary" onClick={send} disabled={loading || busy || uploading > 0 || blank || askChanged || row.archived}
                       title={failedLoad ? "Transcript didn’t load" : running && !draftAsk ? "Enter" : undefined}
                       aria-label={(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}>
                 <span className="send-word">{(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}</span>
@@ -6088,7 +6114,7 @@ export default function App() {
         <PortalPane row={row} onClose={() => setSub(null)} onAsk={(t) => api.prompt(row.id, t)} />
       )}
       <DialogHost />
-      {narrow && (pane === "list" || view !== "sessions") && (
+      {phoneNav(narrow, pane, view) && (
         <ViewNav phone view={pane === "list" ? "sessions" : view === "project" ? "projects" : view} onView={onView} wikiFlags={wikiFlags} />
       )}
       {creating && <StartingStatus />}
