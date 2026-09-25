@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/internal/linegate"
+	"github.com/andreylukin/bough/internal/stepgate"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -208,6 +209,7 @@ func hlPrint(ev Event) {
 		call, _ := ev.Data["call"].(string)
 		hlAsk = &hlAskState{id: ev.ID, options: ev.Options, secret: ev.Secret, call: call}
 		hlMu.Unlock()
+		hlNote()
 		if HeadlessJSON {
 			extra := map[string]any{"id": ev.ID, "options": ev.Options}
 			if ev.Secret {
@@ -238,6 +240,7 @@ func hlPrint(ev Event) {
 		hlMu.Lock()
 		hlAsk = nil
 		hlMu.Unlock()
+		hlNote()
 	}
 	hlMu.Lock()
 	if hlAsk != nil && askEnded(ev, hlAsk.call) {
@@ -246,6 +249,7 @@ func hlPrint(ev Event) {
 		hlAsk = nil
 	}
 	hlMu.Unlock()
+	hlNote()
 	switch ev.Kind {
 	case "error":
 		// Held until the turn ends: a failed code block is followed by the
@@ -287,6 +291,7 @@ func hlPrint(ev Event) {
 	}
 	if ev.Kind == "done" && hlTurnErr.Swap(false) {
 		hlErrored.Store(true) // the turn ended on the error
+		hlNote()
 	}
 	if ev.Kind == "done" {
 		hlMu.Lock()
@@ -319,10 +324,12 @@ func headlessPump() {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
 	cwd, _ := os.Getwd()
-	gate := linegate.Open("in", cwd) // nil outside a model test
-	for sc.Scan() {
+	gate := linegate.Open("in", cwd)
+	for n := 0; sc.Scan(); n++ {
 		done := gate.Hold("")
+		stepped := hlGate.Hold(fmt.Sprintf("in.%d", n))
 		done(hlLineIn(sc.Text()))
+		stepped()
 	}
 
 	// EOF: no line can answer an ask now, so fail a pending one (and
@@ -331,6 +338,7 @@ func headlessPump() {
 	// events go idle.
 	hlEOF.Store(true)
 	hlCancelAsk()
+	hlGate.Note("stdin", "eof")
 	drainHeadless()
 	drainEngine()
 	interruptSelf()
@@ -551,8 +559,10 @@ func hlAnswerTo(id, line string) bool {
 	}
 	if err := ans.Answer(pa.id, text); err != nil {
 		hlErrored.Store(true)
+		hlGate.Note("refused", "true")
 		hlLine(hlErr, "error", err.Error(), nil)
 	}
+	hlNote()
 	return true
 }
 
@@ -586,6 +596,23 @@ func typedAnswer(line string) (id, text string, ok bool) {
 	return obj.Ask, *obj.Answer, true
 }
 
+// hlGate is the BOUGH_TEST_STEP_GATE hook, nil unless a model test set
+// it (tests/model/specs/ask_timeout_vs_answer.fizz): it steps stdin a
+// line at a time and notes hlAsk and hlErrored, which no API shows.
+var hlGate = stepgate.Here()
+
+// hlNote records hlAsk and hlErrored for the test hook.
+func hlNote() {
+	if hlGate == nil {
+		return
+	}
+	hlMu.Lock()
+	open := hlAsk != nil
+	hlMu.Unlock()
+	hlGate.Note("hlAsk", strconv.FormatBool(open))
+	hlGate.Note("errored", strconv.FormatBool(hlErrored.Load()))
+}
+
 // hlTurnErr is an error the running turn has not recovered from yet: set
 // by an "error" event, cleared by a later block's result, and turned into an
 // errored run only if the turn's done arrives first.
@@ -612,6 +639,7 @@ func hlCancelAsk() {
 	if c, ok := ans.(askCanceler); ok {
 		c.Cancel(pa.id)
 	}
+	hlNote()
 }
 
 // hlDispatch runs a "/" line through the commands service, printing

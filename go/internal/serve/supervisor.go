@@ -28,6 +28,7 @@ import (
 	"github.com/andreylukin/bough/internal/linegate"
 	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/stepgate"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -792,6 +793,16 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 	}
 	ch.cmd = cmd
 	ch.stdin = stdin
+	// Test hook (BOUGH_TEST_STEP_GATE, off unless set): an "eof" file
+	// drops the child as its reap does, disarming it, and closes its
+	// stdin while it still runs, so a model test can step what the
+	// child does with a question open when its input ends.
+	stepgate.Open(dir).Watch("eof", ch.done, func() {
+		s.drop(ch)
+		ch.inMu.Lock()
+		stdin.Close()
+		ch.inMu.Unlock()
+	})
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -860,6 +871,7 @@ func (s *Supervisor) pumpStdout(ch *child, r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 	gate := linegate.Open("out", ch.cmd.Dir) // started: cmd is set
+	stepGate := stepgate.Open(ch.cmd.Dir)    // started: cmd is set
 	for sc.Scan() {
 		line := sc.Text()
 		if line == "" {
@@ -891,6 +903,14 @@ func (s *Supervisor) pumpStdout(ch *child, r io.Reader) {
 			done := gate.Hold(kind + " " + tool + " " + id)
 			s.emit(ch, kind, text, extra)
 			done("")
+			continue
+		}
+		if stepGate != nil && kind == "call" && extra["phase"] != "start" && (extra["tool"] == "ask" || extra["tool"] == "secret") {
+			// Test hook only: the end of an ask waits to be read, so a
+			// model test can answer while it is still armed here.
+			done := stepGate.Hold("scanend")
+			s.emit(ch, kind, text, extra)
+			done()
 			continue
 		}
 		s.emit(ch, kind, text, extra)

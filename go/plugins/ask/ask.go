@@ -21,6 +21,7 @@ import (
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/internal/secrets"
+	"github.com/andreylukin/bough/internal/stepgate"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -88,6 +89,11 @@ type pend struct {
 // userHome is a test seam, as in plugins/orb.
 var userHome = os.UserHomeDir
 
+// gate is the BOUGH_TEST_STEP_GATE hook, nil unless a model test set
+// it: it holds an ask at each step a late answer can race, and notes
+// the state no API shows (tests/model/specs/ask_timeout_vs_answer.fizz).
+var gate = stepgate.Here()
+
 var secretName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ask is the tools.ask implementation. It records the question, emits
@@ -135,6 +141,8 @@ func (a *Asker) putIn(done <-chan struct{}, park func() func(), call, question s
 	ch := make(chan string, 1)
 	a.pending[id] = pend{ch: ch, secret: secret}
 	a.mu.Unlock()
+	gate.Note("pending", "true")
+	gate.Note("call", "open")
 
 	if a.hist != nil {
 		data := map[string]any{"question": question, "options": options, "id": id}
@@ -161,22 +169,41 @@ func (a *Asker) putIn(done <-chan struct{}, park func() func(), call, question s
 		defer close(stop)
 		timeout = expireOn(filepath.Join(a.expireDir, id), timeout, stop)
 	}
+	answers := (<-chan string)(ch)
+	if gate != nil {
+		// Test hook: the select may take the answer only when the test
+		// says, so it can fire the timeout with an answer already in ch.
+		stop := make(chan struct{})
+		defer close(stop)
+		answers = stepgate.Relay(gate, "recv", ch, stop)
+	}
 	select {
 	case <-done:
-		a.mu.Lock()
-		delete(a.pending, id)
-		a.mu.Unlock()
+		a.giveUp(id, ch)
 		return "", fmt.Errorf("ask: cancelled with no answer")
-	case text, ok := <-ch:
+	case text, ok := <-answers:
 		if !ok {
 			return "", fmt.Errorf("ask: cancelled with no answer")
 		}
 		return text, nil
 	case <-timeout:
-		a.mu.Lock()
-		delete(a.pending, id)
-		a.mu.Unlock()
+		a.giveUp(id, ch)
 		return "", fmt.Errorf("ask: no answer after %s", a.timeout)
+	}
+}
+
+// giveUp is the done and timeout branches' delete, which runs only
+// after the select chose them: an Answer in between still takes the
+// entry and sends on ch, which nothing reads any more.
+func (a *Asker) giveUp(id string, ch chan string) {
+	gate.Note("call", "fired")
+	gate.Hold("giveup")()
+	a.mu.Lock()
+	delete(a.pending, id)
+	a.mu.Unlock()
+	gate.Note("pending", "false")
+	if gate != nil && len(ch) > 0 {
+		gate.Note("unread", "true")
 	}
 }
 
@@ -241,6 +268,8 @@ func (a *Asker) secretVia(ask func(question string) (string, error), name, reaso
 	if value == "" || value == "(declined)" {
 		return "", fmt.Errorf("secret: user declined")
 	}
+	gate.Note("call", "got")
+	gate.Hold("store")()
 	service := secrets.Service(slug, name)
 	if err := secrets.Store(service, value); err != nil {
 		return "", fmt.Errorf("secret: store failed: %s", scrub(err.Error(), value))
@@ -286,6 +315,8 @@ func (a *Asker) Answer(id, text string) error {
 		}
 	}
 	p.ch <- text // buffered: never blocks the UI; the raw value reaches askSecret only
+	gate.Note("pending", "false")
+	gate.Note("chan", "sent")
 	return nil
 }
 
@@ -301,6 +332,8 @@ func (a *Asker) Cancel(id string) error {
 		return fmt.Errorf("ask: no pending ask %q", id)
 	}
 	close(p.ch)
+	gate.Note("pending", "false")
+	gate.Note("chan", "closed")
 	return nil
 }
 
