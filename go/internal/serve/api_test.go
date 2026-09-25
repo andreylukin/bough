@@ -100,18 +100,18 @@ func TestAPIListSessions(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
 	now := time.Now()
+	// The list orders by the last entry's time, so make it deterministic.
+	old := now.Add(-time.Hour)
 	f.seed(t, "old",
-		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": "/one", "repo": "/one", "branch": "main"}},
-		history.Entry{Seq: 2, At: now, Kind: "input", Data: map[string]any{"text": "first prompt"}},
-		history.Entry{Seq: 3, At: now, Kind: "done", Data: nil},
+		history.Entry{Seq: 1, At: old, Kind: "meta", Data: map[string]any{"cwd": "/one", "repo": "/one", "branch": "main"}},
+		history.Entry{Seq: 2, At: old, Kind: "input", Data: map[string]any{"text": "first prompt"}},
+		history.Entry{Seq: 3, At: old, Kind: "done", Data: nil},
 	)
 	f.seed(t, "new",
 		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": "/two"}},
 		history.Entry{Seq: 2, At: now, Kind: "input", Data: map[string]any{"text": "second"}},
 		history.Entry{Seq: 3, At: now, Kind: "cancelled", Data: nil},
 	)
-	// List orders by mtime, so make the order deterministic.
-	old := now.Add(-time.Hour)
 	if err := os.Chtimes(filepath.Join(f.hist, "old.jsonl"), old, old); err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +150,68 @@ func TestAPIListSessions(t *testing.T) {
 	_, body = f.do(t, "GET", "/api/sessions?cwd=/nowhere", "")
 	if ids := sessionIDs(t, body); len(ids) != 0 {
 		t.Errorf("cwd filter on an unused dir = %v", ids)
+	}
+}
+
+// A turn's summary and title land after its done, and `bough summarize`
+// writes them into old sessions: bookkeeping, not activity. They moved
+// the session to the top of the list, above one whose turn ended later
+// (specs/session_list_ordering.fizz, BookkeepingDoesNotMove).
+func TestAPIListBookkeepingDoesNotMove(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	now := time.Now()
+	f.seed(t, "a",
+		history.Entry{Seq: 1, At: now.Add(-3 * time.Minute), Kind: "meta", Data: map[string]any{"cwd": "/w"}},
+		history.Entry{Seq: 2, At: now.Add(-3 * time.Minute), Kind: "input", Data: map[string]any{"text": "a"}},
+		history.Entry{Seq: 3, At: now.Add(-time.Minute), Kind: "done"},
+	)
+	doneB := now.Add(-2 * time.Minute)
+	f.seed(t, "b",
+		history.Entry{Seq: 1, At: now.Add(-3 * time.Minute), Kind: "meta", Data: map[string]any{"cwd": "/w"}},
+		history.Entry{Seq: 2, At: now.Add(-3 * time.Minute), Kind: "input", Data: map[string]any{"text": "b"}},
+		history.Entry{Seq: 3, At: doneB, Kind: "done"},
+		history.Entry{Seq: 4, At: now, Kind: "turn-summary", Data: map[string]any{"text": "b", "turn": 1}},
+		history.Entry{Seq: 5, At: now, Kind: "title", Data: map[string]any{"text": "b", "final": true}},
+	)
+	// b's file was written last, as the title entry leaves it.
+	if err := os.Chtimes(filepath.Join(f.hist, "a.jsonl"), now, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	_, body := f.do(t, "GET", "/api/sessions", "")
+	if ids := sessionIDs(t, body); len(ids) != 2 || ids[0] != "a" {
+		t.Fatalf("ids = %v, want [a b]: a title entry moved b", ids)
+	}
+	b := body["sessions"].([]any)[1].(map[string]any)
+	if at, _ := time.Parse(time.RFC3339Nano, b["lastAt"].(string)); !at.Equal(doneB) {
+		t.Errorf("b lastAt = %v, want its done at %v", b["lastAt"], doneB)
+	}
+}
+
+// Two turns that ended in the same instant list by id, newest first,
+// whatever wrote to either file since: mtime moves on bookkeeping.
+func TestAPIListTieBreaksOnID(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	now := time.Now()
+	for _, id := range []string{"s1", "s2"} {
+		f.seed(t, id,
+			history.Entry{Seq: 1, At: now.Add(-time.Minute), Kind: "meta", Data: map[string]any{"cwd": "/w"}},
+			history.Entry{Seq: 2, At: now.Add(-time.Minute), Kind: "input", Data: map[string]any{"text": id}},
+			history.Entry{Seq: 3, At: now, Kind: "done"},
+		)
+	}
+	// s1's title landed later, and its file with it.
+	appendEntry(filepath.Join(f.hist, "s1.jsonl"), history.Entry{Seq: 4, At: now.Add(time.Second), Kind: "title", Data: map[string]any{"text": "s1"}})
+	if err := os.Chtimes(filepath.Join(f.hist, "s2.jsonl"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(f.hist, "s1.jsonl"), now, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_, body := f.do(t, "GET", "/api/sessions", "")
+	if ids := sessionIDs(t, body); len(ids) != 2 || ids[0] != "s2" {
+		t.Fatalf("ids = %v, want [s2 s1]: a tie breaks on id", ids)
 	}
 }
 

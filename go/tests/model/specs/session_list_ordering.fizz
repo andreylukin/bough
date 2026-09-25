@@ -1,0 +1,291 @@
+---
+# An end state (every row old and folded) is not a deadlock; the
+# liveness check still sees it.
+deadlock_detection: false
+---
+# Where a session lands in the list and in the sidebar: ordering by last
+# activity, what a bookkeeping write may not do to it, the 72 h fold with
+# FRESH_MIN, ties, and a queued thread (go/tests/model/README.md).
+#
+# Code this is checked against:
+#   internal/serve/api.go      listSessions: rows sorted (stable) by
+#                              Modified, newest first; rowOf: Modified =
+#                              the file's mtime, LastAt = lastAt(entries).
+#   plugins/history/history.go List: mtime desc, ties broken on id desc
+#                              (the stable sort above keeps that).
+#   internal/serve/children_api.go  queuedRow: a queued child has no
+#                              file; Modified = LastAt = time.Now() on
+#                              every read.
+#   internal/serve/digest.go   troubled: an unacked failure is trouble
+#                              for 7 days (troubleWindow).
+#   web/src/status.tsx         sessionSignal/hasFailure: a failure from
+#                              the last 72 h needs you, acked or not.
+#   web/src/app.tsx            Sidebar: needIds pin a local row under
+#                              Needs you and take it out of its group
+#                              (listed in server order); byUrgency orders
+#                              a group (signal, then lastAt; a tie keeps
+#                              the server's order, the sort is stable);
+#                              isOld/isTucked fold a row quiet for 72 h
+#                              under "N older" unless FRESH_MIN (3)
+#                              lifts it back.
+#
+# The world. One local folder group w holds two sessions the person
+# works in, A and B, plus two rows R1 and R2 held running for the whole
+# walk (llm-control "block" turns). The running pair is fixed scenery:
+# a running row is never old, so it always counts towards FRESH_MIN,
+# which is what lets one of A and B fold at all (with only A and B in
+# the group, FRESH_MIN keeps both however old). A was created after B,
+# so A has the larger id: on a tie the server lists A first. Q is a
+# thread of project p, spawned while the child queue is full; it is
+# alone in p's group, which always sorts below w (w's running rows give
+# it signal 1, a queued or finished Q is 2).
+#
+# Fields. Observed off the API / the page:
+#   last_active  which of A and B the server says was active last: "A",
+#                "B", or "tie" (equal lastAt and mtime, to the ms).
+#   a, b         "done", "failed" (an unacked failure, trouble) or
+#                "seen" (a failure marked seen: still red for 72 h).
+#   a_old, b_old the row's lastAt is 72 h or more behind the clock.
+#   server       the order of A and B in GET /api/sessions: "AB"/"BA".
+#   sidebar      the order of A and B on the page when they list in the
+#                same place (both in w, or both under Needs you); "" when
+#                one is pinned and the other is in w.
+#   a_pinned, a_grouped (b_…)  listed under Needs you / in w's group.
+#   a_tucked, b_tucked  folded under w's "N older" line.
+#   unfolded     w's "N older" is open (it is remembered while nothing is
+#                folded, so it can be true with no line showing).
+#   q            Q: "none", "queued" (a pending row, no history yet) or
+#                "started" (it wrote its first entry).
+#   first        which of A, B, Q the server lists first.
+# Tracked by the adapter (it drove the turns, the list cannot tell it):
+#   last_turn    whose real turn ended last: "A", "B", or "tie".
+#
+# Time. ClockPasses72h is one step of 72 h for everything at once: the
+# running scenery and a queued Q do not age (running is never old; a
+# queued row is re-stamped on every read), A and B do. The 7-day trouble
+# window is past the model's horizon: an unacked failure stays pinned.
+#
+# Where this differs from the flow as first mapped (see the notes of
+# the run that wrote it):
+# - "group_reordered" is not reachable in this world and is left out:
+#   w's running rows give it signal 1 whatever A and B do, so the two
+#   groups never swap. Group order is byUrgency's key on groups (min
+#   signal, newest lastAt) with the same stable-sort fallback.
+# - byUrgency and the group sort have no explicit id tiebreak, but they
+#   are not nondeterministic: Array.sort is stable and the rows arrive
+#   in the server's order, which breaks ties on id. The spec says what
+#   that yields ("AB" on a tie); the invariants hold only as long as the
+#   client never re-sorts rows before byUrgency.
+# - Needs you lists in the server's order, not byUrgency's.
+
+# Pure helpers (a fizz func cannot be called inside an expression).
+
+def pinned(st, old):
+    # hasFailure: trouble (7 d, beyond the model) or a failure < 72 h.
+    return st == "failed" or (st == "seen" and not old)
+
+# A before B on a tie: A has the larger id.
+def ranked(last):
+    if last == "B":
+        return "BA"
+    return "AB"
+
+role List:
+    action Init:
+        # B then A each ran one clean turn; A's ended last.
+        self.last_turn = "A"
+        self.last_active = "A"
+        self.a = "done"
+        self.b = "done"
+        self.a_old = False
+        self.b_old = False
+        self.unfolded = False
+        self.q = "none"
+        self.first = "A"
+        self.derive()
+
+    # What the list and the page show, from the fields above.
+    atomic func derive():
+        self.server = ranked(self.last_active)
+        self.a_pinned = pinned(self.a, self.a_old)
+        self.b_pinned = pinned(self.b, self.b_old)
+        self.a_grouped = not self.a_pinned
+        self.b_grouped = not self.b_pinned
+        # w's group: R1, R2 (running, fresh), then A and B by byUrgency.
+        order = ["A", "B"]
+        if self.server == "BA":
+            order = ["B", "A"]
+        grouped = [x for x in order if (x == "A" and self.a_grouped) or (x == "B" and self.b_grouped)]
+        olds = [x for x in grouped if (x == "A" and self.a_old) or (x == "B" and self.b_old)]
+        fresh = 2 + len(grouped) - len(olds)
+        tucked = []
+        for x in olds:
+            if fresh < 3:
+                fresh = fresh + 1
+            else:
+                tucked.append(x)
+        self.a_tucked = "A" in tucked
+        self.b_tucked = "B" in tucked
+        if self.a_pinned == self.b_pinned:
+            # Both in w (fresh rows above the fold), or both pinned
+            # (Needs you keeps the server's order).
+            self.sidebar = self.server
+        else:
+            self.sidebar = ""
+
+    # x wrote: it is first in the list, unless a queued row (stamped
+    # now on every read) is still above everything.
+    atomic func touch(x):
+        if self.q != "queued":
+            self.first = x
+
+    # A clean turn ends in A / in B.
+    atomic action TurnDoneA:
+        self.a = "done"
+        self.a_old = False
+        self.last_turn = "A"
+        self.last_active = "A"
+        self.touch("A")
+        self.derive()
+
+    atomic action TurnDoneB:
+        self.b = "done"
+        self.b_old = False
+        self.last_turn = "B"
+        self.last_active = "B"
+        self.touch("B")
+        self.derive()
+
+    # A turn ends in an error: trouble until acked, red for 72 h after.
+    atomic action FailA:
+        self.a = "failed"
+        self.a_old = False
+        self.last_turn = "A"
+        self.last_active = "A"
+        self.touch("A")
+        self.derive()
+
+    atomic action FailB:
+        self.b = "failed"
+        self.b_old = False
+        self.last_turn = "B"
+        self.last_active = "B"
+        self.touch("B")
+        self.derive()
+
+    # The Seen button (POST /ack): clears trouble; the row stays pinned
+    # while the failure is under 72 h old (ui_sidebar says the same).
+    atomic action AckA:
+        require self.a == "failed"
+        self.a = "seen"
+        self.derive()
+
+    atomic action AckB:
+        require self.b == "failed"
+        self.b = "seen"
+        self.derive()
+
+    # Both finish a clean turn in the same millisecond: equal lastAt and
+    # equal mtime. The server breaks the tie on id, the page keeps it.
+    atomic action TwoSessionsSameMillisecond:
+        self.a = "done"
+        self.b = "done"
+        self.a_old = False
+        self.b_old = False
+        self.last_turn = "tie"
+        self.last_active = "tie"
+        self.touch("A")
+        self.derive()
+
+    # The title plugin's "title" / "turn-summary" entries, written after
+    # a turn's done or by a summarize backfill of an old session. They
+    # are bookkeeping: no field moves.
+    atomic action TitleWrittenA:
+        self.derive()
+
+    atomic action TitleWrittenB:
+        self.derive()
+
+    # 72 h pass with nobody touching A or B.
+    atomic fair action ClockPasses72h:
+        require not (self.a_old and self.b_old)
+        self.a_old = True
+        self.b_old = True
+        self.derive()
+
+    # w's "N older" line.
+    atomic action Unfold:
+        require (self.a_tucked or self.b_tucked) and not self.unfolded
+        self.unfolded = True
+
+    atomic action Fold:
+        require (self.a_tucked or self.b_tucked) and self.unfolded
+        self.unfolded = False
+
+    # Something in p spawns Q while the child queue is full.
+    atomic action Spawn:
+        require self.q == "none"
+        self.q = "queued"
+        self.first = "Q"
+
+    # A list read while Q waits: its row is re-stamped, nothing moves.
+    atomic action QueuedRowPoll:
+        require self.q == "queued"
+        self.derive()
+
+    # A slot frees; Q writes its first entry, newer than anything else.
+    atomic fair action Start:
+        require self.q == "queued"
+        self.q = "started"
+        self.first = "Q"
+
+    # The page's list poll (4 s): a read changes nothing.
+    atomic action Poll:
+        self.derive()
+
+action Init:
+    list = List()
+
+# Bookkeeping never moves a row: what the list says was active last is
+# the last real turn.
+always assertion BookkeepingDoesNotMove:
+    return list.last_active == list.last_turn
+
+# Equal timestamps break on id, on the server and the page alike.
+always assertion TieBreaksOnId:
+    return list.last_active != "tie" or (list.server == "AB" and list.sidebar in ["AB", ""])
+
+# A local row lists exactly once: pinned under Needs you or in its group.
+always assertion ListedOnce:
+    return list.a_pinned != list.a_grouped and list.b_pinned != list.b_grouped
+
+# Only a grouped row folds, and FRESH_MIN keeps w at three rows at least:
+# with R1 and R2 fresh, at most one of A and B is folded.
+always assertion FreshMinHolds:
+    return (not list.a_tucked or list.a_grouped) and (not list.b_tucked or list.b_grouped) and not (list.a_tucked and list.b_tucked)
+
+# A folded row is quiet (72 h) and needs nobody.
+always assertion OnlyQuietFolds:
+    return (not list.a_tucked or (list.a_old and not list.a_pinned)) and (not list.b_tucked or (list.b_old and not list.b_pinned))
+
+# Rows with the same signal list in the same order on the page and in
+# the API.
+always assertion ServerAndSidebarAgree:
+    return list.a_pinned != list.b_pinned or list.sidebar == list.server
+
+# A queued thread is the newest row there is.
+always assertion QueuedOnTop:
+    return list.q != "queued" or list.first == "Q"
+
+# Liveness: A untouched for 72 h and not needing you does not stay a
+# fresh row of w: it folds, or FRESH_MIN keeps it (old, lifted). Holds
+# because the clock is fair: turns may keep A fresh, but 72 h keep
+# passing between them.
+always eventually assertion QuietAFolds:
+    return not (list.a_grouped and not list.a_old)
+
+always eventually assertion QuietBFolds:
+    return not (list.b_grouped and not list.b_old)
+
+always eventually assertion QueueDrains:
+    return list.q != "queued"
