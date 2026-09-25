@@ -73,7 +73,7 @@ deadlock_detection: false
 # - The editor's Edit waits for the "saved" note to fade.
 # - The main thread's own status (the column's main button) is the
 #   conversation's business, not this page's.
-# - The rest keep the graph near 300 states (327, 1151 transitions):
+# - The rest keep the graph near 450 states (442, 1499 transitions):
 #   the files answer before the detail and only their first read fails;
 #   only the first message fails; the page's work (messages, threads,
 #   the orb, the editor) is walked on the wide page with the rail open
@@ -428,7 +428,10 @@ role Page:
 
     atomic action OrbExit:
         # main's owner went away: serve reports the orb stopped.
+        # Not while the "saved" note is up: the page learns of it by its
+        # 4 s poll, and the note is gone 2.6 s after the save.
         require self.orb == "running" and self.thread == "none"
+        require self.mem != "saved"
         self.orb = "stopped"
 
     # --- the thread, as the 4 s poll brings it -------------------------
@@ -464,9 +467,11 @@ role Page:
         # Archived or moved elsewhere (another client): it leaves the
         # list, and a page showing it goes home.
         # Scope: with the column unfolded (the rail is walked in place).
+        # Not while the "saved" note is up (see OrbExit). The Done
+        # group's fold is the person's and outlives the group.
         require self.thread in ("unseen", "done") and not self.rail
+        require self.mem != "saved"
         self.thread = "none"
-        self.done_folded = True
         if self.view == "thread":
             before = self.view
             self.view = "home"

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
 import type { OrbFile, OrbState, ProjectDetail, Row, Status } from "./types";
 import { api } from "./api";
-import { FileEditor, ORB_AS_STATUS, OrbSessions, confirmStopOrb, orbUp } from "./orb";
+import { FileEditor, ORB_AS_STATUS, type EditorInitial, OrbSessions, confirmStopOrb, orbUp } from "./orb";
 import { MARKED, STATUS, StatusMark, UnseenDot, hasQuestion, isUnseen, orbWord, rowNote, shownStatus, statusWord } from "./status";
 import { EmptyState, ErrorNote, Pending, ago, humanError } from "./loading";
 import { hasOwnTitle, sessionTitle, titleKey } from "./render";
@@ -300,10 +300,12 @@ const FOLDED_ON_HOME: ReadonlySet<ThreadGroup> = new Set<ThreadGroup>(["error", 
  * The composer on the home. Messaging the project is messaging its main
  * thread — the one that hands work out — and creates it the first time.
  */
-function ProjectComposer({ onMessage, line, autoFocus }: { onMessage: (text: string) => Promise<void>; line?: string; autoFocus?: boolean }) {
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+function ProjectComposer({ onMessage, line, autoFocus, initial }: {
+  onMessage: (text: string) => Promise<void>; line?: string; autoFocus?: boolean; initial?: ComposerInitial;
+}) {
+  const [text, setText] = useState(initial?.text ?? "");
+  const [busy, setBusy] = useState(initial?.busy ?? false);
+  const [err, setErr] = useState(initial?.err ?? "");
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (autoFocus) box.current?.focus(); }, [autoFocus]);
   const send = async () => {
@@ -342,8 +344,10 @@ function ProjectComposer({ onMessage, line, autoFocus }: { onMessage: (text: str
  * Main is pinned first as the thread the composer talks to; the rest sit
  * under their state, most urgent first, with idle capped behind a line.
  */
-export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread, onSeen }: {
+export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread, onSeen, composer }: {
   detail: ProjectDetail; mainRow?: Row; onOpen: (id: string) => void;
+  /** Where the composer starts; see PageInitial. */
+  composer?: ComposerInitial;
   onMessage: (text: string) => Promise<void>; onNewThread?: () => void;
   /** Mark a thread seen: what dropping it on Done does. */
   onSeen?: (id: string) => void;
@@ -353,7 +357,7 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread, o
   const groups = dnd.withTargets(useMemo(() => groupThreads(detail.threads), [detail.threads]));
   return (
     <div className="scroll prj-home">
-      <ProjectComposer onMessage={onMessage} autoFocus
+      <ProjectComposer onMessage={onMessage} autoFocus initial={composer}
                        line={!detail.main ? "No main thread yet. The first message starts one." : detail.mainArchived ? "Archived. A message reopens it." : undefined} />
       <div className="prj-queue">
         <div className="prj-queue-head">
@@ -393,8 +397,26 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread, o
   );
 }
 
+/** The home composer's own state: its text, a send in flight, the last send's error. */
+export interface ComposerInitial { text: string; busy: boolean; err: string }
+
+/**
+ * Where the page's own UI state starts, in place of what it derives from
+ * the viewport and the remembered choices. A static render is exactly
+ * this start, which is how the model test draws every state of
+ * ui_project-page.fizz without a browser; the app never passes it.
+ */
+export interface PageInitial {
+  tight?: boolean; panel?: boolean; drawer?: boolean; threadsFolded?: boolean;
+  /** The column's folded groups. */
+  folded?: ThreadGroup[];
+  composer?: ComposerInitial;
+  /** The files editor's, on the MEMORY.md tab. */
+  editor?: EditorInitial;
+}
+
 export function ProjectPage({
-  detail, files, error, missing, filesError, conversation, mainRow, open, onOpen, onNewThread, onStartThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, onSeen, titles = {},
+  detail, files, error, missing, filesError, conversation, mainRow, open, onOpen, onNewThread, onStartThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, onSeen, titles = {}, initial,
 }: {
   /** Absent until the first read lands. */
   detail?: ProjectDetail;
@@ -429,13 +451,15 @@ export function ProjectPage({
   onSeen?: (id: string) => void;
   /** Session id to title, for the orb rows. */
   titles?: Record<string, string>;
+  initial?: PageInitial;
 }) {
   // Under 1080px the panel cannot sit beside the conversation, and
   // under 860px neither can the thread list: each becomes a drawer over
   // the conversation instead of disappearing, since the MEMORY.md
   // editor and the threads are the whole point of this page.
-  const tight = useMedia("(max-width:1080px)");
-  const [folded, setFolded] = useState<Set<ThreadGroup>>(() => new Set(CLOSED));
+  const media = useMedia("(max-width:1080px)");
+  const tight = initial?.tight ?? media;
+  const [folded, setFolded] = useState<Set<ThreadGroup>>(() => new Set(initial?.folded ?? CLOSED));
   // The panel opens closed and stays how it was left: beside the control
   // room's sidebar and the thread list it was a fourth column, and it
   // reopened on every visit. The thread list folds to a rail the same
@@ -445,9 +469,9 @@ export function ProjectPage({
   // conversation it made a fourth column, so it stays closed unless it
   // was opened. One remembered choice, made by the toggle, not by drawers.
   const panelWanted = (o: string) => { const p = pref(PANEL_PREF); return p ? p === "1" : !o; };
-  const [panel, setPanel] = useState(() => !tight && panelWanted(open));
-  const [threadsFolded, setThreadsFolded] = useState(() => pref(THREADS_PREF) === "1");
-  const [drawer, setDrawer] = useState(false);
+  const [panel, setPanel] = useState(() => initial?.panel ?? (!tight && panelWanted(open)));
+  const [threadsFolded, setThreadsFolded] = useState(() => initial?.threadsFolded ?? pref(THREADS_PREF) === "1");
+  const [drawer, setDrawer] = useState(initial?.drawer ?? false);
   const [tab, setTab] = useState<OrbFile>("MEMORY.md");
   const [filesOpen, setFilesOpen] = useState(true);
   // A drawer covering the conversation must not be what the page opens
@@ -576,7 +600,7 @@ export function ProjectPage({
 
         <div className="prj-conv">
           {!open
-            ? <ProjectHome detail={detail} mainRow={mainRow} onOpen={onOpen} onMessage={onMessage} onNewThread={onNewThread} onSeen={onSeen} />
+            ? <ProjectHome detail={detail} mainRow={mainRow} onOpen={onOpen} onMessage={onMessage} onNewThread={onNewThread} onSeen={onSeen} composer={initial?.composer} />
             : <StartThreadCtx.Provider value={inMain && onStartThread ? onStartThread : null}>
                 {conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
               </StartThreadCtx.Provider>}
@@ -597,7 +621,7 @@ export function ProjectPage({
             <button type="button" className="btn btn-ghost btn-sm prj-drawer-close" onClick={() => setPanel(false)}>Close</button>
           </div>
           <section className="prj-sec">
-            <h3 className="prj-sec-h eyebrow">Orbs</h3>
+            <h2 className="prj-sec-h eyebrow">Orbs</h2>
             <OrbLine orb={detail.mainOrb} messaged={Boolean(detail.main) || threads.length > 0} onStop={() => detail.main && onStopOrb(detail.main)} />
             <details className="prj-orbs">
               {/* The fold line carries the state, so a failed orb is not hidden under a bare count. Stopping one container stops one thread; the others keep theirs. */}
@@ -615,7 +639,7 @@ export function ProjectPage({
                 {!filesOpen && <span className="prj-files-sum"><span className="mono">MEMORY.md</span> · <span className={("num " + lineTone(memoryLines)).trim()}>{memoryLines} lines</span></span>}
               </summary>
               {files
-                ? <FileEditor order={PROJECT_FILES} files={files} tab={tab} onTab={setTab} onSave={onSave} editorRef={editor} announce
+                ? <FileEditor order={PROJECT_FILES} files={files} tab={tab} onTab={setTab} onSave={onSave} editorRef={editor} announce initial={initial?.editor}
                               note={tab === "MEMORY.md" ? MEMORY_NOTE : undefined}
                               meta={(f, text) => {
                                 const n = lineCount(text);
@@ -734,7 +758,9 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
     <ProjectPage
       detail={detail} files={files} error={err} missing={missing} filesError={filesErr} conversation={conversation} mainRow={mainRow}
       open={open} onOpen={setOpen} onBack={onBack} onOpenSession={onOpenSession} titles={titles}
-      onRetry={() => { void load(); void loadFiles(); }}
+      // A retry is said as one: the error gives way to the pending line
+      // until the reads answer, or the button looked like it did nothing.
+      onRetry={() => { setErr(""); setFilesErr(""); void load(); void loadFiles(); }}
       onSeen={onSeen ? (id) => { void onSeen(id).then(() => load()); } : undefined}
       onNewThread={onNewThread ? newThread : undefined}
       // The list reloads so the new thread shows beside main at once; main stays on screen, it is where the reply lands.

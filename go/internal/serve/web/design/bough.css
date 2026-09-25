@@ -212,7 +212,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .row-when{flex-shrink:0;margin-inline-start:auto;font-size:var(--fs-sm);color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap}
 .row-meta-run{color:var(--accent)}
 .row-meta-live{display:inline}.row-jobs+.row-meta-live{margin-inline-start:0}
-.row-id{flex-shrink:0;font-size:var(--fs-xs);color:var(--text-3);opacity:.7}
+.row-id{flex-shrink:0;font-size:var(--fs-xs);color:var(--text-3)}
 /* The setup chip is an inline-flex box beside bare text; one flex line keeps chip, dot and word on the same baseline. */
 .row-stack .row-meta-live{display:flex;align-items:center;gap:0;font-size:var(--fs-sm);line-height:16px}
 .row-stack .row-meta-live .setup-sep{white-space:pre}
