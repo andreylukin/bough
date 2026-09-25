@@ -1,0 +1,250 @@
+# System lines meeting an open question: a background agent's report
+# (serve's {"notice"} line), a watcher's wake and the page's model/effort
+# commands, arriving while the parent session is blocked on tools.ask or
+# tools.secret. Recipe: go/tests/model/README.md. ask_answer.fizz covers
+# the person's own POSTs; background_agents.fizz never has the parent
+# blocked on a question. This spec is where the two meet.
+#
+# One stdin pipe carries every line serve writes into a child, and the
+# child's stdin pump (plugins/ui/headless.go hlLineIn) is what decides
+# what a line is. Four writers:
+#   Notify     notify.go notifyFrom, called by children.go report when a
+#              background agent's turn closes: writes {"notice": text}
+#              raw, NOT through Send, so no pending-ask refusal (the
+#              notice is meant to get past an open ask).
+#   Wake       watchers.go supWaker.Wake -> Send: refused while an ask is
+#              armed. watch.go deliver checks Idle (status not running or
+#              needs-you) first, then Wakes; the queue was cleared before
+#              the Wake, and a refused wake is not requeued.
+#   SetModel / SetEffort   supervisor.go -> Send("/model x" | "/think x"):
+#              refused while armed (the page gets the error, meta keeps
+#              the old model).
+#   Answer     supervisor.go Answer: the person's text, raw, then disarm.
+#
+# A write and the child's read of it are one step here (as in
+# ask_answer.fizz): the pump reads a line as soon as it is written. The
+# window where a line written before an ask is read after it opened (the
+# pump held up in hlNotice's 30 s wait or hlSubmit's reload wait) is not
+# modelled; see the finding below.
+#
+# Fields:
+#   status   running | needs-you | done  (the row, StatusOf)
+#   ask      "" | plain | secret: the question open in the child, which
+#            serve has armed (write+read being one step, arm == open)
+#   plainAsked, secretAsked   each question is asked at most once, so the
+#            graph stays finite
+#   notice   none | queued | delivered: the one background report.
+#            delivered = the model has it (a request carrying it went
+#            out); queued = the engine has it but a model request is in
+#            flight, and it goes out at that request's boundary
+#            (actor.go steerOrQueue). The engine is asynchronous: an open
+#            ask is an outstanding call, not a blocked loop, so a report
+#            reaches the model while the question is still open, and an
+#            idle agent is woken by it. noticeCount counts deliveries.
+#   wake     none | queued | checked | delivered | dropped: the one
+#            watcher wake. checked = deliver() found the session idle and
+#            is about to Send.
+#   model    none | applied | refused: the last /model the page sent.
+#   secret   "" | person | notice | phantom: what tools.secret stored
+#            (secretVia trims and stores whatever answered its ask).
+#   noticeAnswered   a notice line was taken as an ask's answer (sticky).
+#   phantom          a line that was not a report was queued as a notice
+#                    (sticky): the person's plain answer that happens to
+#                    parse as {"notice": ...}.
+#   strayLine        serve wrote a wake or command line while an ask was
+#                    armed (sticky): it would have been read as the answer.
+#
+# Where the code as of main 5471918e disagreed (the MBT,
+# tests/model/mbt/notice_during_open_ask_test.go, went red on each; the
+# first two are fixed by serve tagging the answer {"answer": ...} and the
+# child telling notice and answer apart before anything else, the third
+# by an ErrPendingAsk sentinel):
+#   - A pending SECRET took the raw line before the notice sniff. A
+#     background agent finishing while its parent had tools.secret open:
+#     the {"notice": ...} line was taken as the secret, the secret ask
+#     closed as if answered, and the report was never delivered.
+#   - A plain answer was written raw and sniffed as JSON: an answer whose
+#     text is {"notice": "..."} became a phantom notice, the ask stayed
+#     open in the child while serve had disarmed it, and the next
+#     /prompt (no longer refused) was eaten as the answer.
+#   - SetModel (and SetEffort) refused on an armed ask answered 500, not
+#     the 409 of a /prompt: Send's refusal had no sentinel.
+
+role Session:
+    action Init:
+        self.status = "running"
+        self.ask = ""
+        self.plainAsked = False
+        self.secretAsked = False
+        self.notice = "none"
+        self.noticeCount = 0
+        self.wake = "none"
+        self.model = "none"
+        self.secret = ""
+        self.noticeAnswered = False
+        self.phantom = False
+        self.strayLine = False
+
+    # The model calls tools.ask / tools.secret: the child emits kind
+    # "ask" and serve arms it (emitLocked); the row turns needs-you. Asks
+    # never overlap: a block blocks on its ask. The call ends the request
+    # in flight, so a report waiting at its boundary goes out.
+    atomic action AskPlain:
+        require self.status == "running" and self.ask == "" and not self.plainAsked
+        self.flushNotice()
+        self.plainAsked = True
+        self.ask = "plain"
+        self.status = "needs-you"
+
+    atomic action AskSecret:
+        require self.status == "running" and self.ask == "" and not self.secretAsked
+        self.flushNotice()
+        self.secretAsked = True
+        self.ask = "secret"
+        self.status = "needs-you"
+
+    # A background agent's turn closes and serve reports it
+    # (childEventLocked -> report -> notifyFrom): the {"notice"} line is
+    # written whatever is armed, and the child routes it to job-notices
+    # before any answer handling. It never touches the ask or the arm.
+    # job-notices hands it to the engine at once (actor.go notice): with
+    # a model request in flight it waits for that request's boundary;
+    # otherwise it goes out now, as a [notice] input beside the open ask
+    # or as a turn of its own on an idle agent.
+    atomic action Notify:
+        require self.notice == "none"
+        if self.status == "running" and self.ask == "":
+            self.notice = "queued"
+        else:
+            self.deliverNotice()
+
+    # The model's step in flight ends and the report goes out with the
+    # next request; the turn runs on.
+    atomic fair action DeliverNotice:
+        require self.notice == "queued"
+        self.deliverNotice()
+
+    # A watcher's check produced news: queued in the watch engine.
+    atomic action WatcherQueue:
+        require self.wake == "none"
+        self.wake = "queued"
+
+    # deliver(): Idle reads the derived status; a session running or
+    # needing you keeps its queue.
+    atomic fair action WatcherCheck:
+        require self.wake == "queued" and self.status == "done"
+        self.wake = "checked"
+
+    # ...then Wake -> Send. Send refuses on an armed ask (the ask may have
+    # opened since the check: the person prompted in between). The queue
+    # was already cleared, so a refused wake is gone.
+    atomic fair action WatcherSend:
+        require self.wake == "checked"
+        if self.ask != "":
+            self.wake = "dropped"
+        else:
+            self.writeStray()
+            self.wake = "delivered"
+            # Steers a running turn, or starts one on an idle session.
+            self.status = "running"
+
+    # The page's model picker (and the effort picker, the same Send of a
+    # slash command): 409 while an ask is armed, else dispatched by the
+    # child without reaching the model.
+    atomic action SetModel:
+        require self.model != "applied"
+        if self.ask != "":
+            self.model = "refused"
+        else:
+            self.writeStray()
+            self.model = "applied"
+
+    # The person answers from the page (Answer): the line goes to the
+    # open question, serve disarms. A secret stores exactly that text.
+    atomic action Answer:
+        require self.ask != ""
+        if self.ask == "secret":
+            self.secret = "person"
+        self.closeAsk()
+
+    # The same with a plain answer whose text parses as {"notice": ...}:
+    # it is still the person's answer.
+    atomic action AnswerNoticeLike:
+        require self.ask == "plain"
+        self.closeAsk()
+
+    # The ask times out (Asker): the call returns with no answer, serve
+    # disarms on its result/call end. A secret stores nothing.
+    atomic fair action Timeout:
+        require self.ask != ""
+        self.closeAsk()
+
+    # The turn ends. A report waiting at the last request's boundary
+    # makes one more request first.
+    atomic fair action Finish:
+        require self.status == "running" and self.ask == ""
+        self.flushNotice()
+        self.status = "done"
+
+    # The person prompts an idle session: a new turn.
+    atomic action Prompt:
+        require self.status == "done"
+        self.status = "running"
+
+    atomic func deliverNotice():
+        self.notice = "delivered"
+        self.noticeCount += 1
+        if self.status == "done":
+            self.status = "running"
+
+    atomic func flushNotice():
+        if self.notice == "queued":
+            self.deliverNotice()
+
+    atomic func closeAsk():
+        self.ask = ""
+        self.status = "running"
+
+    # A wake or command line written into stdin: only ever with nothing
+    # armed. Kept as a func so a mutation that drops Send's refusal is
+    # one line.
+    atomic func writeStray():
+        if self.ask != "":
+            self.strayLine = True
+
+action Init:
+    session = Session()
+
+# A {"notice"} line is never an answer to any ask, plain or secret.
+always assertion NoticeNeverAnswers:
+    return not session.noticeAnswered
+
+# Nothing but the person's answer is ever stored as a secret.
+always assertion OnlySecretIsTheAnswer:
+    return session.secret == "" or session.secret == "person"
+
+# Only a finished agent's report is ever queued as a notice.
+always assertion NoPhantomNotice:
+    return not session.phantom
+
+# Serve writes no line but the answer and notices while an ask is armed.
+always assertion NoStrayLineWhileArmed:
+    return not session.strayLine
+
+# A notice is delivered exactly once, whether or not an ask was open.
+always assertion NoticeExactlyOnce:
+    return session.noticeCount <= 1 and (session.notice == "delivered") == (session.noticeCount == 1)
+
+# needs-you is exactly an open question.
+always assertion NeedsYouIsTheAsk:
+    return (session.status == "needs-you") == (session.ask != "")
+
+# A notice waiting for a request's boundary reaches the model: every
+# step that ends the request in flight takes it along.
+always eventually assertion NoticeDelivered:
+    return session.notice != "queued"
+
+# An open question, the secret included, stays until the person answers
+# or it times out; with the timeout fair, it does end.
+always eventually assertion AskEnds:
+    return session.ask == ""

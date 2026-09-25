@@ -882,7 +882,7 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrBadAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrAskExpired), errors.Is(err, ErrArchived), errors.Is(err, ErrStarting), errors.Is(err, ErrStopping),
+	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrPendingAsk), errors.Is(err, ErrAskExpired), errors.Is(err, ErrArchived), errors.Is(err, ErrStarting), errors.Is(err, ErrStopping),
 		errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession):
 		return http.StatusConflict
 	case errors.Is(err, ErrUnknownProject):
