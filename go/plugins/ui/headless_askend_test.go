@@ -16,6 +16,8 @@ func TestHeadlessAskCallEndDisarms(t *testing.T) {
 		{Kind: "call", Text: "Which?", Data: map[string]any{"tool": "ask", "id": "c1", "error": "ask: no answer after 10m0s"}},
 		{Kind: "call", Text: "TOKEN", Data: map[string]any{"tool": "secret", "id": "c1", "error": "secret: ask: no answer after 10m0s"}},
 		{Kind: "result", Text: "Error: ask: no answer after 10m0s"},
+		// A rule's approval ends as its bash call; the Asker names it.
+		{Kind: "ask/end", ID: "ask-1"},
 	} {
 		var out, errb bytes.Buffer
 		var steered []string
@@ -37,6 +39,7 @@ func TestHeadlessAskCallEndDisarms(t *testing.T) {
 		hlPrint(Event{Kind: "ask", ID: "ask-1", Text: "Which?"})
 		hlPrint(Event{Kind: "call", Text: "Which?", Data: map[string]any{"tool": "ask", "id": "c1", "phase": "start"}})
 		hlPrint(Event{Kind: "call", Text: "ls", Data: map[string]any{"tool": "bash", "id": "c0"}})
+		hlPrint(Event{Kind: "ask/end", ID: "ask-0"})
 		hlMu.Lock()
 		armed := hlAsk != nil
 		hlMu.Unlock()

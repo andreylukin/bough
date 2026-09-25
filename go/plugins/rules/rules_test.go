@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -171,6 +172,49 @@ func TestPolicy(t *testing.T) {
 	}
 	var target error = errors.New("x")
 	_ = target
+}
+
+// ctxAsk is an Asker that takes the call's context.
+type ctxAsk struct {
+	fakeAsk
+	ctx context.Context
+}
+
+func (f *ctxAsk) AskContext(ctx context.Context, q string, _ ...string) (string, error) {
+	f.ctx, f.asked = ctx, q
+	return f.answer, nil
+}
+
+type ctxKey struct{}
+
+// An approval goes to the Asker the UI answers now, with the call's
+// context. The first Asker found used to be kept for the session: after
+// the ask row remounted (a config reload) approvals went to the
+// disposed one, and their answers never reached them; and with no
+// context, Stop could not release an engine approval. Found by
+// tests/model/mbt/rules_prompt_approval_test.go.
+func TestPolicyAsksTheCurrentAsker(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	write(t, filepath.Join(home, ".codex", "rules", "default.rules"), `prefix_rule(pattern = ["gh"], decision = "prompt")`)
+	s := New(home, t.TempDir())
+	first, second := &fakeAsk{answer: "run"}, &ctxAsk{fakeAsk: fakeAsk{answer: "run"}}
+	var cur asker = first
+	s.findAsk = func() asker { return cur }
+	if err := s.Policy("gh pr view 1"); err != nil || !strings.Contains(first.asked, "view 1") {
+		t.Fatalf("first: %v / %q", err, first.asked)
+	}
+	cur = second
+	ctx := context.WithValue(context.Background(), ctxKey{}, 1)
+	if err := s.PolicyContext(ctx, "gh pr view 2"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(first.asked, "view 2") || !strings.Contains(second.asked, "view 2") {
+		t.Fatalf("asked %q on the old Asker, %q on the current one", first.asked, second.asked)
+	}
+	if second.ctx != ctx {
+		t.Fatal("the approval did not get the call's context")
+	}
 }
 
 // The user runs bough from home, so project == home and the two

@@ -250,7 +250,19 @@ func hlPrint(ev Event) {
 	}
 	hlMu.Unlock()
 	hlNote()
+	if ev.Kind == "ask/end" {
+		// The Asker's word that this ask ended unanswered (a rule's
+		// approval ends as the bash call it gated, which names no ask).
+		hlMu.Lock()
+		if hlAsk != nil && hlAsk.id == ev.ID {
+			hlAsk = nil
+		}
+		hlMu.Unlock()
+	}
 	switch ev.Kind {
+	case "ask/end":
+		// serve reads the id to disarm the same ask.
+		hlLine(hlOut, ev.Kind, ev.Text, map[string]any{"id": ev.ID})
 	case "error":
 		// Held until the turn ends: a failed code block is followed by the
 		// model trying again, and a run that recovered is not a failure (the

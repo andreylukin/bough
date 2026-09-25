@@ -1,0 +1,284 @@
+# A Codex prefix rule with decision "prompt" gates a bash command on
+# the person's approval (plugins/rules Policy -> the "ask-answers"
+# Asker's Ask(q, "run", "refuse")), in code mode (tools.bash inside a
+# block), in engine mode (the native bash call, plugins/tools/native.go)
+# and from a subagent's bash. Recipe: go/tests/model/README.md.
+#
+# One session. The spec says what the product must do; where the code
+# at the time of writing does something else it says so below, and the
+# MBT stage is where each of those turns red.
+#
+# Calls that can be in flight in one turn, each "" (not made this turn),
+# "wait" (queued for the one answer slot), "open" (its ask is up) or
+# "end" (answered, timed out or cancelled):
+#   c1   the main agent's bash that matched a prompt rule
+#   c2   a second such bash in the same reply (engine only: the engine
+#        runs a reply's calls at once)
+#   nat  the engine's native ask (or secret; same slot, same shape)
+#   sub  a subagent's bash that matched a prompt rule (spawn in code
+#        mode, the spawn call in engine mode; its rows are sub:*)
+# Code mode runs one host call at a time (a block blocks on tools.bash
+# and on tools.spawn), so there at most one of c1/sub is in flight.
+#
+# Where the approval lives:
+#   shown  the ask the row shows (StatusOf: the last "ask" entry until
+#          its ask/answer, a result, the call's end or the turn's end);
+#          it is what makes the status needs-you and what the page's
+#          Run / Refuse / text answer is written for
+#   armed  serve's s.asks[id] (supervisor emitLocked), which routes the
+#          POST /answer to the child and refuses /prompt while set
+#   gen    which Asker the UI answers: a remount of the ask row (a
+#          config reload) gives a new one
+#   raised the Asker the open ask was raised on ("" when none is open)
+#
+# crossed is sticky and never set by a correct product: an answer
+# written for the ask on screen was taken by a different call ("run"
+# for one command approved another, a credential landed in an approval).
+#
+# Where the code disagrees (findings, not fixed here):
+#   - Approvals do not go through ask's oneAtATime (only the native ask
+#     and secret tools do), so c1/c2/nat/sub can be open together; the
+#     UI keeps the last one and the child hands an answer to its own
+#     last pending ask. The spec queues them ("wait").
+#   - Engine mode: Policy is called with no ctx; Asker.put takes its
+#     cancel from codemode.RunContext, which is Background outside a
+#     run_js and takes the VM lock (waits behind a parallel run_js).
+#     Stop therefore does not release an engine approval; the spec's
+#     Cancel does (liveness StopReleases).
+#   - An approval that times out ends as the bash call's "call" (or the
+#     subagent's "sub:call" / "sub:result"), which neither emitLocked
+#     nor StatusOf treats as the ask's end: needs-you and the arm stick
+#     until the turn ends. The spec clears them on every end.
+#   - rules caches the first Asker it finds (findAsk runs outside Apply,
+#     so no dependency is recorded and rules never remounts); after a
+#     remount of the ask row approvals go to the disposed Asker. The
+#     spec raises on the current one.
+#   - Config.Reload is modelled only between turns.
+
+CALLS = ["c1", "c2", "nat", "sub"]
+
+def state(s, c):
+    if c == "c1":
+        return s.c1
+    if c == "c2":
+        return s.c2
+    if c == "nat":
+        return s.nat
+    return s.sub
+
+def opened(s):
+    out = []
+    for c in CALLS:
+        if state(s, c) == "open":
+            out.append(c)
+    return out
+
+def waiting(s):
+    out = []
+    for c in CALLS:
+        if state(s, c) == "wait":
+            out.append(c)
+    return out
+
+def busy(s):
+    return len(opened(s)) + len(waiting(s)) > 0
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.mode = "code"
+        self.gen = 0
+        self.c1 = ""
+        self.c2 = ""
+        self.nat = ""
+        self.sub = ""
+        self.shown = ""
+        self.armed = ""
+        self.raised = ""
+        self.stopping = False
+        self.crossed = False
+
+    atomic func put(c, v):
+        if c == "c1":
+            self.c1 = v
+        elif c == "c2":
+            self.c2 = v
+        elif c == "nat":
+            self.nat = v
+        else:
+            self.sub = v
+
+    # A call wants the person: it takes the slot if nobody holds it
+    # (records "ask", emits it; serve arms it; the row turns needs-you),
+    # else queues behind the one open.
+    atomic func request(c):
+        if len(opened(self)) == 0:
+            self.lift(c)
+        else:
+            self.put(c, "wait")
+
+    atomic func lift(c):
+        self.put(c, "open")
+        self.shown = c
+        self.armed = c
+        self.raised = str(self.gen)
+        self.status = "needs-you"
+
+    # The open ask ends (answer, timeout): the call returns and both the
+    # arm and the row let go of it.
+    atomic func end(c):
+        self.put(c, "end")
+        self.shown = ""
+        self.armed = ""
+        self.raised = ""
+        self.status = "running"
+
+    atomic func clear():
+        self.c1 = ""
+        self.c2 = ""
+        self.nat = ""
+        self.sub = ""
+        self.shown = ""
+        self.armed = ""
+        self.raised = ""
+        self.stopping = False
+
+    # --- the person, between turns ---
+
+    atomic action Prompt:
+        require self.status in ["idle", "done", "stopped"]
+        self.status = "running"
+
+    # Config.Reload of the loop row: code mode <-> engine.
+    atomic action SwitchLoop:
+        require self.status in ["idle", "done", "stopped"]
+        if self.mode == "code":
+            self.mode = "engine"
+        else:
+            self.mode = "code"
+
+    # Config.Reload that remounts the ask row: a new Asker.
+    atomic action ReloadAsk:
+        require self.status in ["idle", "done", "stopped"]
+        self.gen = 1 - self.gen
+
+    # --- the model ---
+
+    # tools.bash / native bash on a command a prompt rule matches.
+    atomic action Bash:
+        require self.status in ["running", "needs-you"] and not self.stopping
+        require self.c1 == ""
+        require self.mode == "engine" or not busy(self)
+        self.request("c1")
+
+    # A second such bash in the same reply, run in parallel.
+    atomic action ParallelBash:
+        require self.status in ["running", "needs-you"] and not self.stopping
+        require self.mode == "engine" and self.c1 != "" and self.c2 == ""
+        self.request("c2")
+
+    # The engine's native ask beside it.
+    atomic action NativeAsk:
+        require self.status in ["running", "needs-you"] and not self.stopping
+        require self.mode == "engine" and self.nat == ""
+        self.request("nat")
+
+    # A subagent whose bash matches a prompt rule (code mode: tools.spawn
+    # blocks the block; engine: the spawn call runs beside the others).
+    atomic action SpawnBash:
+        require self.status in ["running", "needs-you"] and not self.stopping
+        require self.sub == ""
+        require self.mode == "engine" or not busy(self)
+        self.request("sub")
+
+    # The slot is free and a call is queued: it takes it.
+    atomic fair action Grant:
+        require not self.stopping and len(opened(self)) == 0 and len(waiting(self)) > 0
+        c = any waiting(self)
+        self.lift(c)
+
+    # The turn ends once nothing waits on the person.
+    atomic fair action Finish:
+        require self.status == "running" and not self.stopping and not busy(self)
+        self.status = "done"
+        self.clear()
+
+    # --- the person, on the ask ---
+
+    # Run / Refuse on an approval; a typed answer on any ask (for an
+    # approval it refuses and reaches the model). The page writes the
+    # answer for the ask on screen; the child hands it to the open one.
+    atomic action ClickRun:
+        require self.shown in ["c1", "c2", "sub"] and not self.stopping
+        self.answer()
+
+    atomic action ClickRefuse:
+        require self.shown in ["c1", "c2", "sub"] and not self.stopping
+        self.answer()
+
+    atomic action AnswerText:
+        require self.shown != "" and not self.stopping
+        self.answer()
+
+    atomic func answer():
+        o = opened(self)
+        if len(o) > 0:
+            if o[0] != self.shown:
+                self.crossed = True
+            self.end(o[0])
+
+    # --- the Asker's timeout (ask timeout_minutes) ---
+
+    atomic action Timeout:
+        require len(opened(self)) > 0 and not self.stopping
+        self.end(opened(self)[0])
+
+    # --- Stop (Esc / Stop button: serve SIGINTs the child) ---
+
+    atomic action Stop:
+        require self.status in ["running", "needs-you"] and not self.stopping
+        self.stopping = True
+
+    # The cancel reaches every call, the open ask and the queued ones
+    # included, and the turn closes with "cancelled".
+    atomic fair action Cancel:
+        require self.stopping
+        self.status = "stopped"
+        self.clear()
+
+action Init:
+    session = Session()
+
+# At most one ask of any origin is open, and the one open is the one on
+# screen and armed: two approvals, or one beside a native ask or secret,
+# never share the one answer slot.
+always assertion OneAskOpen:
+    o = opened(session)
+    if len(o) > 1:
+        return False
+    if len(o) == 0:
+        return session.shown == "" and session.armed == ""
+    return session.shown == o[0] and session.armed == o[0]
+
+# "run" runs exactly the command it was written for: one answer never
+# approves (or refuses) another call.
+always assertion AnswerReachesItsCall:
+    return not session.crossed
+
+# An ask's end clears the arm and needs-you, a subagent's included:
+# needs-you exactly while an ask is on screen.
+always assertion NeedsYouIsTheAsk:
+    return (session.status == "needs-you") == (session.shown != "")
+
+# The approval is raised on the Asker the UI answers now.
+always assertion RaisedOnCurrentAsker:
+    return session.raised == "" or session.raised == str(session.gen)
+
+# Stop releases a pending approval promptly: the turn reaches stopped
+# without the ask's timeout (Timeout is not fair: nobody waits it out).
+always eventually assertion StopReleases:
+    return not session.stopping
+
+# A queued call is not starved: once the slot is free it gets it.
+always eventually assertion QueueDrains:
+    return len(waiting(session)) == 0 or len(opened(session)) == 1 or session.stopping

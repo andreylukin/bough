@@ -93,8 +93,10 @@ type Stats struct {
 	// (see view). Cleared by Take, like the rest of the turn's tally.
 	read map[string]string
 	// policy, when set, is asked before every bash command; its error
-	// is the refusal the model sees (the rules row's Codex rules).
-	policy func(cmd string) error
+	// is the refusal the model sees (the rules row's Codex rules). ctx
+	// is the command's: a policy that asks the person is released by
+	// its end (Stop).
+	policy func(ctx context.Context, cmd string) error
 	// afterEdit, when set, is asked after every write and patch; what it
 	// returns is appended to the tool's result (the lsp row's
 	// diagnostics). bashNote does the same for a bash command's output.
@@ -309,6 +311,16 @@ func resolveExisting(abs string) string {
 
 // SetPolicy installs (or, with nil, removes) the command policy.
 func (s *Stats) SetPolicy(fn func(cmd string) error) {
+	if fn == nil {
+		s.SetPolicyContext(nil)
+		return
+	}
+	s.SetPolicyContext(func(_ context.Context, cmd string) error { return fn(cmd) })
+}
+
+// SetPolicyContext is SetPolicy for a policy that takes the command's
+// context: the block's run, or the native call's.
+func (s *Stats) SetPolicyContext(fn func(ctx context.Context, cmd string) error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.policy = fn
@@ -571,17 +583,17 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 }
 
 func (s *Stats) bashRun(cmd string, opts ...any) (string, error) {
+	parent := context.Background()
+	if s.runCtx != nil {
+		parent = s.runCtx()
+	}
 	s.mu.Lock()
 	policy := s.policy
 	s.mu.Unlock()
 	if policy != nil {
-		if err := policy(cmd); err != nil {
+		if err := policy(parent, cmd); err != nil {
 			return "", err
 		}
-	}
-	parent := context.Background()
-	if s.runCtx != nil {
-		parent = s.runCtx()
 	}
 	project := s.project
 	if hookmeta.OnHost(parent) {

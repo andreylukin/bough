@@ -1207,6 +1207,22 @@ func (m *model) addEvent(ev Event) {
 		}
 		m.pendingAsk = ev.ID
 		m.input.Placeholder = askPlaceholder
+	case "ask/end":
+		// An ask that ended unanswered (a rule's approval timing out
+		// ends as its bash call, which names no ask): its block expires
+		// and the composer is let go. No block of its own.
+		askID := ev.ID
+		if askID == "" {
+			askID, _ = ev.Data["id"].(string)
+		}
+		for i := range m.blocks {
+			if b := &m.blocks[i]; b.kind == "ask" && b.askID == askID && !b.answered {
+				b.expired = true
+			}
+		}
+		if m.pendingAsk == askID {
+			m.clearPendingAsk()
+		}
 	case "code", "result":
 		if ev.Kind == "code" {
 			m.dedupeCode(ev.Text)

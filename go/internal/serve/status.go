@@ -113,6 +113,10 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 			if pending != nil && pending.ID == str(e.Data["id"]) {
 				pending = nil
 			}
+		case "ask/end":
+			if pending != nil && pending.ID == str(e.Data["id"]) {
+				pending = nil
+			}
 		case "result", "call":
 			// The ask returned — answered, timed out or cancelled — and a
 			// timeout records no answer: without this the session said
