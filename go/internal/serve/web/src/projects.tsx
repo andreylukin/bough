@@ -91,10 +91,10 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
   // project.yml with the file tools, another tab's editor): the list poll
   // brings a new summary, and the detail read before it is stale.
   const summary = JSON.stringify(project.orb ?? null);
-  // A session's container starts, stops and goes without the summary
-  // moving (the session's own process starts it): the list's rows carry
-  // each one's orb, and the Sessions table read before it is stale.
-  const orbs = JSON.stringify(rows.filter((r) => r.orb?.project === project.slug).map((r) => [r.id, r.orb?.status, !!r.orb?.up]));
+  // An orb made or removed without this page (`bough project rm`, a
+  // session resuming, another tab) changes only the session rows: the
+  // detail kept listing a removed orb, whose Remove… then answered 404.
+  const orbs = JSON.stringify(rows.filter((r) => r.project === project.slug || r.orb?.project === project.slug).map((r) => [r.id, r.orb?.status ?? "", !!r.orb?.up]));
   useEffect(load, [load, summary, orbs]);
 
   const state = detail?.build.state;
