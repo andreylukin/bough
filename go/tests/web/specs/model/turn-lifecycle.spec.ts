@@ -230,6 +230,8 @@ modelTests<Ctx>({
   spec: 'turn_lifecycle',
   role: 'Session#0',
   config: CONTROL_CONFIG,
+  shared: true,
+  reset: true,
   // Refuse's 409, which Chromium logs itself; the page logs nothing.
   allowConsole: /^Failed to load resource: the server responded with a status of 409 \(Conflict\)$/,
 

@@ -167,6 +167,17 @@ function fail(route: Route): void {
 }
 
 const heldTree = (c: Ctx) => c.held.filter((r) => /\/changes(\?|$)/.test(r.request().url()));
+const heldEdits = (c: Ctx, turn: boolean) => c.held.some((r) => {
+  const u = new URL(r.request().url());
+  return /\/edits$/.test(u.pathname) && u.searchParams.has('turn') === turn;
+});
+
+// True once cond holds, false after ms: a wait on the page's reads
+// reaching the route, not a fixed pause.
+async function heldBy(cond: () => boolean, ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; !cond(); await new Promise((r) => setTimeout(r, 5))) if (Date.now() > end) return false;
+  return true;
+}
 
 // --- the page, as a person sees it
 
@@ -331,8 +342,10 @@ modelTests<Ctx>({
     async Answer(c) { letGo(c); },
 
     async AnswerFails(c) {
-      // Both opening reads (edits, tree) are held before either fails.
-      await waitHeld(c, () => c.held.some((r) => /\/edits(\?|$)/.test(r.request().url())) && heldTree(c).length > 0);
+      // The opening reads, the tree's included, have all gone out: useChanges
+      // sends the session's edits, the turn's (on a turn link), then the tree.
+      const turn = (await c.page.evaluate(() => location.hash)).includes('turn=');
+      await waitHeld(c, () => heldTree(c).length > 0 && heldEdits(c, false) && (!turn || heldEdits(c, true)));
       for (const r of c.held.splice(0)) fail(r);
     },
 

@@ -161,6 +161,8 @@ modelTests<Ctx>({
   spec: 'background_agents',
   role: 'Parent#0',
   config: CONTROL_CONFIG + '- id: session-title\n  plugin: session-title\n  disabled: true\n',
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     const c: Ctx = {

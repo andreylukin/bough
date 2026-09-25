@@ -46,6 +46,31 @@ export async function vpText(page: Page): Promise<string> {
   });
 }
 
+/** Repeat input until substr is in the transcript viewport, at most
+ * tries times. Each input waits for the viewport to redraw, not a fixed
+ * pause, so the pace is the terminal's own; an input that moves nothing
+ * (a wheel notch under one row) gives up on the redraw after 250 ms. */
+export async function inputUntil(
+  page: Page,
+  input: () => Promise<void>,
+  substr: string,
+  tries: number,
+): Promise<boolean> {
+  for (let i = 0; i < tries; i++) {
+    const before = await vpText(page);
+    if (before.includes(substr)) return true;
+    await input();
+    await page.waitForFunction((prev: string) => {
+      const b = (window as any).sipTerm.term.buffer.active;
+      const rows: string[] = [];
+      const n = Math.max(0, b.length - 3);
+      for (let j = 0; j < n; j++) rows.push(b.getLine(j).translateToString(true));
+      return rows.join('\n') !== prev;
+    }, before, { timeout: 250 }).catch(() => {});
+  }
+  return (await vpText(page)).includes(substr);
+}
+
 /** Wait until substr appears somewhere on the terminal screen. */
 export async function waitForTermText(
   page: Page,

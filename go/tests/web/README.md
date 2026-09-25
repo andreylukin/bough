@@ -12,10 +12,17 @@ npx playwright install chromium   # once
 npm test                          # all specs, fully parallel
 ```
 
-Every test is isolated: its own bough process, temp `HOME`, temp cwd,
-its own copy of `bough.yml`, and a fresh free port. `llm-echo` (or a JS
-provider from a test-written `init.js`) is forced via `--set`, so no
-test ever calls a real API.
+Every test is isolated: either its own bough process (temp `HOME`, temp
+cwd, its own copy of `bough.yml`, a fresh free port), or its worker's
+shared `bough serve` and only the sessions it created there. `llm-echo`
+(or `llm-control`, or a JS provider from a test-written `init.js`) is
+forced, so no test ever calls a real API.
+
+Workers default to one per CPU locally and two on CI. The longest model
+walks are projects of their own in `playwright.config.ts`, queued
+longest first, so the run does not end on one heavy file with the other
+workers idle; everything else is the `rest` project. Measure with
+`npx playwright test --workers=8`.
 
 The Go binary comes from `helpers/global-setup.ts`, which runs
 `go run ./internal/testbin/boughbin`: the same cached build the Go
@@ -67,8 +74,28 @@ failed run's trace with `npx playwright show-trace <trace.zip>`.
 
 ## Updating
 
-- New spec: add a file under `specs/`; use the `launchBough` fixture
-  and never share a process between tests.
+- New spec against the control room: use `sharedServe` from
+  `helpers/serve.ts` and work only in sessions the test made (or mock
+  the reads, as `background-agents.spec.ts` does). Take a `serve` of
+  the test's own only when the test seeds `HOME` or `bough.yml`
+  (`project.spec.ts`, `me.spec.ts`, `welcome.spec.ts`,
+  `engine-calls.spec.ts`) or needs an empty server.
+- A model walk whose `init` only makes sessions of its own takes
+  `shared: true, reset: true` in its flow: one serve per worker, and
+  after each walk every live session is archived (which ends it) and
+  llm-control's queue is emptied, so the next walk starts as on a fresh
+  serve. The worker's serve gets the flow's `config`/`env`; seed files
+  with `test.use({ workerServeOpts })` (`ask_answer.spec.ts`). A walk
+  that writes fixed paths under `HOME` (`hooks-page.spec.ts`,
+  `changes-review.spec.ts`) or asserts on the whole list
+  (`session_create.spec.ts`) keeps its own serve.
+- New spec against `bough --web`: use `launchBough`, one process per
+  test. A `--web` process is one loop that every page attached to it
+  shares (`multi.spec.ts`), so two tests on one would see each other's
+  turns.
+- No fixed sleeps: wait on the thing (`waitForTermText`, `inputUntil`,
+  `expect.poll`, a response). A model walk's reads poll every
+  25–250 ms (`POLL_INTERVALS` in `helpers/model.ts`).
 - sip client internals (`window.sipTerm`) come from
   `github.com/Gaurav-Gosain/sip` `static/terminal.js`; if a sip upgrade
   breaks `boot()`/`termText()`, re-check that file's exported globals.

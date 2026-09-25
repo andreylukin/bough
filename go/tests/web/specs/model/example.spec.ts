@@ -54,6 +54,8 @@ modelTests<Ctx>({
   spec: 'example',
   role: 'Session#0',
   config: CONTROL_CONFIG,
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     const c: Ctx = { page, serve, id: await serve.newSession(), decoy: await serve.newSession(), turn: 0, held: '' };

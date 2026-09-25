@@ -21,7 +21,7 @@ const expireDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bough-ask-expire-'));
 const keychainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bough-ask-keychain-'));
 
 test.use({
-  serveOpts: {
+  workerServeOpts: {
     config: CONTROL_CONFIG,
     home: { [`.bough/projects/${PROJECT}/project.yml`]: `name: ${PROJECT}\n` },
     // The file keychain keeps the secret off the real one.
@@ -240,6 +240,8 @@ async function typeDraft(c: Ctx): Promise<void> {
 modelTests<Ctx>({
   spec: 'ask_answer',
   role: 'Session#0',
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     fs.rmSync(path.join(keychainDir, `bough%${PROJECT}%TOKEN`), { force: true });

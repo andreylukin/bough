@@ -20,8 +20,8 @@ import { spawn, execFileSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { test as base, expect, type Page } from '@playwright/test';
-import { loadPaths, roleState } from '../../helpers/model';
+import { test as base, expect, type Locator, type Page } from '@playwright/test';
+import { POLL_INTERVALS, loadPaths, roleState } from '../../helpers/model';
 
 const ROLE = 'Orb#0';
 type State = Record<string, unknown>;
@@ -132,18 +132,26 @@ const head = (c: Ctx) => c.page.locator('header.thread-head');
 // and its time while busy; a failed setup is its own mark.
 const chip = (c: Ctx) => head(c).locator('.mode-chip, .setup-failed').first();
 
+// What read gives of l, or '' when l is not on the page. Counted first:
+// a read of an absent element waits out its whole timeout, and the
+// portal button is absent at most nodes, which cost every step a second.
+async function present(l: Locator, read: (l: Locator) => Promise<string | null>): Promise<string> {
+  if ((await l.count()) === 0) return '';
+  return (await read(l).catch(() => '')) ?? '';
+}
+
 async function readUiState(c: Ctx): Promise<State> {
   const h = head(c);
   let s = 'unknown', phase = '';
   if (await h.locator('.setup-failed').count()) s = 'failed';
   else {
-    const text = ((await h.locator('.mode-chip').first().textContent({ timeout: 1000 }).catch(() => '')) ?? '').trim();
+    const text = (await present(h.locator('.mode-chip').first(), (l) => l.textContent({ timeout: 1000 }))).trim();
     const word = text.split(' · ').slice(1).join(' · ');
     const step = Object.entries(STEP).find(([w]) => word.startsWith(w + ' '));
     if (step) ({ status: s, phase } = step[1]);
     else s = WORD[word] ?? `unknown: ${text}`;
   }
-  const portal = (await h.getByRole('button', { name: /^Portal — /, exact: false }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) ?? '';
+  const portal = await present(h.getByRole('button', { name: /^Portal — /, exact: false }), (l) => l.getAttribute('aria-label', { timeout: 1000 }));
   return {
     status: s,
     phase,
@@ -242,7 +250,7 @@ test.describe('model: orb_lifecycle', () => {
           await expect.poll(async () => {
             await page.clock.fastForward(5_000);
             return readUiState(c);
-          }, { message: `${where}: page`, timeout: 10_000 }).toEqual(view(want));
+          }, { message: `${where}: page`, timeout: 10_000, intervals: POLL_INTERVALS }).toEqual(view(want));
           await invariants(c, errors, where);
         }
       } finally {

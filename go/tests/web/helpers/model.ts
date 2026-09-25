@@ -9,6 +9,7 @@ import * as path from 'path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, type Serve } from './serve';
 import { loadGraph, walks, type Cover } from '../model/graph';
+import { controlDir } from './control';
 
 const modelDir = path.resolve(__dirname, '..', '..', 'model');
 
@@ -41,6 +42,13 @@ export interface Flow<C> {
    * for a flow with many short paths, where the boot is most of a test.
    */
   shared?: boolean;
+  /**
+   * With shared: after each walk, archive (and so end) every live session
+   * and empty llm-control's dir. The next walk then starts on an idle
+   * serve with nothing queued, as a fresh one would, and a flow needs no
+   * init of its own for that; turn names may repeat across walks.
+   */
+  reset?: boolean;
   /**
    * How far each read moves the page's clock (default POLL_STEP_MS). A
    * flow whose spec models a poll as its own action sets 0: reads that
@@ -102,6 +110,12 @@ async function invariants(page: Page, carrier: ReturnType<Page['locator']>, erro
 // than the list poll (4 s), so every read sees a fresh list.
 const POLL_STEP_MS = 5_000;
 
+// Gaps between those reads. The first read usually lands before the page
+// has drawn the step (an ack or a stream event away), and expect.poll's
+// default 100/250/500/1000 ms backoff put most of a second on each such
+// step; the page redraws in a few ms.
+export const POLL_INTERVALS = [25, 50, 100, 250];
+
 /**
  * Flows whose browser walks fail on the integrated tree and are not yet
  * triaged: each is marked fixme, so it shows in every report without
@@ -125,7 +139,7 @@ export function modelTests<C>(flow: Flow<C>): void {
   const opts = { config: flow.config, env: flow.env };
   // A worker option cannot be set inside a describe (it would force a
   // new worker), so it is set here, at the top of the spec file.
-  if (flow.shared) test.use({ workerServeOpts: opts });
+  if (flow.shared && (flow.config || flow.env)) test.use({ workerServeOpts: opts });
   test.describe(`model: ${flow.spec}`, () => {
     if (!flow.shared && (flow.config || flow.env)) test.use({ serveOpts: opts });
 
@@ -168,7 +182,7 @@ export function modelTests<C>(flow: Flow<C>): void {
               const step = flow.pollStepMs ?? POLL_STEP_MS;
               if (step > 0) await page.clock.fastForward(step);
               return flow.read(c);
-            }, { message: `${where}: state`, timeout: 10_000 }).toEqual(roleState(flow.role, step.state));
+            }, { message: `${where}: state`, timeout: 10_000, intervals: POLL_INTERVALS }).toEqual(roleState(flow.role, step.state));
             await invariants(page, flow.status(c), errors, where);
             await flow.invariants?.(c, where);
             await flow.check?.(c, where);
@@ -176,6 +190,7 @@ export function modelTests<C>(flow: Flow<C>): void {
         } finally {
           await flow.cleanup?.(c);
           saveTranscripts(serve, flow.spec, flow.sessions(c), info.title);
+          if (flow.shared && flow.reset) await reset(page, serve);
         }
       };
       const t = walkTest(flow.spec);
@@ -183,6 +198,22 @@ export function modelTests<C>(flow: Flow<C>): void {
       else t(title, ({ serve, page }, info) => run(serve, page, info));
     });
   });
+}
+
+// Ends everything a walk left on the worker's serve. The page leaves
+// first, so nothing it still holds (a queued send, a poll) starts a turn
+// after the sweep; archiving kills the child, so no session outlives the
+// walk to take the next walk's queued turns or keep a hold file in use.
+async function reset(page: Page, serve: Serve): Promise<void> {
+  await page.goto('about:blank');
+  const res = await serve.api.get('/api/sessions');
+  if (!res.ok()) throw new Error(`reset: list sessions: ${res.status()} ${await res.text()}`);
+  for (const { id } of ((await res.json()) as { sessions: { id: string }[] }).sessions) {
+    const a = await serve.api.post(`/api/sessions/${id}/archive`, { data: { stopChildren: true } });
+    if (!a.ok() && a.status() !== 404) throw new Error(`reset: archive ${id}: ${a.status()} ${await a.text()}`);
+  }
+  const dir = controlDir(serve.home);
+  if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { recursive: true, force: true });
 }
 
 // The transcripts a walk wrote, for TestHistoryTraces in

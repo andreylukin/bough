@@ -41,7 +41,7 @@ import * as http from 'http';
 import * as path from 'path';
 import type { Page, Route } from '@playwright/test';
 import { CONTROL_CONFIG, controlDir, queue, release, waitTaken } from '../../helpers/control';
-import { loadPaths, roleState } from '../../helpers/model';
+import { POLL_INTERVALS, loadPaths, roleState } from '../../helpers/model';
 import { test, expect, type Serve } from '../../helpers/serve';
 
 const SPEC = 'live_transcript_sync';
@@ -593,7 +593,7 @@ test.describe(`model: ${SPEC}`, () => {
           // already have added some to the page's state; those still
           // count, through the cursor a later catch-up sends (fetch.since).
           const shown = { ...want, lines: want.loaded ? want.lines : [] };
-          await expect.poll(() => readUiState(c), { message: `${where}: state`, timeout: 5_000 }).toEqual(shown);
+          await expect.poll(() => readUiState(c), { message: `${where}: state`, timeout: 5_000, intervals: POLL_INTERVALS }).toEqual(shown);
           await invariants(page, status(c, want.sel as number), errors, where);
         }
       } finally {

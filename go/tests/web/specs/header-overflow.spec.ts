@@ -1,42 +1,9 @@
 // The session header at laptop widths: the Work button stays on screen
 // with every chip present, low-priority chips fold into "…", and the Work
 // popover stays inside the viewport. The session is mocked so the chips
-// are exact; everything else is a real `bough serve` on an isolated HOME.
-import { spawn } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+// are exact; everything else is the worker's shared `bough serve`.
 import type { Page } from '@playwright/test';
-import { test as base, expect } from '../helpers/fixtures';
-import { boughBin, freePort } from '../helpers/bough';
-
-const test = base.extend<{ serve: string }>({
-  serve: async ({ request }, use) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bough-head-'));
-    const addr = `127.0.0.1:${await freePort()}`;
-    const child = spawn(boughBin, ['serve', '--run', addr], {
-      cwd: home, env: { ...process.env, HOME: home }, stdio: 'ignore',
-    });
-    try {
-      await expect.poll(async () => {
-        try {
-          const token = fs.readFileSync(path.join(home, '.bough', 'serve.token'), 'utf8').trim();
-          return (await request.get(`http://${addr}/api/health`, { headers: { Authorization: `Bearer ${token}` } })).status();
-        } catch { return 0; }
-      }).toBe(200);
-      await use(`http://${addr}`);
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
-          child.once('exit', () => { clearTimeout(timer); resolve(); });
-          child.kill('SIGTERM');
-        });
-      }
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  },
-});
+import { test, expect } from '../helpers/serve';
 
 const now = new Date().toISOString();
 const base_ = { cwd: '/w/bough', repo: 'andreylukin/bough', branch: 'main', archived: false, modified: now, lastAt: now };
@@ -70,10 +37,10 @@ async function mock(page: Page) {
 }
 
 for (const [width, height] of [[1382, 900], [1024, 800]] as const) {
-  test(`Work button and popover stay on screen at ${width}x${height}`, async ({ serve, page }, info) => {
+  test(`Work button and popover stay on screen at ${width}x${height}`, async ({ sharedServe, page }, info) => {
     await mock(page);
     await page.setViewportSize({ width, height });
-    await page.goto(serve + '/#/s/p-lead');
+    await page.goto(sharedServe.url + '/#/s/p-lead');
     const btn = page.locator('button.work-summary');
     await expect(btn).toBeVisible();
     await expect(page.locator('.thread-head .runtime-strip')).toContainText('Context');

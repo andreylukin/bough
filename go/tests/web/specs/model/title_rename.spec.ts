@@ -195,6 +195,8 @@ modelTests<Ctx>({
   spec: SPEC,
   role: ROLE,
   config: CONTROL_CONFIG,
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     const n = Number(/^path (\d+):/.exec(test.info().title)?.[1]);

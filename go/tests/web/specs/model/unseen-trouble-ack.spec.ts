@@ -147,6 +147,8 @@ modelTests<Ctx>({
   spec: 'unseen_trouble_ack',
   role: 'Session#0',
   config: CONTROL_CONFIG,
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     const c: Ctx = {

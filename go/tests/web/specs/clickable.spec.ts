@@ -8,6 +8,7 @@ import {
   boot,
   clickCell,
   findRow,
+  inputUntil,
   say,
   termText,
   vpText,
@@ -81,21 +82,11 @@ bough.setup({ provider: { default: "longp" } });
   const box = await page.locator('#terminal').boundingBox();
   if (!box) throw new Error('#terminal has no bounding box');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  let sawEarlier = false;
-  for (let i = 0; i < 40 && !sawEarlier; i++) {
-    await page.mouse.wheel(0, -120);
-    await page.waitForTimeout(30);
-    sawEarlier = (await vpText(page)).includes('LINE_50_END');
-  }
+  const sawEarlier = await inputUntil(page, () => page.mouse.wheel(0, -120), 'LINE_50_END', 40);
   expect(sawEarlier).toBe(true);
 
   // And wheel down returns toward the bottom.
-  let sawBottom = false;
-  for (let i = 0; i < 80 && !sawBottom; i++) {
-    await page.mouse.wheel(0, 120);
-    await page.waitForTimeout(30);
-    sawBottom = (await vpText(page)).includes('LINE_200_END');
-  }
+  const sawBottom = await inputUntil(page, () => page.mouse.wheel(0, 120), 'LINE_200_END', 80);
   expect(sawBottom).toBe(true);
 });
 

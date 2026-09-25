@@ -187,6 +187,8 @@ modelTests<Ctx>({
   spec: 'model_effort_controls',
   role: 'Session#0',
   config: SERVE_CONFIG,
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     fs.writeFileSync(path.join(serve.work, 'bough.yml'), SESSION_CONFIG);
