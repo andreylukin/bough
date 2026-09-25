@@ -447,11 +447,13 @@ func TestUnseenTroubleAckCatchesWrongAdapter(t *testing.T) {
 // paths.json, the generator's cover of the graph: the links from Init
 // and the state the spec has after each step.
 type unseenTroubleAckPath struct {
-	Links []int `json:"links"`
-	Trace []struct {
-		Action string         `json:"action"`
-		State  map[string]any `json:"state"`
-	} `json:"trace"`
+	Links []int                  `json:"links"`
+	Trace []unseenTroubleAckStep `json:"trace"`
+}
+
+type unseenTroubleAckStep struct {
+	Action string         `json:"action"`
+	State  map[string]any `json:"state"`
 }
 
 func loadUnseenTroubleAckPaths(t *testing.T) []unseenTroubleAckPath {
@@ -544,6 +546,19 @@ func TestUnseenTroubleAckPaths(t *testing.T) {
 	if envCover() != tracecheck.CoverTransitions {
 		return
 	}
+	// The generated walks take every link, but a walk stops being checked
+	// at its first Note or Expire, so a link it takes only after one is
+	// still unchecked: walk those from Init by the shortest chain that
+	// needs neither.
+	for _, p := range unseenTroubleAckDrivable(g, covered) {
+		checked, err := a.walkPath(p)
+		if err != nil {
+			t.Errorf("path to link %d: %v", p.Links[len(p.Links)-1], err)
+		}
+		for _, l := range checked {
+			covered[l] = true
+		}
+	}
 	reach, seen := 0, map[int]bool{0: true}
 	for queue := []int{0}; len(queue) > 0; queue = queue[1:] {
 		for li, l := range g.Links {
@@ -561,6 +576,46 @@ func TestUnseenTroubleAckPaths(t *testing.T) {
 		}
 	}
 	t.Logf("paths: %d walked, %d links checked, %d reachable without a Note or an Expire, %d in the graph", len(paths), len(covered), reach, len(g.Links))
+}
+
+// unseenTroubleAckDrivable is, for every link reachable from Init without a
+// Note or an Expire that covered lacks, the shortest such chain from Init
+// ending in it, as a path walkPath takes.
+func unseenTroubleAckDrivable(g *tracecheck.Graph, covered map[int]bool) []unseenTroubleAckPath {
+	drivable := func(l tracecheck.Link) bool {
+		return !strings.HasSuffix(l.Name, ".Note") && !strings.HasSuffix(l.Name, ".Expire")
+	}
+	// parent: the link that first reached each node, in file order.
+	parent := map[int]int{0: -1}
+	for queue := []int{0}; len(queue) > 0; queue = queue[1:] {
+		for li, l := range g.Links {
+			if l.Src != queue[0] || !drivable(l) {
+				continue
+			}
+			if _, ok := parent[l.Dest]; !ok {
+				parent[l.Dest] = li
+				queue = append(queue, l.Dest)
+			}
+		}
+	}
+	var paths []unseenTroubleAckPath
+	for li, l := range g.Links {
+		if _, ok := parent[l.Src]; !ok || !drivable(l) || covered[li] {
+			continue
+		}
+		links := []int{li}
+		for pl := parent[l.Src]; pl >= 0; pl = parent[g.Links[pl].Src] {
+			links = append([]int{pl}, links...)
+		}
+		var p unseenTroubleAckPath
+		p.Links = links
+		p.Trace = append(p.Trace, unseenTroubleAckStep{"Init", g.Nodes[0].State})
+		for _, i := range links {
+			p.Trace = append(p.Trace, unseenTroubleAckStep{g.Links[i].Name, g.Nodes[g.Links[i].Dest].State})
+		}
+		paths = append(paths, p)
+	}
+	return paths
 }
 
 // The paths test is only worth its time if a wrong server fails it.
