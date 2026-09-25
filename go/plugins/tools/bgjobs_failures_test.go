@@ -132,7 +132,13 @@ func TestBgjobsHugeOutput(t *testing.T) {
 				t.Fatalf("notice is %d bytes", len(n[0]))
 			}
 			out, err := s.jobs.job(1)
-			if err != nil || len(out) > jobHead+jobTail+200 {
+			// The cut marker names the spill file, whose path is as long
+			// as $BOUGH_SCRATCH or $HOME makes it: bound everything else.
+			j := s.jobs.find(1)
+			j.mu.Lock()
+			spill := len(j.spillAt)
+			j.mu.Unlock()
+			if err != nil || len(out) > jobHead+jobTail+200+spill {
 				t.Fatalf("job(1) = %d bytes, %v", len(out), err)
 			}
 		})
