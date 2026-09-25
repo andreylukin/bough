@@ -20,6 +20,13 @@ import (
 // files, mounts a real codemode VM, and runs the plugin's Apply.
 func apply(t *testing.T, globalJS, projectJS string) (*kernel.Context, *codemode.CodeMode, error) {
 	t.Helper()
+	return applyTimeout(t, 5*time.Second, globalJS, projectJS)
+}
+
+// applyTimeout is apply with the VM's block timeout set, for a test
+// that waits the timeout out.
+func applyTimeout(t *testing.T, timeout time.Duration, globalJS, projectJS string) (*kernel.Context, *codemode.CodeMode, error) {
+	t.Helper()
 	home := t.TempDir()
 	proj := t.TempDir()
 	t.Setenv("HOME", home)
@@ -36,7 +43,7 @@ func apply(t *testing.T, globalJS, projectJS string) (*kernel.Context, *codemode
 		}
 	}
 	ctx := kernel.NewContext()
-	cm := codemode.New(5 * time.Second)
+	cm := codemode.New(timeout)
 	ctx.Provide("codemode", cm)
 	ctx.Provide("commands", commands.NewRegistry())
 	err := mount(ctx)

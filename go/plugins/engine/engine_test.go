@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/andreylukin/bough/internal/agenttools"
@@ -333,28 +334,32 @@ func (f *fakeNotices) texts() []string {
 // delivered once and marked delivered first.
 func TestStoredNoticeDeliveredOnce(t *testing.T) {
 	t.Parallel()
-	no := &fakeNotices{wake: make(chan struct{})}
-	r := newRig(t, func(c *kernel.Context) { c.Provide("job-notices", no) })
-	h, err := kernel.Get[loop.History](r.ctx, "history")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.Append("notice", map[string]any{"id": "n1", "to": "01TEST", "text": "child finished"})
-	h.Append("notice", map[string]any{"id": "n2", "to": "someone-else", "text": "not ours"})
-	deadline := time.Now().Add(10 * time.Second)
-	for len(no.texts()) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("stored notice never delivered")
+	// The engine polls the file for notices every second; in a bubble the
+	// poll and the no-redelivery wait cost no wall time.
+	synctest.Test(t, func(t *testing.T) {
+		no := &fakeNotices{wake: make(chan struct{})}
+		r := newRig(t, func(c *kernel.Context) { c.Provide("job-notices", no) })
+		h, err := kernel.Get[loop.History](r.ctx, "history")
+		if err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	time.Sleep(1500 * time.Millisecond) // one more poll must not re-deliver
-	if got := no.texts(); !slices.Equal(got, []string{"child finished"}) {
-		t.Fatalf("delivered %v", got)
-	}
-	if n := r.count("notice-delivered"); n != 1 {
-		t.Fatalf("%d notice-delivered entries, want 1", n)
-	}
+		h.Append("notice", map[string]any{"id": "n1", "to": "01TEST", "text": "child finished"})
+		h.Append("notice", map[string]any{"id": "n2", "to": "someone-else", "text": "not ours"})
+		deadline := time.Now().Add(10 * time.Second)
+		for len(no.texts()) == 0 {
+			if time.Now().After(deadline) {
+				t.Fatal("stored notice never delivered")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		time.Sleep(1500 * time.Millisecond) // one more poll must not re-deliver
+		if got := no.texts(); !slices.Equal(got, []string{"child finished"}) {
+			t.Fatalf("delivered %v", got)
+		}
+		if n := r.count("notice-delivered"); n != 1 {
+			t.Fatalf("%d notice-delivered entries, want 1", n)
+		}
+	})
 }
 
 func TestConfigErrorsNameTheRow(t *testing.T) {

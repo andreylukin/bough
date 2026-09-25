@@ -44,7 +44,9 @@ func TestMcpHooksInitjsToolThrows(t *testing.T) {
 
 // A tool that never returns is cut by the VM timeout; the VM survives.
 func TestMcpHooksInitjsToolSpins(t *testing.T) {
-	_, cm, err := apply(t, "", mcphooksinitjsTools)
+	// The spin runs the whole timeout; half a second proves the cut as
+	// well as the five seconds the other tests pad with.
+	_, cm, err := applyTimeout(t, 500*time.Millisecond, "", mcphooksinitjsTools)
 	if err != nil {
 		t.Fatal(err)
 	}
