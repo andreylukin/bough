@@ -1,0 +1,288 @@
+---
+# Every behaviour ends at rest (owner gone, the pane caught up, nothing
+# left to bind): that is the end of the flow, not a deadlock.
+deadlock_detection: false
+---
+
+# One portal (one session, one guest port) seen four ways: the listener
+# in the owning bough process (internal/orb/portal.go's portals map),
+# the record in ~/.bough/orbs/<session>/state.json, the container and the
+# address the listener dials, and the Portal pane (serve/web/src/
+# portal.tsx) that polls GET /api/sessions/<id>/orb every 4 s. orb_lifecycle
+# reduces all of this to one boolean; this flow is where they disagree.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - "OpenRefused" and "ReopenedCached" are not states: a refused open
+#     (state.json not running: starting, stopped) and a cached reopen
+#     change nothing, so both are no-op branches of AgentOpen.
+#   - A cached reopen returns before recordPortal: it never writes
+#     state.json, so it cannot repair a record something else dropped.
+#   - OpenPortal is two steps with no lock between them and the orb's
+#     writes (portals.Lock is not Orb.mu): listen, dialling the IP it
+#     read from state.json (AgentOpen), then recordPortal re-reads the
+#     file and writes it back with the entry (OpenRecord). The re-read
+#     is fresh, so what goes stale is the listener's address, not the
+#     file. recordPortal/forgetPortal are also read-modify-writes racing
+#     MarkStopped (a lost "stopped"); that window is inside one function
+#     and is not modelled.
+#   - Orb never carries Portals in its in-memory state (Prepare builds a
+#     fresh State; nothing ever sets o.state.Portals), so every write the
+#     child makes through the Orb (ensureRunningLocked, resumeLocked,
+#     Stop) drops the record. MarkStopped (serve's StopOrb, reaper) reads
+#     the file and keeps it.
+#   - A restart's new IP reaches the prompt (OnResume) but never the
+#     listener: portal.dial is fixed at open.
+#   - The pane's "live" is serve's portalViews: a 150 ms TCP dial to
+#     127.0.0.1:<host>. It is answered by the owner's listener whatever
+#     the container is doing, and by any process that later binds the
+#     port. The pane frames whatever answers.
+#   - Not modelled: AgentList (tools.portal.list reads state.json and
+#     changes nothing: it is `rec`), UserReload/Navigate (remount the
+#     frame; the pane's branch is the poll's), a resume of a dead owner
+#     (Prepare writes a fresh State, which is StartBy* in orb_lifecycle),
+#     and an open in flight when the process ends (the call dies with it).
+#
+# Fields (role Portal):
+#   owner     the session's bough process: live | exited (the row
+#             unmounted: CloseSessionPortals + Orb.Stop) | killed (SIGKILL,
+#             crash: no cleanup)
+#   file      state.json status: running | starting | stopped
+#   ctr       the container: running | stopped
+#   ln        the owner holds a listener for this guest port
+#   lns       listeners for this (session, guest): the map allows one
+#   dial_ok   that listener dials the container's current IP
+#   rec       state.json lists this portal
+#   other     another process has bound the recorded host port (only
+#             possible once no listener of ours holds it)
+#   pending   an open has listened and not yet written its record
+#   moved     the container got a new IP while that open was pending
+#   stale     the record names a listener that dials an address the
+#             container gave up before the record was written (F4)
+#   err_ln    the agent was told open failed while its listener stays open
+#   pane      what the Portal pane shows as of its last poll: empty (No
+#             portal open) | dead (Closed chip, Nothing answers) | live
+#             (frames this session's server) | stalled (framed as live,
+#             reaches nothing) | foreign (framed as live, another
+#             process's server)
+#
+# Findings (the ideal invariant, the counterexample fizz gave, and the
+# weaker claim the code does keep, which is what is asserted below):
+#   F1 "state.json portals == the owner's open listeners" fails three
+#      ways: AgentOpen, OpenRecordFails (writeState errored; OpenPortal
+#      returns the error with the listener open); AgentOpen, OpenRecord,
+#      ExternalStop, Restart (the child's Orb write drops the record, the
+#      listener stays, the pane says No portal open, and a reopen is the
+#      cached no-op); AgentOpen, OpenRecord, OwnerKilled (the record
+#      outlives its listener). Kept: RecordHasItsListener.
+#   F2 "a live portal dials the container's current IP": AgentOpen,
+#      OpenRecord, StopOrb shows the portal live (the listener answers)
+#      with the container stopped: stalled, not dead. Kept:
+#      LiveReachesItsServer, with the stopped container carved out.
+#   F3 "a portal whose owner is gone is never live" / "a pane never
+#      frames another session's server": AgentOpen, OpenRecord,
+#      OwnerKilled, OtherBindsPort — the dead owner's port, reused, is
+#      shown live and framed. Kept: only a killed owner does this.
+#   F4 the open/record gap: AgentOpen, StopOrb, Restart, Resumed,
+#      OpenRecord records a listener still dialling the old IP. It is
+#      shown live, stalls, and nothing ever moves it to dead (the ideal
+#      liveness "after a restart an open portal reaches the new address
+#      or shows dead" fails on exactly this lasso). Kept: `stale` names it.
+#   F5 "open is idempotent per (session, guest)" holds for listeners
+#      (OneListenerPerGuest) but not for the record: see F1.
+
+role Portal:
+    action Init:
+        self.owner = "live"
+        self.file = "running"
+        self.ctr = "running"
+        self.ln = False
+        self.lns = 0
+        self.dial_ok = False
+        self.rec = False
+        self.other = False
+        self.pending = False
+        self.moved = False
+        self.stale = False
+        self.err_ln = False
+        self.pane = "empty"
+
+    # --- the agent (tools.portal / the native portal tool) ---
+
+    # OpenPortal: refused unless state.json says running (AgentOpen
+    # while starting or stopped); an open listener is returned as it is,
+    # record or not; else listen on 127.0.0.1:0, dial = state.json's IP.
+    atomic action AgentOpen:
+        require self.owner == "live" and not self.pending
+        if self.file == "running" and not self.ln:
+            self.ln = True
+            self.lns = self.lns + 1
+            self.dial_ok = True
+            self.pending = True
+            self.moved = False
+            self.err_ln = False
+
+    # recordPortal: re-read state.json, replace this guest's entry, write
+    # it back. It reads the file afresh, so it records the listener on
+    # whatever the file says now — even a restart since the open (F4).
+    # The new host port replaces a stale one another process may hold.
+    atomic fair action OpenRecord:
+        require self.pending
+        self.rec = True
+        self.stale = self.moved
+        self.other = False
+        self.pending = False
+        self.moved = False
+
+    # writeState failed: OpenPortal returns the error, listener open.
+    atomic action OpenRecordFails:
+        require self.pending
+        self.pending = False
+        self.moved = False
+        self.err_ln = True
+
+    # ClosePortal: close the listener, forgetPortal rewrites the file.
+    atomic action AgentClose:
+        require self.owner == "live" and not self.pending and (self.ln or self.rec)
+        self.ln = False
+        self.lns = 0
+        self.forget()
+        self.err_ln = False
+
+    # --- the owning process ---
+
+    # The row unmounts: CloseSessionPortals, Orb.Stop (writes stopped
+    # with no portals) and the container stops.
+    atomic action SessionExit:
+        require self.owner == "live"
+        self.owner = "exited"
+        self.drop_listener()
+        self.forget()
+        self.file = "stopped"
+        self.ctr = "stopped"
+
+    # SIGKILL / crash: the OS closes the listener; state.json stays.
+    atomic action OwnerKilled:
+        require self.owner == "live"
+        self.owner = "killed"
+        self.drop_listener()
+
+    # The child's next exec finds the container down
+    # (ensureRunningLocked): writes starting from its own State — the
+    # record goes (F1).
+    atomic action Restart:
+        require self.owner == "live" and self.ctr == "stopped" and self.file in ("running", "stopped")
+        self.file = "starting"
+        self.forget()
+
+    # rt.Start and resumeLocked: a new IP, running, written from the
+    # Orb's State again (no portals). The listener still dials the old
+    # IP (F4).
+    atomic fair action Resumed:
+        require self.owner == "live" and self.file == "starting"
+        self.ctr = "running"
+        self.file = "running"
+        self.forget()
+        if self.ln:
+            self.dial_ok = False
+        if self.pending:
+            self.moved = True
+
+    # --- serve and the outside world ---
+
+    # Stop orb / the reaper / Kill's stopKilledOrb: MarkStopped keeps the
+    # record, the container stops, the listener stays.
+    atomic action StopOrb:
+        require self.ctr == "running" and self.file == "running"
+        self.file = "stopped"
+        self.ctr = "stopped"
+
+    # The runtime stops it with nobody writing (engine restart, OOM).
+    atomic action ExternalStop:
+        require self.ctr == "running"
+        self.ctr = "stopped"
+
+    # Another server takes the recorded host port once nothing of ours
+    # holds it.
+    atomic action OtherBindsPort:
+        require self.rec and not self.ln and not self.other
+        self.other = True
+
+    # The pane's 4 s poll of the session's orb.
+    atomic fair action PanePoll:
+        require self.pane != view(self)
+        self.pane = view(self)
+
+    # Helpers are atomic: a plain func call is a yield point.
+    atomic func drop_listener():
+        self.ln = False
+        self.lns = 0
+        self.dial_ok = False
+        self.pending = False
+        self.moved = False
+        self.err_ln = False
+
+    # A write that leaves this guest's entry out of state.json.
+    atomic func forget():
+        self.rec = False
+        self.stale = False
+
+# The listener reaches this session's server: it dials the address the
+# container has now, and the container runs.
+def reaches(o):
+    return o.ln and o.dial_ok and o.ctr == "running"
+
+# portalViews' live: something accepts on 127.0.0.1:<host>.
+def api_live(o):
+    return o.rec and (o.ln or o.other)
+
+# What the pane shows after its next poll.
+def view(o):
+    if not o.rec:
+        return "empty"
+    if o.ln:
+        if reaches(o):
+            return "live"
+        return "stalled"
+    if o.other:
+        return "foreign"
+    return "dead"
+
+action Init:
+    portal = Portal()
+
+# state.json never lists a portal its live owner does not hold. (The
+# converse is F1.)
+always assertion RecordHasItsListener:
+    return portal.owner != "live" or not portal.rec or portal.ln
+
+# One listener per (session, guest): a second open returns the first.
+always assertion OneListenerPerGuest:
+    return portal.lns <= 1
+
+# A portal shown live reaches this session's server — except with the
+# container stopped (F2), a killed owner's reused port (F3) or a record
+# written after a restart its listener predates (F4).
+always assertion LiveReachesItsServer:
+    return not api_live(portal) or reaches(portal) or portal.ctr != "running" or portal.owner == "killed" or portal.stale
+
+# A session that exited cleanly leaves nothing that looks live.
+always assertion ExitedNeverLive:
+    return portal.owner != "exited" or not api_live(portal)
+
+# Another process's server is framed only on a killed owner's port (F3).
+always assertion ForeignOnlyAfterKill:
+    return view(portal) != "foreign" or portal.owner == "killed"
+
+# When open fails with its listener still open, the file does not list
+# it: the error is at least true of state.json.
+always assertion OpenErrorNotRecorded:
+    return not portal.err_ln or not portal.rec
+
+# The pane converges on what serve reports.
+always eventually assertion PaneCatchesUp:
+    return portal.pane == view(portal)
+
+# After the owner goes the pane shows no portal or Closed — unless a
+# killed owner's port was reused (F3).
+always eventually assertion ClosedAfterOwnerGoes:
+    return portal.owner == "live" or portal.pane in ("empty", "dead") or portal.other
