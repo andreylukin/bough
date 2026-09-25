@@ -165,7 +165,7 @@ func (a *steerQueueAdapter) flushReady() bool {
 // Send is Enter: a steer while the turn is live, else a message.
 func (a *steerQueueAdapter) Send() error {
 	live := a.live()
-	if !a.gate.pass(a.draft != "answer" && a.status != "needs-you" && !a.flushReady() &&
+	if !a.gate.pass(a.draft != "answer" && a.draft != "stale" && a.status != "needs-you" && !a.flushReady() &&
 		a.made < 2 && (!live || a.steer != "pending")) {
 		return nil
 	}
@@ -185,7 +185,7 @@ func (a *steerQueueAdapter) Send() error {
 
 // Enqueue is Cmd/Ctrl+Enter: the message waits in the tab's queue.
 func (a *steerQueueAdapter) Enqueue() error {
-	if !a.gate.pass(a.status == "running" && a.draft != "answer" && a.made < 2) {
+	if !a.gate.pass(a.status == "running" && a.draft != "answer" && a.draft != "stale" && a.made < 2) {
 		return nil
 	}
 	a.queue = append(a.queue, a.made)
@@ -345,8 +345,17 @@ func (a *steerQueueAdapter) SteerLands() error {
 		return nil
 	}
 	p := *a.steerRow
-	row, _, err := a.wait("the steer's input", func(_ serve.Row, ls []serve.Line) bool { return landedAt(ls, p) != 0 })
+	row, lines, err := a.wait("the steer's input", func(_ serve.Row, ls []serve.Line) bool { return landedAt(ls, p) != 0 })
 	if err != nil {
+		// Written while the message ahead of it was still unlanded, the
+		// line can reach the child before that message opens the turn:
+		// the child then runs it as the next input (the spec's Finish),
+		// not at this turn's boundary.
+		if landedAt(lines, p) == 0 && slices.ContainsFunc(lines, func(l serve.Line) bool {
+			return l.Kind == "input" && l.Seq > p.after && l.Data["steer"] != true
+		}) {
+			return fmbt.ErrNotImplemented
+		}
 		return err
 	}
 	a.steer, a.steerRow, a.stopSteer = "none", nil, false
@@ -434,6 +443,10 @@ func (a *steerQueueAdapter) AskGone() error {
 	}
 	if err := a.answer(fmt.Sprintf("walk %d answered elsewhere", a.walk)); err != nil {
 		return err
+	}
+	// The draft keeps the gone question's id (draftAsk): stale for good.
+	if a.draft == "answer" {
+		a.draft = "stale"
 	}
 	return a.running("the turn to run on after the answer")
 }

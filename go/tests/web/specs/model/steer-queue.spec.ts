@@ -32,6 +32,7 @@ import * as path from 'path';
 import type { Page, Route } from '@playwright/test';
 import { CONTROL_CONFIG, controlDir, queue, release, releaseWith, type Turn } from '../../helpers/control';
 import { loadPaths, roleState, type Step, walkTest } from '../../helpers/model';
+import { loadGraph, walks } from '../../model/graph';
 import { test, expect, type Serve } from '../../helpers/serve';
 
 const SPEC = 'steer_queue';
@@ -42,7 +43,7 @@ type State = Record<string, unknown>;
 // in the session it creates.
 test.use({ workerServeOpts: { config: CONTROL_CONFIG } });
 
-// ---- the graph, from the paths (together they cover every transition) ----
+// ---- the graph ----
 
 const OBSERVED = ['status', 'draft', 'queue', 'sending', 'steer', 'made', 'stops'];
 // The page's and the child's own steps: nothing the person does.
@@ -53,8 +54,13 @@ const seen = (s: State) => key(Object.fromEntries(OBSERVED.map((k) => [k, s[k]])
 const bare = (action: string) => action.startsWith(ROLE + '.') ? action.slice(ROLE.length + 1) : action;
 
 const paths: Step[][] = loadPaths(SPEC);
+// What the spec allows is read off walks that take every transition,
+// whatever MODEL_COVER picks for the tests: the default walks reach every
+// state but not every link, and a branch the page took then read as a
+// state the spec forbids (Stop landing the steer and flushing the queue).
+const allLinks = walks(loadGraph(path.resolve(__dirname, '..', '..', '..', 'model', 'testdata', SPEC)), 'transitions').paths.map((p) => p.trace);
 const graph = new Map<string, { action: string; to: State }[]>();
-for (const trace of paths) {
+for (const trace of allLinks) {
   for (let i = 1; i < trace.length; i++) {
     const from = roleState(ROLE, trace[i - 1].state), to = roleState(ROLE, trace[i].state), action = bare(trace[i].action);
     const out = graph.get(key(from)) ?? [];
@@ -214,7 +220,16 @@ const actions: Record<string, Act> = {
     const res = await c.serve.api.post(`/api/sessions/${c.id}/answer`, { data: { text: `${c.tag} answered elsewhere`, ask } });
     if (!res.ok()) throw new Error(`answer: ${res.status()} ${await res.text()}`);
   },
-  async Swallow() { /* the page's 4 s swallowedByStop timer */ },
+  // The page's 4 s swallowedByStop timer. A stopped message is still held
+  // on the network here, and the page's Stop waits for it before it
+  // interrupts, so the line always lands first (Start): the swallow is a
+  // race this harness cannot lose. Its state reads like the Flush after
+  // it, so without this the walk took it as done and failed at Start.
+  async Swallow(c, before) {
+    if ((before.sending as number[]).length && c.held.some((h) => !isSteer(c, h))) {
+      throw new NotRealizable('Swallow of a held message: the Stop waits for the send, so it lands (Start)');
+    }
+  },
   async end() { /* a quiet thread with its bounds used up */ },
 };
 
@@ -232,13 +247,15 @@ async function read(c: Ctx): Promise<State> {
       state: s.textContent ?? '',
       text: s.closest('section')?.querySelector('.prompt-bubble p')?.textContent ?? '',
     }));
-    return { label, draft: box?.value ?? null, primary, queued: texts('ol.queued .queued-text'), pending, failures: texts('.send-failed') };
+    // An answer whose question is gone says so above the composer.
+    const stale = texts('.composer-note-err').some((t) => t.includes('the one this answer was for is gone'));
+    return { label, draft: box?.value ?? null, primary, stale, queued: texts('ol.queued .queued-text'), pending, failures: texts('.send-failed') };
   }, c.id);
   const num = (t: string) => Number(/message (\d+)$/.exec(t.trim())?.[1] ?? NaN);
   const word = dom.label.split(', ')[1] ?? '';
   return {
     status: STATUS[word] ?? `unknown: ${dom.label}`,
-    draft: dom.draft === null ? 'no composer' : !dom.draft.trim() ? '' : dom.primary === 'Answer' ? 'answer' : 'msg',
+    draft: dom.draft === null ? 'no composer' : !dom.draft.trim() ? '' : dom.primary === 'Answer' ? (dom.stale ? 'stale' : 'answer') : 'msg',
     queue: dom.queued.map(num),
     sending: dom.pending.filter((p) => p.state.startsWith('Sending')).map((p) => num(p.text)),
     steer: dom.pending.some((p) => p.state.startsWith('Steer pending')) ? 'pending'

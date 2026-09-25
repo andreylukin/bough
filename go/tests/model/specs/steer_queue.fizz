@@ -22,9 +22,11 @@ deadlock_detection: false
 #   status   the row's status: idle (done/stopped), running, needs-you
 #            (an armed tools.ask; the server never calls that running)
 #   draft    text left in the composer: "" | "msg" (a stopped prompt put
-#            back) | "answer". Whether a draft is an answer is decided
-#            when it is started (draftAsk), so an answer outlives its
-#            question and the composer then refuses it (askChanged).
+#            back) | "answer" | "stale". Whether a draft is an answer is
+#            decided when it is started (draftAsk), so an answer outlives
+#            its question: it is then "stale" for good (a later question
+#            has another id) and the composer refuses it (askChanged,
+#            "the one this answer was for is gone") until it is cleared.
 #   queue    queued message ids, oldest first (sessionStorage)
 #   sending  ids of sent, unlanded non-steer rows (Pending with !steer)
 #   steer    the latest steer: pending (its "Steer pending…" row shows),
@@ -96,7 +98,7 @@ role Session:
     # effect runs in the render that makes it ready, before any key the
     # person can press, so Enter never beats a ready flush.
     atomic action Send:
-        require self.draft != "answer" and self.status != "needs-you"
+        require self.draft not in ["answer", "stale"] and self.status != "needs-you"
         ready = self.flush_ready()
         require not ready
         require self.made < MAX_MSGS
@@ -113,7 +115,7 @@ role Session:
     # an answer draft (the button is not rendered for one, and
     # enqueue() refuses a draftAsk).
     atomic action Enqueue:
-        require self.status == "running" and self.draft != "answer"
+        require self.status == "running" and self.draft not in ["answer", "stale"]
         require self.made < MAX_MSGS
         self.queue = self.queue + [self.made]
         self.made = self.made + 1
@@ -124,7 +126,9 @@ role Session:
         require self.status == "needs-you" and self.draft == ""
         self.draft = "answer"
 
-    # Enter on the answer while its question is still armed.
+    # Enter on the answer while its question is still armed. A stale one
+    # is refused even when another question is armed now: the browser
+    # walk showed Enter doing nothing there, where this used to answer.
     atomic action Answer:
         require self.status == "needs-you" and self.draft == "answer"
         self.status = "running"
@@ -224,10 +228,12 @@ role Session:
 
     # The question goes away without this composer's answer (answered
     # from another client, or the turn moved on): the turn runs again and
-    # an answer draft written for it stays behind.
+    # an answer draft written for it stays behind, stale.
     atomic action AskGone:
         require self.status == "needs-you"
         self.status = "running"
+        if self.draft == "answer":
+            self.draft = "stale"
 
     # The swallowedByStop timer: 4 s after a Stop settled with rows it
     # covered still unlanded. A steer is reported dropped; a message
@@ -279,7 +285,7 @@ transition assertion FlushTakesHead(before, after):
 transition assertion AnswerNeverQueued(before, after):
     for m in after.session.queue:
         if m not in before.session.queue and m not in before.session.sending:
-            if before.session.draft == "answer":
+            if before.session.draft in ["answer", "stale"]:
                 return False
     return True
 
