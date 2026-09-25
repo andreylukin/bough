@@ -1928,6 +1928,14 @@ function nativeFacts(l: Line): CallFacts {
 const tailLines = (s: string, n = 3) => s.split("\n").filter((l) => l.trim()).slice(-n);
 
 /**
+ * A running call row opened or shut by hand, by call id. The record that
+ * replaces the running row is a new row: it takes the state once, so the
+ * output you opened the call to watch does not snap shut as it lands
+ * (the ui_thread walk found it). Later mounts are the row's own default.
+ */
+const runningOpen = new Map<string, boolean>();
+
+/**
  * An engine session's call, as one row: what it did and what it cost,
  * opening onto what it printed. There is no program around it to show,
  * so the row is the call itself. While it runs it spins and keeps its
@@ -1939,6 +1947,13 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
   const d = line.data ?? {};
   const tool = str(d.tool);
   const running = callRunning(line);
+  const id = typeof d.id === "string" ? d.id : "";
+  const [handed] = useState(() => {
+    if (running || !id) return undefined;
+    const v = runningOpen.get(id);
+    runningOpen.delete(id);
+    return v;
+  });
   const canceled = d.canceled === true;
   const failed = !running && !canceled && callFailed(line);
   const why = failed && typeof d.error === "string" ? firstLine(cleanError(d.error)) : "";
@@ -1950,7 +1965,14 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
   const cmd = str(d.cmd) || line.text;
   return (
     <details className={"block thin toolcall call-native" + (failed ? " block-failed" : "")} data-seq={running ? undefined : line.seq}
-             open={current || (running && tail.length > 0) || undefined}>
+             open={(handed ?? (current || (running && tail.length > 0))) || undefined}
+             // Only a hand's toggle: the row opening itself on its first output is its default, not a choice.
+             onToggle={running && id ? (e) => {
+               if (e.target !== e.currentTarget) return;
+               if (e.currentTarget.open === (tail.length > 0)) runningOpen.delete(id); else runningOpen.set(id, e.currentTarget.open);
+             } : undefined}>
+      {/* No control inside the summary (it is one itself: axe's
+          nested-interactive), so the output's Copy sits with the output. */}
       <summary role="button">
         <span className="block-label">{running ? presentTense(callVerb(tool)) : callVerb(tool)}</span>
         {line.text && <span className="mono block-detail" title={str(d.cmd) || line.text}>{line.text}</span>}
@@ -1967,12 +1989,11 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
             <Elapsed since={line.at} title="Running" />
           </span>
         ) : <CallMeta line={line} />}
-        {output && <CopyButton text={output} what="output" />}
       </summary>
       <div className="block-body">
         {cmd && <pre className="mono call-cmd">{cmd}</pre>}
         {running ? (tail.length > 0 && <pre className="mono call-tail" aria-live="off">{tail.join("\n")}</pre>)
-          : output.trim() ? <div className="tool-output"><Code text={output} lang={tool === "view" ? langForPath(line.text) : ""} /></div>
+          : output.trim() ? <><div className="tool-output"><Code text={output} lang={tool === "view" ? langForPath(line.text) : ""} /></div><CopyButton text={output} what="output" /></>
           : <p className="tool-noresult">No output.</p>}
         {d.truncated === true && <p className="exec-note exec-note-quiet">Output shortened here: the head and tail are kept</p>}
       </div>
@@ -3103,7 +3124,11 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
   all?: { open: boolean; at: number } | null; children: React.ReactNode;
 }) {
   const key = session + ":" + seg.seq;
-  const [open, setOpen] = useState(() => segOpen.get(key) ?? defaultOpen);
+  // A live turn's fold is one fold whatever it holds: when its running
+  // call is recorded the segment takes the record's seq and mounts anew,
+  // and it used to shut on the person watching it (the ui_thread walk).
+  const liveKey = running && since ? session + ":live:" + since : "";
+  const [open, setOpen] = useState(() => segOpen.get(key) ?? (liveKey ? segOpen.get(liveKey) : undefined) ?? defaultOpen);
   const box = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (!all) return;
@@ -3113,7 +3138,7 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
   }, [all]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <details ref={box} className={"block thin work-seg" + (running ? " work-seg-live" : "")} open={open} data-open-key={"seg:" + seg.seq}
-             onToggle={(e) => { if (e.target !== e.currentTarget) return; const o = e.currentTarget.open; segOpen.set(key, o); setOpen(o); }}>
+             onToggle={(e) => { if (e.target !== e.currentTarget) return; const o = e.currentTarget.open; segOpen.set(key, o); if (liveKey) segOpen.set(liveKey, o); setOpen(o); }}>
       <summary role="button" aria-expanded={open}>
         {running && (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -4008,6 +4033,34 @@ export function phoneNav(narrow: boolean, pane: "list" | "thread", view: View): 
   return narrow && (pane === "list" || view !== "sessions");
 }
 
+/** The header's Settings button and, while `open`, its popover around `children`: Thread's `more`, drawn. */
+export function HeadMore({ id, open, moreRef, onToggle, children }: { id: string; open: boolean; moreRef?: React.RefObject<HTMLDivElement | null>;
+  onToggle: (e: React.MouseEvent) => void; children: React.ReactNode }) {
+  return (
+    <div className="head-more" ref={moreRef}>
+      <button className="more" aria-label="Session settings" aria-expanded={open} aria-controls={"more-" + id} onClick={onToggle}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+             strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
+        </svg>
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
+/** The way back from scrolling up: shown only while away, and it says so when something was recorded since. */
+export function JumpLatest({ away, fresh, onClick }: { away: boolean; fresh: boolean; onClick: () => void }) {
+  if (!away) return null;
+  return (
+    <button className="btn jump-latest" onClick={onClick} title={modKey() + "End"}
+            aria-label={fresh ? "New activity, jump to latest" : "Jump to latest"}>
+      <span aria-hidden="true">↓ </span>
+      <span className="jump-word">{fresh ? "New activity" : "Latest"}</span>
+    </button>
+  );
+}
+
 export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
@@ -4796,19 +4849,11 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         {/* After the strip, so Tab follows the visual order: Work, Context, Cost, then Settings. */}
         {/* The model and effort pickers live in the composer toolbar; a phone's are under Settings. */}
         <div className="head-side">
-          <div className="head-more" ref={moreRef}>
-            <button className="more" aria-label="Session settings" aria-expanded={more} aria-controls={"more-" + row.id}
-                    onClick={(e) => { moreByKey.current = e.detail === 0; setMore((v) => !v); }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
-                   strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
-              </svg>
-            </button>
-            {more && (
-              <SessionSettings row={row} projects={projects} catalogue={catalogue} failedLoad={failedLoad} onModel={onModel} onEffort={onEffort}
-                               onAssign={onAssign} onRename={onRename} onArchive={onArchive} onClose={closeMore} />
-            )}
-          </div>
+          <HeadMore id={row.id} open={more} moreRef={moreRef}
+                    onToggle={(e) => { moreByKey.current = e.detail === 0; setMore((v) => !v); }}>
+            <SessionSettings row={row} projects={projects} catalogue={catalogue} failedLoad={failedLoad} onModel={onModel} onEffort={onEffort}
+                             onAssign={onAssign} onRename={onRename} onArchive={onArchive} onClose={closeMore} />
+          </HeadMore>
         </div>
       </header>
       {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.project} name={projects.find((p) => p.slug === row.project)?.name ?? row.orb.project} onRebuild={row.project ? rebuild : undefined} onRetry={onStopOrb ? async () => { if (!(await confirmStopOrb(row.jobs))) throw new Error("cancelled"); await api.stopOrb(row.id); } : undefined} rebuildErr={rebuildErr} />}
@@ -5075,13 +5120,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                   <span className="jump-word">Top</span>
                 </button>
               )}
-              {away && (
-                <button className="btn jump-latest" onClick={() => toLatest()} title={modKey() + "End"}
-                        aria-label={newest > awayAt.current ? "New activity, jump to latest" : "Jump to latest"}>
-                  <span aria-hidden="true">↓ </span>
-                  <span className="jump-word">{newest > awayAt.current ? "New activity" : "Latest"}</span>
-                </button>
-              )}
+              <JumpLatest away={away} fresh={newest > awayAt.current} onClick={() => toLatest()} />
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
               {/* Not before the transcript is read: the header names no status until then, and a Stop beside it claimed a turn it could not show. */}
               {live && !loading && (stopping === "failed"
@@ -5425,7 +5464,7 @@ export default function App() {
       }
       // An engine's call carries the provider's call id (a string); the loop's per-block calls number theirs.
       const native = (ev.kind === "call" || ev.kind === "sub:call") && typeof ev.extra?.id === "string";
-      // Live only, never refetched: a native call's start and its streamed output.
+      // Live only, never refetched: a native call's start and its streamed output (a start still catches up, below).
       if (ev.kind === "call-delta" || (native && ev.extra?.phase === "start")) {
         setNativeRunning((m) => liveNative(m, ev));
         if (ev.kind !== "call-delta") recorded();

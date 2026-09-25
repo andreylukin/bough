@@ -1,226 +1,219 @@
-// go/tests/model/specs/ui_thread.fizz walked in the browser (recipe:
-// go/tests/model/README.md): one open thread as the person sees it, its
-// header status, the Settings popover, the Changes chip and the phone's
-// Details, the running Working fold and its call row, the reply preview,
-// the error card's Retry, jump-to-latest, and the sub pages. Every
-// generated path is one test against its own serve (llm-control is the
-// model); at every node readUiState must equal the spec's Thread#0 state.
+// go/tests/model/specs/ui_thread.fizz in the browser: one open thread
+// (#/s/<id>) as a person sees it and acts on it — the header's status,
+// the Settings popover, the strip's Changes chip and Details overflow,
+// the jump button, the running turn's "Working" fold and its call row,
+// the error card's Retry, the "N files" link, and the Changes and
+// Context sub pages. Every generated walk is driven with real clicks and
+// keys against a real serve (llm-control is the model), and at every
+// node readUiState must equal the spec's Thread#0 state, read off the
+// DOM only, and the screen owes the shared invariants: no sideways
+// scroll, the status on screen, no console error, no clipped header or
+// status text, a ring on whatever holds keyboard focus, and nothing axe
+// finds on the thread. Recipe: go/tests/model/README.md.
 //
-// The walk decides when the server's steps happen:
+// The server's steps are held so each node can be looked at:
 //
-//   - the first transcript read (GET /api/sessions/<id>, no cursor) is
-//     held until Loaded lets it through or LoadFails answers it with a
-//     body that is not JSON (a 5xx would do the same to the page, but
-//     Chromium logs it as a console error);
-//   - POST /prompt is held from Send (or the error card's Retry) until
-//     Take lets it through, so "Sending…" is a state the page sits in;
-//   - the turn is an llm-control "block" turn: Delta streams a fragment,
-//     CallStart releases it into one bash call that waits on a gate file
-//     (CallOk opens it, CallFails opens it with a fail marker), and the
-//     next request is held again until Finish or Fail.
+//   - the transcript's first read (GET /api/sessions/<id>) is held at
+//     the network until Loaded, or answered with a body that is not JSON
+//     for LoadFails (a 5xx would log a console error of its own);
+//   - a send (POST …/prompt) is held until Take: that is the "Sending…"
+//     row the spec's `sending` names;
+//   - a turn is an llm-control "block" turn; Delta streams a fragment
+//     into it, CallStart releases it as one bash call that waits on a
+//     gate file outside the checkout, CallOk / CallFails open the gate
+//     (the call writes out.txt, or exits 1), and the model's next
+//     request is another block turn that Finish or Fail releases.
 //
-// The session runs in a git checkout, so a call that writes a file is
-// the turn's edit: the footer's "N files" link, the phone's chip link.
-import { execFileSync } from 'child_process';
+// On a sub page the transcript is not on screen: the fields only the
+// thread shows (the transcript read, the status, the turn's rows) are
+// the ones read the last time the thread was, which is what the spec
+// says of them too (a sub page changes none of them).
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import type { Page, Route } from '@playwright/test';
 import { CONTROL_CONFIG, controlDir, queue, release, releaseWith, waitTaken } from '../../helpers/control';
 import { modelTests } from '../../helpers/model';
-import { test, type Serve } from '../../helpers/serve';
+import { test, expect, type Serve } from '../../helpers/serve';
+import { uiInvariants } from '../../helpers/ui-invariants';
 
-// Tall enough that a retried turn's card and prompt leave the failed
-// turn's call row on screen above them.
-const WIDE = { width: 1100, height: 800 };
+// Up to 35 steps a walk, each with an axe pass.
+test.describe.configure({ timeout: 240_000 });
+
+const WIDE = { width: 1100, height: 700 };
 const PHONE = { width: 600, height: 700 };
 
-// Up to ~40 nodes a path, a few of them real turns.
-test.describe.configure({ timeout: 180_000 });
-// A step that cannot find its control fails there, not at the walk's timeout.
-test.use({ actionTimeout: 10_000 });
+// A brief longer than the bubble's four-line clamp: shown in full (its
+// "Show full prompt") it is taller than the pane, which ScrollUp needs.
+const PROMPT = Array.from({ length: 30 }, (_, i) =>
+  `Step ${i + 1}: split the parser into modules, keep the public API exactly as it is, add a test for each module, and report what moved where.`).join(' ');
 
 interface Ctx {
   page: Page;
   serve: Serve;
   id: string;
-  dir: string;          // llm-control's queue
-  n: number;            // turn and gate names are unique across the walk
-  firstRead: boolean;   // hold the transcript's first read
-  load: Route | null;   // the first read, held
-  post: Route | null;   // POST /prompt, held
-  held: string;         // the model request the turn holds, '' when none
-  next: string;         // queued for the request after the call
-  gate: string;         // the running call's gate file
-  said: string;         // the fragment streamed and not yet recorded
-  thread: Record<string, unknown>; // the last state read on the thread itself
+  dir: string;       // the session's git checkout
+  q: string;         // llm-control's dir
+  gates: string;     // where the call's gate files live (outside the checkout)
+  n: number;         // turns started
+  held: string;      // the llm-control block turn in flight, '' when none
+  gate: string;      // the running call's gate file, '' when none
+  streamed: string;  // what Delta streamed into the held turn, not recorded yet
+  holdLoad: boolean; // hold transcript reads until Loaded
+  loads: Route[];    // transcript reads held
+  posts: Route[];    // sends held
+  last: Record<string, unknown>; // the thread's fields as last read on the thread
 }
 
-const name = (c: Ctx, p: string) => `${p}${String(++c.n).padStart(4, '0')}`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function git(dir: string, home: string, ...args: string[]): void {
-  execFileSync('git', ['-C', dir, '-c', 'user.name=model', '-c', 'user.email=model@test', '-c', 'commit.gpgsign=false', ...args], {
-    env: { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: '1' },
+async function until(what: string, ok: () => boolean, ms = 15_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > deadline) throw new Error(`ui_thread: ${what}`);
+    await sleep(20);
+  }
+}
+
+function git(c: Ctx, ...args: string[]): void {
+  execFileSync('git', ['-C', c.dir, '-c', 'user.name=model', '-c', 'user.email=model@test', '-c', 'commit.gpgsign=false', ...args], {
+    env: { ...process.env, HOME: c.serve.home, GIT_CONFIG_NOSYSTEM: '1' },
     stdio: 'pipe',
   });
 }
 
-async function until<T>(what: string, fn: () => Promise<T | undefined> | T | undefined, ms = 15_000): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await fn();
-    if (v !== undefined && v !== false) return v as T;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
+// --- readUiState
 
-async function apiStatus(c: Ctx): Promise<string> {
-  const res = await c.serve.api.get(`/api/sessions/${c.id}`);
-  if (!res.ok()) throw new Error(`session: ${res.status()}`);
-  return (await res.json()).session.status;
-}
+const HEAD_WORDS: Record<string, string> = { Running: 'running', Done: 'done', Failed: 'error', Idle: 'idle', Stopped: 'stopped' };
 
-function put(file: string, body: string): void {
-  fs.writeFileSync(file + '-tmp', body);
-  fs.renameSync(file + '-tmp', file);
-}
-
-// A fragment streamed while the turn is held: on screen, not recorded.
-async function stream(c: Ctx, text: string): Promise<void> {
-  const dst = path.join(c.dir, c.held + '.stream');
-  put(dst, text);
-  await until(`${c.held} to stream`, () => !fs.existsSync(dst) || undefined, 10_000);
-}
-
-// The page's own words, read off the DOM only.
 async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
   const dom = await c.page.evaluate((id) => {
-    const q = (sel: string) => document.querySelector(sel);
     const hash = location.hash;
     const route = hash.startsWith(`#/s/${id}/changes`) ? 'changes' : hash.startsWith(`#/s/${id}/context`) ? 'context' : hash === `#/s/${id}` ? 'thread' : `other: ${hash}`;
-    const thread = q('.thread');
-    const failed = [...document.querySelectorAll('.transcript-state')].some((e) => /Couldn’t load this session/.test(e.textContent ?? ''));
-    // Read: the header names a status (it names none until then).
-    const headStatus = q('.thread-head .head-main > .status');
-    const transcript = failed ? 'failed' : headStatus ? 'ok' : 'loading';
-    // The sidebar row carries the server's status in its label: "<title>,
-    // <word>, …"; a failure carries its reason and the red second line.
-    const row = q(`button.row[data-id="${id}"]`);
-    const label = row?.getAttribute('aria-label') ?? '';
-    const bad = !!row?.querySelector('.row-meta-bad');
-    // The latest turn's call row (a send still on its way is no turn yet):
-    // a retried turn has none of its own.
-    const turns = [...(thread?.querySelectorAll('section.turn:not(.turn-sending)') ?? [])];
-    const calls = [...(turns[turns.length - 1]?.querySelectorAll<HTMLDetailsElement>('details.call-native') ?? [])];
-    const last = calls[calls.length - 1];
-    const call = !last ? 'none' : last.querySelector('.tool-running') ? 'running' : last.classList.contains('block-failed') ? 'failed' : 'ok';
-    const jump = q('button.jump-latest[aria-label$="jump to latest"], button.jump-latest[aria-label="Jump to latest"]');
-    const strip = q('.thread-head .runtime-strip');
-    // The chip itself, not the Details overflow (also a details.rt-jobs),
-    // which holds it for a frame after a phone widens, before the strip unfolds.
-    const chg = [...(strip?.querySelectorAll<HTMLDetailsElement>('details.rt-jobs:not(.rt-more)') ?? [])].find((d) => d.querySelector('a.chg-full'));
-    const more = strip?.querySelector<HTMLDetailsElement>('details.rt-more');
-    const settings = q('.head-pop[role="dialog"]');
-    const a = document.activeElement;
-    const focus = settings && settings.contains(a) ? 'settings'
-      : a && (a.matches('.runtime-strip summary') || a.matches('.thread-head button.more')) ? 'trigger' : 'other';
+    const a = document.activeElement as HTMLElement | null;
+    const pop = document.querySelector('.thread-head .head-pop[role="dialog"]');
+    const focus = pop && a && pop.contains(a) ? 'settings'
+      : a && (a.matches('.thread-head button.more') || a.matches('.thread-head .runtime-strip details > summary')) ? 'trigger' : 'other';
+    const chip = document.querySelector<HTMLDetailsElement>('.thread-head details.rt-jobs:has(a.chg-full)');
+    const more = document.querySelector<HTMLDetailsElement>('.thread-head details.rt-more');
+    const base = { wide: window.innerWidth > 720, route, settings: !!pop, chg: !!chip?.open, details: !!more?.open, focus };
+    const tr = document.querySelector('.thread .scroll.transcript');
+    if (route !== 'thread' || !tr) return { ...base, thread: null };
+    // The first read: its error note, its loading note, or neither.
+    const failedNote = [...tr.querySelectorAll('.transcript-state')].some((e) => /Couldn’t load this session|taking too long/.test(e.textContent ?? ''));
+    const loadingNote = [...tr.querySelectorAll('.transcript-state')].some((e) => /Loading transcript/.test(e.textContent ?? ''));
+    const main = document.querySelector('.thread-head .head-main');
+    const live = main?.querySelector('.head-live');
+    const failedHead = main?.querySelector('.head-failed');
+    const mark = main?.querySelector(':scope > .status');
+    // The words a sighted reader sees: a live header's mark carries a
+    // hidden "Running" of its own.
+    const seen = (e: Element) => [...e.childNodes].filter((n) => !(n instanceof HTMLElement && n.matches('.visually-hidden, .status:has(.visually-hidden)'))).map((n) => n.textContent ?? '').join('').trim();
+    const head = live ? `live:${seen(live)}` : failedHead ? 'failed-turn' : mark ? `mark:${seen(mark) || (mark.textContent ?? '').trim()}` : '';
+    // The latest turn's call: a retried turn makes none, and the one
+    // before it keeps its own row above. A send not taken yet is no turn
+    // (its copy says "Sending…"); once taken it is, recorded or not.
+    const turns = tr.querySelectorAll('section.turn:not(.turn-sending)');
+    const call = turns[turns.length - 1]?.querySelector<HTMLDetailsElement>('details.call-native') ?? null;
+    const callState = !call ? 'none' : call.querySelector(':scope > summary .tool-running') ? 'running' : call.classList.contains('block-failed') ? 'failed' : 'ok';
+    const work = tr.querySelector<HTMLDetailsElement>('details.work-seg-live');
+    const jump = [...document.querySelectorAll<HTMLButtonElement>('.composer-actions button.jump-latest')].find((b) => /jump to latest/i.test(b.getAttribute('aria-label') ?? ''));
     return {
-      route,
-      transcript,
-      label, bad,
-      sending: !!q('.turn-sending-state'),
-      streamed: [...document.querySelectorAll('.stream-say')].some((e) => (e.textContent ?? '').trim() !== ''),
-      call,
-      callOpen: !!last?.open,
-      workOpen: !!q('details.work-seg.work-seg-live[open]'),
-      away: !!jump,
-      fresh: (jump?.getAttribute('aria-label') ?? '').startsWith('New activity'),
-      settings: !!settings,
-      chg: !!chg?.open,
-      details: !!more?.open,
-      focus,
-      usage: !!strip?.querySelector('[aria-label^="Context: "]'),
-      edits: !!thread?.querySelector('.turn-files'),
-      errCard: !!thread?.querySelector('.err-card'),
-      wide: window.innerWidth > 720,
+      ...base,
+      thread: {
+        failedNote, loadingNote, head,
+        empty: !!tr.querySelector('.thread-empty'),
+        sending: !!tr.querySelector('.turn-sending-state'),
+        streamed: !!tr.querySelector('.stream-say'),
+        call: callState,
+        callOpen: !!call?.open,
+        workOpen: !!work?.open,
+        away: !!jump,
+        fresh: !!jump && /^New activity/.test(jump.getAttribute('aria-label') ?? ''),
+        usage: !!document.querySelector('.thread-head .runtime-strip button.rt-link[aria-label^="Context"]'),
+        edits: !!tr.querySelector('.turn-files'),
+        errCard: !!tr.querySelector('.err-card'),
+      },
     };
   }, c.id);
 
-  const word = dom.label.split(', ')[1] ?? '';
-  const WORDS: Record<string, string> = { Idle: 'idle', Running: 'running', Done: 'done' };
-  const status = WORDS[word] ?? (dom.bad ? 'error' : `unknown: ${dom.label}`);
-  const shown: Record<string, unknown> = {
+  let fields: Record<string, unknown>;
+  if (dom.thread) {
+    const t = dom.thread;
+    const transcript = t.failedNote ? 'failed' : t.loadingNote || t.head === '' ? 'loading' : 'ok';
+    // The header's word, as the session's status: "Sending" is a send
+    // on its way over an idle session (the first turn is the only one
+    // the composer starts); a turn that ended on a failed call reads
+    // "Failed" beside a done session.
+    let status: string;
+    if (transcript !== 'ok') status = String(c.last.status ?? 'idle');
+    // A live header over a send not yet recorded is that send ("Sending",
+    // or "Waiting" once accepted); otherwise the turn it started runs.
+    else if (t.head.startsWith('live:')) status = t.sending ? 'idle' : 'running';
+    else if (t.head === 'failed-turn') status = 'done';
+    else if (t.head.startsWith('mark:')) status = HEAD_WORDS[t.head.slice(5)] ?? `unknown: ${t.head}`;
+    else status = `unknown: ${t.head}`;
+    fields = {
+      transcript, status,
+      sending: t.sending, streamed: t.streamed, call: t.call, callOpen: t.callOpen, workOpen: t.workOpen,
+      away: t.away, fresh: t.fresh, usage: t.usage, edits: t.edits, errCard: t.errCard,
+    };
+    c.last = fields;
+  } else {
+    fields = c.last;
+  }
+  return {
     viewport: dom.wide ? 'wide' : 'phone',
     route: dom.route,
-    transcript: dom.transcript,
-    status,
-    sending: dom.sending,
-    streamed: dom.streamed,
-    call: dom.call,
-    callOpen: dom.callOpen,
-    workOpen: dom.workOpen,
-    away: dom.away,
-    fresh: dom.fresh,
+    ...fields,
     settings: dom.settings,
     chg: dom.chg,
     details: dom.details,
     focus: dom.focus,
-    usage: dom.usage,
-    edits: dom.edits,
-    errCard: dom.errCard,
   };
-  // A sub page replaces the Thread: what the thread showed when it was
-  // left is the adapter's to remember (nothing moves it while the sub
-  // page is up; Back reads the thread again).
-  if (dom.route === 'thread') {
-    c.thread = shown;
-    return shown;
+}
+
+// --- the server's side
+
+// Continue every held transcript read, and let later ones through.
+async function answerLoads(c: Ctx, fail: boolean): Promise<void> {
+  await until('no transcript read to answer', () => c.loads.length > 0);
+  if (!fail) c.holdLoad = false;
+  for (const r of c.loads.splice(0)) {
+    if (fail) r.fulfill({ status: 200, contentType: 'application/json', body: 'not json' }).catch(() => {});
+    else r.continue().catch(() => {});
   }
-  const kept = ['transcript', 'sending', 'streamed', 'call', 'callOpen', 'workOpen', 'away', 'fresh', 'usage', 'edits', 'errCard'];
-  return { ...shown, ...Object.fromEntries(kept.map((k) => [k, c.thread[k]])) };
 }
 
-// A click where the row is on screen. Playwright's click scrolls its
-// target into view first, and on a row at the very end of the
-// transcript that scroll (centring it) is what took the reader off the
-// end, not the page; a person clicks the row where it stands. The row
-// is waited for until it stops moving (a jump's smooth scroll).
-// A row a fold just opened below the view is scrolled to with the wheel,
-// as a reader reaches it.
-async function clickInPlace(c: Ctx, target: ReturnType<Page['locator']>): Promise<void> {
-  await target.waitFor({ state: 'visible', timeout: 10_000 });
-  const still = async () => {
-    let last = '';
-    return until('the row to stand still', async () => {
-      const b = await target.boundingBox();
-      const now = JSON.stringify(b);
-      const ok = b && now === last;
-      last = now;
-      if (!ok) await new Promise((r) => setTimeout(r, 50));
-      return ok ? b : undefined;
-    }, 10_000);
-  };
-  const view = (await c.page.locator('.thread .transcript').boundingBox())!;
-  let box = await still();
-  const bottom = view.y + view.height;
-  if (box.y + 24 > bottom) {
-    await c.page.mouse.move(view.x + view.width / 2, view.y + view.height / 2);
-    await c.page.mouse.wheel(0, box.y + 24 - bottom + 16);
-    box = await still();
-  }
-  const y = box.y + Math.min(box.height, 24) / 2;
-  if (y < view.y || y > bottom) throw new Error(`the row is not on screen (row at ${y}, transcript ${view.y}..${bottom})`);
-  await c.page.mouse.click(box.x + Math.min(box.width, 40) / 2, y);
+function turnName(c: Ctx, part: string): string {
+  return `t${String(c.n).padStart(4, '0')}${part}`;
 }
 
-// The send the page makes, held until Take.
-async function heldPost(c: Ctx): Promise<void> {
-  await until('POST /prompt', () => c.post !== null || undefined);
+// The bash call CallStart puts in the turn: it waits for its gate, then
+// writes a file (ok) or fails without writing one.
+function callCommand(gate: string): string {
+  return `while [ ! -e '${gate}' ]; do sleep 0.05; done; if [ "$(cat '${gate}')" = ok ]; then printf 'moved\\n' > out.txt; else echo 'no such module' >&2; exit 1; fi`;
 }
 
-// Long enough that the transcript is taller than the pane once shown in
-// full (the bubble wraps it as one paragraph).
-const PROMPT = 'Tidy the thread\n' + Array.from({ length: 800 }, (_, i) => `word${i + 1}`).join(' ');
+function openGate(c: Ctx, word: string): void {
+  if (!c.gate) throw new Error('ui_thread: no call running');
+  fs.writeFileSync(c.gate + '-tmp', word);
+  fs.renameSync(c.gate + '-tmp', c.gate);
+  c.gate = '';
+}
+
+// --- the page
+
+const head = (c: Ctx) => c.page.locator('.thread-head');
+const transcript = (c: Ctx) => c.page.locator('.thread .scroll.transcript');
+const chipSummary = (c: Ctx) => head(c).locator('details.rt-jobs:has(a.chg-full) > summary');
+const moreSummary = (c: Ctx) => head(c).locator('details.rt-more > summary');
+const contextChip = (c: Ctx) => head(c).locator('.runtime-strip button.rt-link[aria-label^="Context"]');
+
+async function thePops(c: Ctx): Promise<{ settings: boolean; chg: boolean; details: boolean }> {
+  const s = await readUiState(c);
+  return { settings: Boolean(s.settings), chg: Boolean(s.chg), details: Boolean(s.details) };
+}
 
 modelTests<Ctx>({
   spec: 'ui_thread',
@@ -228,188 +221,158 @@ modelTests<Ctx>({
   config: CONTROL_CONFIG,
 
   async init(page, serve) {
-    // A checkout, so the call's write is the session's edit.
-    git(serve.work, serve.home, 'init', '-q', '-b', 'main');
-    fs.writeFileSync(path.join(serve.work, 'base.txt'), 'base\n');
-    git(serve.work, serve.home, 'add', 'base.txt');
-    git(serve.work, serve.home, 'commit', '-q', '-m', 'base');
-    await page.setViewportSize(WIDE);
+    const dir = fs.mkdtempSync(path.join(serve.work, 'thread-'));
     const c: Ctx = {
-      page, serve, id: await serve.newSession(), dir: controlDir(serve.home), n: 0,
-      firstRead: true, load: null, post: null, held: '', next: '', gate: '', said: '',
-      thread: {},
+      page, serve, id: '', dir, q: controlDir(serve.home), gates: fs.mkdtempSync(path.join(serve.home, 'gates-')),
+      n: 0, held: '', gate: '', streamed: '', holdLoad: true, loads: [], posts: [], last: {},
     };
-    fs.mkdirSync(c.dir, { recursive: true });
-    await page.route((u) => u.pathname === `/api/sessions/${c.id}`, (r) => {
-      if (r.request().method() !== 'GET' || !c.firstRead || new URL(r.request().url()).searchParams.has('since')) return r.continue();
-      c.load = r;
+    git(c, 'init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(dir, 'README'), 'thread\n');
+    git(c, 'add', 'README');
+    git(c, 'commit', '-q', '-m', 'base');
+    const res = await serve.api.post('/api/sessions', { data: { cwd: dir, prompt: '' } });
+    if (!res.ok()) throw new Error(`create session: ${res.status()} ${await res.text()}`);
+    c.id = (await res.json()).session.id;
+
+    await page.route((u) => u.pathname === `/api/sessions/${c.id}` && !u.searchParams.has('since'), (r) => {
+      if (c.holdLoad && r.request().method() === 'GET') c.loads.push(r);
+      else r.continue().catch(() => {});
     });
-    await page.route((u) => u.pathname === `/api/sessions/${c.id}/prompt`, (r) => { c.post = r; });
+    await page.route((u) => u.pathname === `/api/sessions/${c.id}/prompt`, (r) => { c.posts.push(r); });
+    await page.setViewportSize(WIDE);
     await page.goto(`${serve.url}/#/s/${c.id}`);
-    await until('the transcript read', () => c.load !== null || undefined);
+    await until('the first transcript read never came', () => c.loads.length > 0);
     return c;
   },
 
   actions: {
-    // --- the transcript read
-    async Loaded(c) {
-      c.firstRead = false;
-      const r = c.load!;
-      c.load = null;
-      await r.continue();
-      await c.page.locator('.thread-head .head-main > .status').waitFor({ timeout: 10_000 });
-    },
-    async LoadFails(c) {
-      c.firstRead = false;
-      const r = c.load!;
-      c.load = null;
-      await r.fulfill({ status: 200, contentType: 'application/json', body: 'transcript unavailable' });
-    },
-    async RetryLoad(c) {
-      c.firstRead = true;
-      await c.page.locator('.transcript-state').getByRole('button', { name: 'Retry' }).click();
-      await until('the transcript read', () => c.load !== null || undefined);
-    },
+    Loaded: (c) => answerLoads(c, false),
+    LoadFails: (c) => answerLoads(c, true),
+    RetryLoad: (c) => transcript(c).locator('.transcript-state').getByRole('button', { name: 'Retry', exact: true }).click(),
 
-    // --- the person
     async Send(c) {
       await c.page.locator('#composer').fill(PROMPT);
       await c.page.getByRole('button', { name: 'Send', exact: true }).click();
-      await heldPost(c);
     },
-    async RetryTurn(c) {
-      const cards = c.page.locator('.thread .err-card');
-      await cards.last().getByRole('button', { name: 'Retry' }).click();
-      await heldPost(c);
-    },
-    ToggleCall: (c) => clickInPlace(c, c.page.locator('.thread section.turn:not(.turn-sending)').last().locator('details.call-native').last().locator(':scope > summary')),
-    ToggleWork: (c) => clickInPlace(c, c.page.locator('.thread details.work-seg.work-seg-live > summary')),
-    // Scroll the transcript up by the wheel. The prompt is clamped to
-    // four lines; shown in full it is taller than the pane.
+    // The latest card's: an earlier failure keeps its own card above.
+    RetryTurn: (c) => transcript(c).locator('.err-card').last().getByRole('button', { name: 'Retry', exact: true }).click(),
+
+    ToggleCall: (c) => transcript(c).locator('section.turn:not(.turn-sending)').last().locator('details.call-native > summary').click(),
+    ToggleWork: (c) => transcript(c).locator('details.work-seg-live > summary').click(),
+    // The wheel over the transcript, as a person scrolls up. A single
+    // running turn fits the pane with its brief clamped, so the person
+    // first opens the brief in full (a disclosure the spec does not
+    // model: it moves no field), reads down to the end, and then scrolls
+    // back up through it.
     async ScrollUp(c) {
-      // Expanding it leaves the scroll where it was, at the top of what
-      // used to fit: down to the end first, as a reader would, then up.
-      const toggle = c.page.locator('.thread .prompt-bubble').getByRole('button', { name: /^(Show full prompt|Show less)$/ }).first();
-      await toggle.waitFor({ timeout: 10_000 });
-      if ((await toggle.textContent()) === 'Show full prompt') await toggle.click();
-      const t = c.page.locator('.thread .transcript');
-      await t.hover();
-      await c.page.mouse.wheel(0, 20_000);
-      await until('the end of the transcript', () => t.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 40 || undefined), 5_000);
-      await c.page.mouse.wheel(0, -600);
-      await c.page.locator('button.jump-latest').filter({ hasText: /Latest|New activity/ }).waitFor({ timeout: 10_000 });
+      const box = await transcript(c).boundingBox();
+      if (!box) throw new Error('ScrollUp: no transcript on screen');
+      const more = transcript(c).getByRole('button', { name: 'Show full prompt' });
+      if (await more.count()) {
+        await more.first().click();
+        await c.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await c.page.mouse.wheel(0, 4000);
+        await expect.poll(() => transcript(c).evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight), { message: 'ScrollUp: never reached the end' }).toBeLessThan(2);
+      }
+      await c.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await c.page.mouse.wheel(0, -2000);
+      const dims = await transcript(c).evaluate((el) => `${el.scrollHeight} tall in ${el.clientHeight}, at ${el.scrollTop}`);
+      await expect.poll(() => transcript(c).evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight), { message: `ScrollUp: the transcript did not move (${dims})` }).toBeGreaterThanOrEqual(40);
     },
-    async JumpLatest(c) {
-      await c.page.locator('button.jump-latest').filter({ hasText: /Latest|New activity/ }).click();
-    },
-    async OpenSettings(c) {
-      await c.page.getByRole('button', { name: 'Session settings' }).click();
-      await c.page.locator('.head-pop[role="dialog"]').waitFor({ timeout: 10_000 });
-    },
-    async OpenChanges(c) {
-      await c.page.locator('.runtime-strip .rt-metrics > details.rt-jobs:not(.rt-more):has(a.chg-full) > summary').click();
-    },
-    async OpenDetails(c) {
-      await c.page.locator('.runtime-strip details.rt-more > summary').click();
-    },
-    async Escape(c) {
-      await c.page.keyboard.press('Escape');
-    },
-    // Mousedown on the transcript's empty space.
+    JumpLatest: (c) => c.page.locator('.composer-actions button.jump-latest[aria-label$="jump to latest"], .composer-actions button.jump-latest[aria-label="Jump to latest"]').click(),
+
+    OpenSettings: (c) => head(c).getByRole('button', { name: 'Session settings' }).click(),
+    OpenChanges: (c) => chipSummary(c).click(),
+    OpenDetails: (c) => moreSummary(c).click(),
+    Escape: (c) => c.page.keyboard.press('Escape'),
+    // A click on the transcript's empty space, clear of every row.
     async ClickAway(c) {
-      const box = await c.page.locator('.thread .transcript').boundingBox();
-      await c.page.mouse.click(box!.x + box!.width - 8, box!.y + box!.height - 8);
+      const box = await transcript(c).boundingBox();
+      if (!box) throw new Error('ClickAway: no transcript on screen');
+      await c.page.mouse.click(box.x + 6, box.y + box.height - 6);
     },
     async OpenFullChanges(c) {
-      const chg = c.page.locator('.runtime-strip details.rt-jobs:not(.rt-more)[open] a.chg-full');
-      const phone = c.page.locator('.runtime-strip details.rt-more[open] a.rt-link[href$="/changes"]');
-      if (await chg.count()) await chg.click();
-      else if (await phone.count()) await phone.click();
-      else await c.page.locator('.thread .turn-files').first().click();
-      await until('the Changes page', async () => (await c.page.evaluate(() => location.hash)).includes('/changes') || undefined);
+      const p = await thePops(c);
+      if (p.chg) await head(c).locator('details.rt-jobs a.chg-full').click();
+      else if (p.details) await head(c).locator('details.rt-more a.rt-link[href$="/changes"]').click();
+      else await transcript(c).locator('.turn-files').click();
     },
-    async OpenContext(c) {
-      await c.page.locator('.runtime-strip [aria-label^="Context: "]').first().click();
-      await until('the Context page', async () => (await c.page.evaluate(() => location.hash)).includes('/context') || undefined);
-    },
-    async Back(c) {
-      await c.page.keyboard.press('Escape');
-      await until('the thread', async () => (await c.page.evaluate(() => location.hash)) === `#/s/${c.id}` || undefined);
-    },
+    OpenContext: (c) => contextChip(c).click(),
+    Back: (c) => c.page.keyboard.press('Escape'),
     async Resize(c) {
-      const wide = await c.page.evaluate(() => window.innerWidth > 720);
+      const wide = (c.page.viewportSize()?.width ?? 0) > 720;
       await c.page.setViewportSize(wide ? PHONE : WIDE);
     },
 
     // --- the server
     async Take(c) {
-      c.held = name(c, 't');
-      queue(c.dir, c.held, { mode: 'block' });
-      const r = c.post!;
-      c.post = null;
-      const answered = c.page.waitForResponse((res) => res.url().endsWith(`/api/sessions/${c.id}/prompt`));
-      await r.continue();
-      const res = await answered;
-      if (!res.ok()) throw new Error(`prompt: ${res.status()}`);
-      await waitTaken(c.dir, c.held);
-      await until('running', async () => (await apiStatus(c)) === 'running' || undefined);
+      c.n++;
+      c.held = turnName(c, 'a');
+      c.streamed = '';
+      queue(c.q, c.held, { mode: 'block', text: `finished turn ${c.n}` });
+      await until('no send to take', () => c.posts.length > 0);
+      for (const r of c.posts.splice(0)) r.continue().catch(() => {});
+      await waitTaken(c.q, c.held);
     },
     async Delta(c) {
-      c.said = `${name(c, 'f')} streamed`;
-      await stream(c, c.said);
+      const f = path.join(c.q, c.held + '.stream');
+      c.streamed = 'Reading the parser first. ';
+      fs.writeFileSync(f + '-tmp', c.streamed);
+      fs.renameSync(f + '-tmp', f);
+      await until('the delta was not streamed', () => !fs.existsSync(f));
     },
-    // The reply so far is recorded with the call: the preview goes.
     async CallStart(c) {
-      c.next = name(c, 't');
-      c.gate = path.join(c.serve.home, `${c.next}.gate`);
-      queue(c.dir, c.next, { mode: 'block' });
-      const out = path.join(c.serve.work, 'edited.txt');
-      const cmd = `while [ ! -e ${c.gate} ]; do sleep 0.05; done; if [ -e ${c.gate}.fail ]; then exit 1; fi; echo ${c.next} >> ${out}`;
-      put(path.join(c.dir, c.held + '.release'), JSON.stringify({ text: c.said, call: { name: 'bash', args: { command: cmd } } }));
-      c.said = '';
-      c.held = '';
+      const next = turnName(c, 'b');
+      queue(c.q, next, { mode: 'block', text: `finished turn ${c.n}` });
+      c.gate = path.join(c.gates, `${c.n}.gate`);
+      // A provider's response carries the text it streamed before the
+      // call, so what Delta streamed is recorded with the call.
+      releaseWith(c.q, c.held, { text: c.streamed, call: { name: 'bash', args: { command: callCommand(c.gate) } } } as never);
+      c.streamed = '';
+      c.held = next;
     },
     async CallOk(c) {
-      fs.writeFileSync(c.gate, '');
-      c.gate = '';
-      await waitTaken(c.dir, c.next);
-      c.held = c.next;
-      c.next = '';
+      openGate(c, 'ok');
+      await waitTaken(c.q, c.held);
     },
     async CallFails(c) {
-      fs.writeFileSync(c.gate + '.fail', '');
-      fs.writeFileSync(c.gate, '');
-      c.gate = '';
-      await waitTaken(c.dir, c.next);
-      c.held = c.next;
-      c.next = '';
+      openGate(c, 'no');
+      await waitTaken(c.q, c.held);
     },
     async Finish(c) {
-      releaseWith(c.dir, c.held, { mode: 'ok', text: `finished ${c.held}` });
+      release(c.q, c.held);
       c.held = '';
-      c.said = '';
-      await until('done', async () => (await apiStatus(c)) !== 'running' || undefined);
     },
     async Fail(c) {
-      releaseWith(c.dir, c.held, { mode: 'error', error: 'model says no' });
+      releaseWith(c.q, c.held, { mode: 'error', error: 'model says no' });
       c.held = '';
-      c.said = '';
-      await until('the error', async () => (await apiStatus(c)) !== 'running' || undefined);
     },
   },
 
   read: readUiState,
-  // The header's title: on screen on the thread; a sub page has its own head.
-  status: (c) => c.page.locator('.thread-head h1, .page-head h1, main h1').first(),
-  // The spec is the page's state, not a transcript's: no history check.
-  sessions: () => [],
+  status: (c) => c.page.locator('.thread-head h1').first(),
+  sessions: (c) => [c.id],
+  async check(c, where) {
+    // Judged at rest: a hover's fade (the prompt's time and Copy under
+    // the pointer) runs on real time, and axe measuring halfway through
+    // one reports a contrast the screen never settles on.
+    await Promise.race([sleep(2000), c.page.evaluate(() => Promise.all(document.getAnimations()
+      .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+      .map((a) => a.finished.catch(() => {}))))]);
+    // The title is the first prompt, a paragraph here: the header cuts it
+    // with an ellipsis on purpose, and then owes the whole of it as the
+    // heading's tooltip. Everything else in the header is never cut.
+    const title = await c.page.locator('.thread-head h1').first().evaluate((h) =>
+      h.scrollWidth <= h.clientWidth + 1 || (h.getAttribute('title') ?? '').trim().startsWith((h.textContent ?? '').trim().replace(/…$/, '')) ? '' : `"${h.textContent}" is cut and its tooltip is "${h.getAttribute('title')}"`);
+    expect(title, `${where}: clipped title`).toBe('');
+    await uiInvariants(c.page, {
+    include: ['.thread-head', '.thread .scroll.transcript', '.composer-actions', '.chg-page'],
+    text: '.thread-head .head-main > .status, .thread-head .head-live, .jump-word, .err-head, p.working, .work-seg > summary .block-label, .call-native > summary .block-label, .turn-files, .turn-sending-state, .thread-empty h2',
+    }, where);
+  },
   async cleanup(c) {
-    if (!c) return;
-    c.firstRead = false;
-    if (c.load) await c.load.continue().catch(() => {});
-    if (c.post) await c.post.abort().catch(() => {});
-    if (c.gate) fs.writeFileSync(c.gate, '');
-    if (c.held) release(c.dir, c.held);
-    if (c.next) releaseWith(c.dir, c.next, { mode: 'ok', text: 'cleanup' });
+    await c.page.unrouteAll({ behavior: 'ignoreErrors' });
+    if (c.gate) openGate(c, 'no');
+    if (c.held) release(c.q, c.held);
   },
 });

@@ -76,6 +76,17 @@ test("ER: a finished call opens onto its output; its evidence and what happened 
   expect(cancelled).not.toContain("block-failed");
 });
 
+// A summary is itself a control: a button inside it is one control in
+// another, which a screen reader reads as one name (axe's
+// nested-interactive, found by the ui_thread walk). The output's Copy
+// sits beside the output instead.
+test("ER: a call row's summary holds no control of its own; Copy is in the open body", () => {
+  const html = renderToStaticMarkup(<NativeCall line={test1} />);
+  const summary = /<summary[^>]*>([\s\S]*?)<\/summary>/.exec(html)?.[1] ?? "";
+  expect(summary).not.toContain("<button");
+  expect(html.slice(html.indexOf("</summary>"))).toContain('aria-label="Copy output"');
+});
+
 test("ER: a running call spins with its live tail, and gives way to its record by id", () => {
   let m = liveNative(new Map(), { session: "s", seq: 1, at: at(3), kind: "call", text: "go test ./...", extra: { id: "toolu_9", tool: "bash", phase: "start" } });
   m = liveNative(m, { session: "s", seq: 0, at: at(4), kind: "call-delta", text: "ok a\nok b\nok c\nrunning d\n", extra: { id: "toolu_9" } });
