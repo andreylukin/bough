@@ -171,13 +171,21 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	m := SessionMeta{SpawnedBy: parent, Thread: opt.Thread}
 	// The slug IS the membership now: no label to look up.
 	m.Project = slug
-	if len(s.running) >= s.maxRunning {
+	// Behind anyone already waiting, even with a slot free: the free
+	// slot is theirs. After a lower cap queued B's agent, A's next spawn
+	// raised it back and started ahead of it, since a raised cap starts
+	// no drain on its own.
+	if len(s.queue) > 0 || len(s.running) >= s.maxRunning {
 		m.Queued = true
 		m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra, Args: q.args}
 		s.meta[q.id] = m
 		s.queue = append(s.queue, q)
+		room := len(s.running) < s.maxRunning
 		err := s.saveMetaLocked()
 		s.mu.Unlock()
+		if room {
+			go s.drainQueue()
+		}
 		return q.id, true, err
 	}
 	s.meta[q.id] = m

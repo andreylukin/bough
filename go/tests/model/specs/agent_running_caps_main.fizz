@@ -1,0 +1,229 @@
+---
+# Every behaviour ends with each child finished and the queue empty:
+# nothing left to do is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# A project main thread's per-session live budget, and the page's
+# threads under the serve-wide running cap (the sibling of
+# agent_running_caps, which has the cap across ordinary parents): main's
+# model spawns two agents at once, a person starts a prompt-less New
+# thread, messages it, and the thread's own model spawns an agent.
+#
+# Code: go/internal/serve/children.go (CreateChild, busyChildren,
+# launch, drainQueue, childEventLocked), supervisor.go Send and isMain,
+# orbs.go createProjectSession, api.go createSession, web/src/api.ts
+# (the page's create sends neither maxRunning nor maxPerSession, so a
+# thread asks for serve's defaults: cap 16, budget 200),
+# plugins/workers/background.go startAgent (a model's spawn sends
+# bough.yml's max_running and max_per_session).
+#
+# Children, all but tc main's:
+#   m1, m2  main's model's agents: two tools.spawn calls at once
+#           (spawnAll), each with max_running CAP and max_per_session
+#           MAIN_BUDGET. main's budget counts only children still going
+#           (queued, booting, running, needs-you), not its lifetime.
+#   t       a person's New thread: prompt-less, SpawnedBy main, Thread
+#   tc      the thread's model's agent (a person's thread may spawn; a
+#           background agent may not: ModelChildSpawns is a 409)
+#
+# st[c], slots, queue, cap, drain, born and over are as in
+# agent_running_caps, plus:
+#   empty    the prompt-less thread: a live process, no turn, no slot
+# grand counts agents a background agent managed to start.
+#
+# Folded: a spawn's launch (the child is running, or for the prompt-less
+# thread empty with its reservation dropped and a drain started, before
+# CreateChild returns); a close frees its slot and starts a drain.
+# Scope cuts: one drain goroutine; one pair of spawns on main, one New
+# thread, one message to it, one spawn from it. m2 exists only when
+# main's budget is broken (the mutation below). No thread is queued: the
+# page asks for cap 16, so only a non-empty queue could hold it, and the
+# only child that queues here is tc, spawned after it.
+#
+# Where this spec says what the flow promises and the code (as of main
+# 5471918e) does otherwise, the code is the finding:
+#   - Main's budget is checked atomically, counting a child from the
+#     moment it is created. CreateChild reads busyChildren BEFORE s.mu,
+#     and busyChildren derives each child's status from its history
+#     file, so a child that has not recorded its first input yet counts
+#     as idle: two concurrent spawns on main (or two in a row) both pass
+#     a budget of one. Mutation: SpawnPairOnMain reading busy once for
+#     both breaks MainModelWithinBudget.
+# Kept as the code has it, design gaps:
+#   - The page's New thread resets serve's cap to 16 (last request
+#     wins, and the page sends none): a max_running a session lowered is
+#     undone by a person opening a thread.
+#   - A person's thread is checked against a budget of 200, a model's
+#     spawn against bough.yml's: the same main has two budgets.
+#   - A prompt-less thread whose process dies before its history file
+#     exists is neither listed (startingIDs skips a dead one) nor
+#     reported (report finds no entry): its meta row stays, invisible.
+#     Not modelled.
+
+CAP = 1
+CAP_WEB = 16
+MAIN_BUDGET = 1
+
+KIDS = ("m1", "m2", "t", "tc")
+MAIN_KIDS = ("m1", "m2", "t")
+BUSY = ("queued", "booting", "running")
+
+def eff(cap):
+    if cap <= 0:
+        return CAP_WEB
+    return cap
+
+def busy_of(st, kids):
+    return len([c for c in kids if st[c] in BUSY])
+
+def with_slot(slots, c):
+    return sorted(slots + [c])
+
+def without(xs, c):
+    return [x for x in xs if x != c]
+
+def booting(st):
+    return [c for c in KIDS if st[c] == "booting"]
+
+role Serve:
+    action Init:
+        self.cap = 0
+        self.st = {"m1": "none", "m2": "none", "t": "none", "tc": "none"}
+        self.queue = []
+        self.slots = []
+        self.born = []
+        self.drain = False
+        self.over = 0
+        self.grand = 0
+
+    atomic func count_start():
+        if len(self.slots) >= eff(self.cap):
+            self.over += 1
+
+    # CreateChild past its depth and budget checks: the request's cap
+    # becomes serve's, then queue or start. prompt is False for the
+    # page's New thread.
+    atomic func spawn(c, cap, prompt):
+        self.cap = cap
+        self.born = self.born + [c]
+        if len(self.queue) > 0 or len(self.slots) >= eff(self.cap):
+            self.st[c] = "queued"
+            self.queue = self.queue + [c]
+            if len(self.slots) < eff(self.cap):
+                self.drain = True
+        elif prompt:
+            self.count_start()
+            self.st[c] = "running"
+            self.slots = with_slot(self.slots, c)
+        else:
+            # launch: nobody has asked it anything, so no turn opens and
+            # the reservation is dropped (it would never be given back).
+            self.st[c] = "empty"
+            self.drain = True
+
+    atomic func close(c, how):
+        self.st[c] = how
+        self.slots = without(self.slots, c)
+        self.drain = True
+
+    # agent(M): two tools.spawn calls at once on the project's main
+    # thread; each create is checked against the budget in turn.
+    atomic action SpawnPairOnMain:
+        require self.st["m1"] == "none" and self.st["m2"] == "none"
+        if busy_of(self.st, MAIN_KIDS) < MAIN_BUDGET:
+            self.spawn("m1", CAP, True)
+        if busy_of(self.st, MAIN_KIDS) < MAIN_BUDGET:
+            self.spawn("m2", CAP, True)
+
+    # m1's model calls tools.spawn: it has a SpawnedBy and is not a
+    # person's thread, so ErrDepth (409); nothing changes.
+    atomic action ModelChildSpawns:
+        require self.st["m1"] == "running"
+        pass
+
+    # user: New thread on the project page -> POST /api/sessions
+    # {mode: project, prompt: ""}: cap 16, budget 200.
+    atomic action NewThread:
+        require self.st["t"] == "none"
+        self.spawn("t", CAP_WEB, False)
+
+    # user: types into the empty thread. Send takes a slot and never
+    # looks at the cap.
+    atomic action MessageThread:
+        require self.st["t"] == "empty"
+        self.st["t"] = "running"
+        self.slots = with_slot(self.slots, "t")
+
+    # The thread's model spawns: a person's thread is a full agent, and
+    # its own budget is its lifetime rows (it is not a main).
+    atomic action ThreadSpawns:
+        require self.st["t"] == "running" and self.st["tc"] == "none"
+        self.spawn("tc", CAP, True)
+
+    atomic fair action Drain:
+        require self.drain and len(booting(self.st)) == 0
+        if len(self.queue) > 0 and len(self.slots) < eff(self.cap):
+            self.count_start()
+            c = self.queue[0]
+            self.queue = self.queue[1:]
+            self.st[c] = "booting"
+            self.slots = with_slot(self.slots, c)
+        else:
+            self.drain = False
+
+    atomic fair action Launch:
+        require len(booting(self.st)) > 0
+        self.st[booting(self.st)[0]] = "running"
+
+    atomic fair action FinishM1:
+        require self.st["m1"] == "running"
+        self.close("m1", "idle")
+
+    atomic fair action FinishM2:
+        require self.st["m2"] == "running"
+        self.close("m2", "idle")
+
+    atomic fair action FinishThread:
+        require self.st["t"] == "running"
+        self.close("t", "idle")
+
+    atomic fair action FinishTc:
+        require self.st["tc"] == "running"
+        self.close("tc", "idle")
+
+action Init:
+    serve = Serve()
+
+# serve never starts a child itself while s.running is at the cap then
+# in force. A message's slot is not a start.
+always assertion ServeStartsWithinCap:
+    return serve.over == 0
+
+# A queued child is in the queue exactly once, and only a queued one.
+always assertion QueuedIsInQueue:
+    for c in KIDS:
+        n = len([q for q in serve.queue if q == c])
+        if n > 1 or (n == 1) != (serve.st[c] == "queued"):
+            return False
+    return True
+
+# s.running holds exactly the children with a boot or a turn in flight:
+# the empty thread holds none, and a closed turn gives its slot back.
+always assertion SlotIsOpenWork:
+    for c in KIDS:
+        if (c in serve.slots) != (serve.st[c] in ("booting", "running")):
+            return False
+    return True
+
+# Main's model never has more agents going than its budget.
+always assertion MainModelWithinBudget:
+    return busy_of(serve.st, ("m1", "m2")) <= MAIN_BUDGET
+
+# Only a person's thread may start agents under a SpawnedBy (depth 1).
+always assertion DepthOne:
+    return serve.grand == 0
+
+# The queue drains.
+always eventually assertion QueueDrains:
+    return len(serve.queue) == 0
