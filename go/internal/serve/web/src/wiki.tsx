@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Back, ago } from "./app";
 import { duration, EmptyState, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
@@ -749,7 +749,8 @@ export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPa
   );
 }
 
-export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRetrySource, cite, source, sourceError, onCite, onCloseSource, onOpenPage, onIndex, onOpenSession, onSave, loadHistory, onBack, onSearch }: {
+/** What WikiPageView is given: the route's reads and the ways out of the page. */
+export type WikiPageProps = {
   /** Null while the page loads or when it failed: the header stays, only the body waits. */
   page: WikiPageData | null;
   /** The page being opened, for the header before its data arrives. */
@@ -772,7 +773,31 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
   onBack?: () => void;
   /** Opens the palette on the missing slug. */
   onSearch?: (text: string) => void;
-}) {
+};
+
+/** Everything WikiPageView holds, so each of its states can be rendered on its own. */
+export interface WikiPageState {
+  /** The editor's text; null when the editor is closed. */
+  editing: string | null;
+  saving: boolean;
+  /** The last Save's error. */
+  err: string;
+  history: WikiCommit[] | null;
+  showHistory: boolean;
+  histErr: string;
+  /** The narrow "Page actions" menu. */
+  menu: boolean;
+}
+
+/** What the page's own controls do; WikiPageView owns the state they change. */
+export interface WikiPageActs {
+  edit: () => void; type: (text: string) => void; save: () => void; cancel: () => void;
+  toggleHistory: () => void; closeHistory: () => void; retryHistory: () => void;
+  toggleMenu: () => void; menuEdit: () => void; menuHistory: () => void;
+}
+
+export function WikiPageView(props: WikiPageProps) {
+  const { page, path, cite, onOpenPage, onSave, loadHistory } = props;
   const [editing, setEditing] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -781,7 +806,6 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
   const [histErr, setHistErr] = useState("");
   const [menu, setMenu] = useState(false);
   const at = page?.path ?? path ?? "";
-  const open = Boolean(cite) && Boolean(page);
   // The cite too: Back from the editor to this page's cited entry is a
   // move like any other, and left the editor open over the entry.
   const citeKey = cite ? `${cite.session}#${cite.seq}` : "";
@@ -817,8 +841,39 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
     setShowHistory(next);
     if (next && history === null) fetchHistory();
   };
+  const edit = () => { setShowHistory(false); setEditing(page?.body ?? ""); };
 
-  const topic = page?.topic ?? (at.startsWith("topics/") ? at.split("/")[1] : "");
+  return (
+    <WikiPageUi {...props} docRef={doc}
+      state={{ editing, saving, err, history, showHistory, histErr, menu }}
+      acts={{
+        edit, toggleHistory, retryHistory: fetchHistory,
+        type: setEditing,
+        save: () => {
+          if (!onSave || editing === null) return;
+          setSaving(true); setErr("");
+          onSave(editing).then(() => setEditing(null)).catch((e) => setErr(msg(e))).finally(() => setSaving(false));
+        },
+        cancel: () => setEditing(null),
+        closeHistory: () => setShowHistory(false),
+        toggleMenu: () => setMenu(!menu),
+        menuEdit: () => { setMenu(false); edit(); },
+        menuHistory: () => { setMenu(false); toggleHistory(); },
+      }} />
+  );
+}
+
+/** WikiPageView's markup as a function of its state; WikiPageView owns the state and the requests. */
+export function WikiPageUi({ page, path, knownTitle, pageError, onRetry, onRetrySource, cite, source, sourceError, onCite, onCloseSource, onOpenPage, onIndex, onOpenSession, onSave, loadHistory, onBack, onSearch, state, acts, docRef }: WikiPageProps & {
+  state: WikiPageState;
+  acts: WikiPageActs;
+  /** The doc, for WikiPageView's link listener. */
+  docRef?: RefObject<HTMLDivElement | null>;
+}) {
+  const { editing, saving, err, history, showHistory, histErr, menu } = state;
+  const at = page?.path ?? path ?? "";
+  const open = Boolean(cite) && Boolean(page);
+  const topic =page?.topic ?? (at.startsWith("topics/") ? at.split("/")[1] : "");
   const title = page ? humanTitle(page.title, page.path) : knownTitle ? humanTitle(knownTitle, at) : humanTitle("", at);
   const notFound = !page && pageMissing(pageError);
   const missingSlug = at.split("/").pop()?.replace(/\.md$/, "");
@@ -832,18 +887,18 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
                 slug={missingSlug} quiet={Boolean(page) && editing === null && !numbered} />
         {page && editing === null && (onSave || loadHistory) && (
           <div className="hk-acts wk-page-acts">
-            {onSave && <button className="btn wk-wide" onClick={() => { setShowHistory(false); setEditing(page.body); }}>Edit</button>}
-            {loadHistory && <button className="btn wk-wide" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
+            {onSave && <button className="btn wk-wide" onClick={acts.edit}>Edit</button>}
+            {loadHistory && <button className="btn wk-wide" aria-expanded={showHistory} onClick={acts.toggleHistory}>History</button>}
             <div className="wk-narrow wk-more">
               <button className="wk-x" aria-label="Page actions" aria-haspopup="menu" aria-expanded={menu}
-                      onClick={() => setMenu(!menu)}>
+                      onClick={acts.toggleMenu}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
               </button>
               {menu && (
                 <div className="overflow-menu" role="menu">
-                  {onSave && <button role="menuitem" onClick={() => { setMenu(false); setShowHistory(false); setEditing(page.body); }}>Edit</button>}
-                  {loadHistory && <button role="menuitem" onClick={() => { setMenu(false); toggleHistory(); }}>{showHistory ? "Hide history" : "History"}</button>}
+                  {onSave && <button role="menuitem" onClick={acts.menuEdit}>Edit</button>}
+                  {loadHistory && <button role="menuitem" onClick={acts.menuHistory}>{showHistory ? "Hide history" : "History"}</button>}
                 </div>
               )}
             </div>
@@ -852,7 +907,7 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
       </header>
 
       <div className="wk-split" data-source={open ? "1" : "0"}>
-        <div className="scroll wk-doc" ref={doc}>
+        <div className="scroll wk-doc" ref={docRef}>
           {!page ? (
             notFound ? (
               <EmptyState glyph="missing" title="This page doesn’t exist" primary={Boolean(onSearch)}
@@ -876,12 +931,12 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
               <div className="wk-history-head">
                 <h2 id="wk-history-h" className="wk-h">History</h2>
                 {history?.length === 0 && <p className="wk-facts">No recorded changes: the wiki is not a git repo.</p>}
-                <button className="wk-x" onClick={() => setShowHistory(false)} aria-label="Close history">
+                <button className="wk-x" onClick={acts.closeHistory} aria-label="Close history">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
                        strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </button>
               </div>
-              {history === null ? <Pending what="History" err={histErr} onRetry={fetchHistory} inline />
+              {history === null ? <Pending what="History" err={histErr} onRetry={acts.retryHistory} inline />
                 : history.length === 0 ? null
                 // Versions are listed, not opened: the API has no per-version diff.
                 : <ol className="wk-history-list">{history.map((h) => (
@@ -897,13 +952,10 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
             <div className="hk-panel">
               <label className="visually-hidden" htmlFor="wk-body">Page text</label>
               <textarea id="wk-body" className="hk-edit mono" rows={24} spellCheck={false}
-                        value={editing} onChange={(e) => setEditing(e.target.value)} />
+                        value={editing} onChange={(e) => acts.type(e.target.value)} />
               <div className="hk-acts">
-                <button className="btn btn-primary" disabled={saving} onClick={() => {
-                  setSaving(true); setErr("");
-                  onSave(editing).then(() => setEditing(null)).catch((e) => setErr(msg(e))).finally(() => setSaving(false));
-                }}>Save</button>
-                <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
+                <button className="btn btn-primary" disabled={saving} onClick={acts.save}>Save</button>
+                <button className="btn" onClick={acts.cancel}>Cancel</button>
                 <span className="hk-note">Saving commits the change to the wiki’s history.</span>
               </div>
             </div>
@@ -967,9 +1019,9 @@ const flagWord: Record<WikiFlag["kind"], { word: string; cls: string }> = {
   problem: { word: "Check", cls: "hk2-state hk2-bad" },
 };
 
-type Filter = "all" | WikiFlag["kind"];
+export type Filter = "all" | WikiFlag["kind"];
 
-export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, onIndex, onBack }: {
+type WikiReviewProps = {
   data: WikiReviewData;
   onOpenPage: (path: string, cite?: WikiCite) => void;
   onAct: (f: WikiFlag, action: "inference" | "drop") => Promise<void>;
@@ -977,23 +1029,40 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
   onIngest?: (session: string) => Promise<void>;
   onIndex: () => void;
   onBack?: () => void;
-}) {
+};
+
+const flagKey = (f: WikiFlag) => `${f.page}:${f.line}:${f.kind}`;
+
+export function WikiReviewView(props: WikiReviewProps) {
+  const { onAct } = props;
   const [filter, setFilter] = useState<Filter>("all");
   const [busy, setBusy] = useState<Record<string, string>>({});
+  const act = (f: WikiFlag, action: "inference" | "drop") => {
+    const key = flagKey(f);
+    setBusy((b) => ({ ...b, [key]: "…" }));
+    onAct(f, action)
+      .then(() => setBusy((b) => { const n = { ...b }; delete n[key]; return n; }))
+      .catch((e) => setBusy((b) => ({ ...b, [key]: msg(e) })));
+  };
+  return <WikiReviewUi {...props} filter={filter} busy={busy} onFilter={setFilter} onDecide={act} />;
+}
+
+/**
+ * WikiReviewView's markup as a function of its state: the filter, and per
+ * flag "…" while its decision is out or the error it came back with.
+ */
+export function WikiReviewUi({ data, onOpenPage, onSearch, onIngest, onIndex, onBack, filter, busy, onFilter, onDecide }: WikiReviewProps & {
+  filter: Filter;
+  busy: Record<string, string>;
+  onFilter: (f: Filter) => void;
+  onDecide: (f: WikiFlag, action: "inference" | "drop") => void;
+}) {
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
     for (const f of data.flags) m[f.kind] = (m[f.kind] ?? 0) + 1;
     return m;
   }, [data.flags]);
   const shown = filter === "all" ? data.flags : data.flags.filter((f) => f.kind === filter);
-  const key = (f: WikiFlag) => `${f.page}:${f.line}:${f.kind}`;
-
-  const act = (f: WikiFlag, action: "inference" | "drop") => {
-    setBusy((b) => ({ ...b, [key(f)]: "…" }));
-    onAct(f, action)
-      .then(() => setBusy((b) => { const n = { ...b }; delete n[key(f)]; return n; }))
-      .catch((e) => setBusy((b) => ({ ...b, [key(f)]: msg(e) })));
-  };
 
   return (
     <div className="thread">
@@ -1007,9 +1076,9 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
       <div className="scroll proj-body">
         {Object.keys(counts).length > 1 && (
           <div className="wk-filters" role="group" aria-label="Show">
-            <button className="wk-filter" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>All {data.flags.length}</button>
+            <button className="wk-filter" aria-pressed={filter === "all"} onClick={() => onFilter("all")}>All {data.flags.length}</button>
             {(["unsupported", "superseded", "uncited", "problem"] as const).filter((k) => counts[k]).map((k) => (
-              <button key={k} className="wk-filter" aria-pressed={filter === k} onClick={() => setFilter(k)}>
+              <button key={k} className="wk-filter" aria-pressed={filter === k} onClick={() => onFilter(k)}>
                 {flagWord[k].word} {counts[k]}
               </button>
             ))}
@@ -1020,7 +1089,7 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
             <p className="proj-none">Every claim cites an entry that exists, and nothing has been superseded.</p>
           )}
           {shown.map((f) => {
-            const k = key(f);
+            const k = flagKey(f);
             const state = busy[k];
             // Disabled only while the decision is in flight: after "Did not save" the person tries again.
             const inFlight = state === "…";
@@ -1044,9 +1113,9 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
                     <button className="btn" onClick={() => onSearch(f.claim)}>Search history</button>
                   )}
                   {(f.kind === "unsupported" || f.kind === "uncited") && (
-                    <button className="btn" disabled={inFlight} onClick={() => act(f, "inference")}>Mark as inference</button>
+                    <button className="btn" disabled={inFlight} onClick={() => onDecide(f, "inference")}>Mark as inference</button>
                   )}
-                  <button className="btn" disabled={inFlight} onClick={() => act(f, "drop")}>
+                  <button className="btn" disabled={inFlight} onClick={() => onDecide(f, "drop")}>
                     {f.kind === "superseded" ? "Drop the old claim" : "Drop the claim"}
                   </button>
                   {state && state !== "…" && <span className="hk-state hk-bad">Did not save — {state}</span>}
@@ -1239,7 +1308,7 @@ export function useLoad<T>(load: (() => Promise<T>) | null, key: string, poll = 
 }
 
 /** Every wiki screen keeps its head while its body loads: a wait is a state of the screen, not a blank page. */
-function Loading({ what, title, err, onBack, onIndex, onRetry }: {
+export function Loading({ what, title, err, onBack, onIndex, onRetry }: {
   what: string; title: string; err: string; onBack?: () => void; onIndex?: () => void; onRetry: () => void;
 }) {
   return (
