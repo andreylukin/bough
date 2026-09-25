@@ -118,7 +118,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return fmt.Errorf("orb: unknown config key %q", k)
 		}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := userHome(); err == nil {
 		if err := InstallSkill(home); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: orb: install /orb skill: %v\n", err)
 		}
@@ -332,6 +332,23 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		settled(false)
 	}
 	h.setRefresh(settled)
+	// Stop, never Remove: a resumed session reuses its worktrees and
+	// container. A reload (this row still mounted and still desired as
+	// is) keeps the orb running for the next Apply instead. Registered
+	// before the Effect that ends this Apply's watcher, so it runs
+	// after it: close() can wait a minute for a cancelled start, and
+	// the watcher it left alive meanwhile kept the "starting" section
+	// up and was still there to report the start its own unmount had
+	// cancelled as a failure.
+	ctx.Effect(func() {
+		if reloading(ctx, cfg) {
+			opened.Lock()
+			opened.m[session] = openOrb{h: h, slug: slug, cfg: cfg}
+			opened.Unlock()
+			return
+		}
+		h.close()
+	})
 	ctx.Effect(func() {
 		close(gone)
 		h.setRefresh(nil)
@@ -352,18 +369,6 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	registerPortalTools(ctx, home, session)
 	ctx.Provide("orb", h)
 	ctx.Provide("orb-state", h)
-	// Stop, never Remove: a resumed session reuses its worktrees and
-	// container. A reload (this row still mounted and still desired as
-	// is) keeps the orb running for the next Apply instead.
-	ctx.Effect(func() {
-		if reloading(ctx, cfg) {
-			opened.Lock()
-			opened.m[session] = openOrb{h: h, slug: slug, cfg: cfg}
-			opened.Unlock()
-			return
-		}
-		h.close()
-	})
 	return nil
 }
 
