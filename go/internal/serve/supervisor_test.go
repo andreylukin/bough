@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -110,10 +111,29 @@ func fakeChild() {
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
-		if armed {
+		if armed && os.Getenv("BOUGH_TYPED_ANSWERS") == "" {
 			armed = false
-			say(map[string]any{"kind": "assistant", "text": "answered:" + line})
+			say(map[string]any{"kind": "assistant", "text": "answered-untyped:" + line})
 			say(map[string]any{"kind": "done", "text": ""})
+			continue
+		}
+		if armed {
+			// As the real child under serve: an answer names its
+			// question and goes to it or nowhere; any other line is a
+			// prompt, which steers the turn the question holds open.
+			var ta struct {
+				Answer *string `json:"answer"`
+				Ask    string  `json:"ask"`
+			}
+			if json.Unmarshal([]byte(line), &ta) == nil && ta.Answer != nil {
+				if ta.Ask == "q1" {
+					armed = false
+					say(map[string]any{"kind": "assistant", "text": "answered:" + *ta.Answer})
+					say(map[string]any{"kind": "done", "text": ""})
+				}
+				continue
+			}
+			say(map[string]any{"kind": "steer", "text": line})
 			continue
 		}
 		if os.Getenv(envTurns) != "" && dir != "" && id != "" {
@@ -531,7 +551,7 @@ func TestSupervisorSendAdoptsAndAskBlocksSend(t *testing.T) {
 		t.Fatalf("Send with an armed ask = %v, want a pending-ask error", err)
 	}
 
-	if err := f.sup.Answer("sess-ask", "a"); err != nil {
+	if err := f.sup.Answer("sess-ask", "", "a"); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
 	waitFor(t, "the answer to land", func() bool {
@@ -545,9 +565,58 @@ func TestSupervisorSendAdoptsAndAskBlocksSend(t *testing.T) {
 	if a := f.sup.PendingAsk("sess-ask"); a != nil {
 		t.Errorf("ask still pending after the answer: %+v", a)
 	}
-	if err := f.sup.Answer("sess-ask", "a"); err != ErrNoAsk {
+	if err := f.sup.Answer("sess-ask", "", "a"); err != ErrNoAsk {
 		t.Errorf("second Answer = %v, want ErrNoAsk", err)
 	}
+}
+
+// Answer checks the question it answers, writes the answer and disarms
+// that question in one step: an answer naming another question is
+// refused and leaves the arm alone, and of answers racing for one
+// question (two tabs, a retry, the CLI) exactly one is written; a
+// second line would be read as the next question's answer or a steer.
+// Found by tests/model/mbt/ask_answer_arm_races_test.go (the spec's
+// AnswerOncePerAsk and DisarmOnlyOwn).
+func TestSupervisorAnswerIsOnePerAsk(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envAsk+"=1")
+	f.seed(t, "sess-once")
+	if err := f.sup.Send("sess-once", "question time"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitFor(t, "the ask", func() bool { return f.sup.PendingAsk("sess-once") != nil })
+
+	if err := f.sup.Answer("sess-once", "not-q1", "a"); !errors.Is(err, ErrAskExpired) {
+		t.Fatalf("Answer naming another question = %v, want ErrAskExpired", err)
+	}
+	if f.sup.PendingAsk("sess-once") == nil {
+		t.Fatal("a refused answer disarmed the question")
+	}
+	const n = 16
+	start, errs := make(chan struct{}), make(chan error, n)
+	for range n {
+		go func() { <-start; errs <- f.sup.Answer("sess-once", "q1", "a") }()
+	}
+	close(start)
+	written := 0
+	for range n {
+		if err := <-errs; err == nil {
+			written++
+		} else if !errors.Is(err, ErrNoAsk) {
+			t.Errorf("a losing Answer = %v, want ErrNoAsk", err)
+		}
+	}
+	if written != 1 {
+		t.Fatalf("%d of %d racing answers for one question were written, want 1", written, n)
+	}
+	waitFor(t, "the answer to land", func() bool {
+		for _, e := range f.sup.Recent("sess-once") {
+			if e.Kind == "assistant" && e.Text == "answered:a" {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // An ask that returns with no answer (a timeout) disarms on the event

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/internal/container"
+	"github.com/andreylukin/bough/internal/linegate"
 	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/plugins/history"
@@ -147,6 +148,7 @@ type Options struct {
 var (
 	ErrNoAsk          = errors.New("serve: supervisor: no pending ask")
 	ErrBadAnswer      = errors.New("serve: supervisor: a secret answer cannot contain a newline")
+	ErrAskExpired     = errors.New("serve: supervisor: that question expired; a newer one is pending")
 	ErrUnknownSession = errors.New("serve: supervisor: unknown session")
 	ErrArchived       = errors.New("serve: supervisor: session is archived")
 	ErrStarting       = errors.New("serve: supervisor: session is still starting")
@@ -755,7 +757,9 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 		return strings.HasPrefix(kv, "BOUGH_MODE=") || strings.HasPrefix(kv, "BOUGH_PROJECT=") ||
 			strings.HasPrefix(kv, "BOUGH_PROJECT_DIR=")
 	})
-	cmd.Env = append(cmd.Env, "BOUGH_ORIGIN=web")
+	// Answers go to the child typed ({"answer", "ask"}, see Answer), so
+	// an untyped line is never an answer.
+	cmd.Env = append(cmd.Env, "BOUGH_ORIGIN=web", "BOUGH_TYPED_ANSWERS=1")
 	cmd.Env = append(cmd.Env, extra...)
 	// Derived at EVERY start, never baked into spawnArgs: the membership
 	// lives in meta.json, is usually set long after the session was
@@ -855,6 +859,7 @@ func (s *Supervisor) projectEnv(id string) []string {
 func (s *Supervisor) pumpStdout(ch *child, r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	gate := linegate.Open("out", ch.cmd.Dir) // started: cmd is set
 	for sc.Scan() {
 		line := sc.Text()
 		if line == "" {
@@ -878,11 +883,28 @@ func (s *Supervisor) pumpStdout(ch *child, r io.Reader) {
 		if kind == "" {
 			kind = "stdout"
 		}
+		if gate != nil && armsOrDisarms(kind, extra) {
+			// Test hook only: a line that arms or clears an ask waits
+			// its turn, so a model test can act in the arm gap.
+			id, _ := extra["id"].(string)
+			tool, _ := extra["tool"].(string)
+			done := gate.Hold(kind + " " + tool + " " + id)
+			s.emit(ch, kind, text, extra)
+			done("")
+			continue
+		}
 		s.emit(ch, kind, text, extra)
 	}
 	if err := sc.Err(); err != nil {
 		s.emit(ch, "error", fmt.Sprintf("serve: supervisor: stdout: %v", err), nil)
 	}
+}
+
+// armsOrDisarms is a stdout line emitLocked arms or clears an ask on,
+// short of the turn's own end.
+func armsOrDisarms(kind string, extra map[string]any) bool {
+	return kind == "ask" || kind == "result" ||
+		(kind == "call" && extra["phase"] != "start" && (extra["tool"] == "ask" || extra["tool"] == "secret"))
 }
 
 func (s *Supervisor) pumpStderr(ch *child, r io.Reader) {
@@ -1108,31 +1130,43 @@ func (s *Supervisor) Send(id, text string) error {
 	return nil
 }
 
-// Answer replies to the armed tools.ask over the same pipe.
-func (s *Supervisor) Answer(id, text string) error {
-	p := s.PendingAsk(id)
-	if p == nil {
+// Answer replies to the armed tools.ask over the same pipe. ask is the
+// question the client answers ("" for whichever is armed). The check,
+// and taking the arm so no other answer passes it, are one step under
+// s.mu: checked and disarmed apart, two answers for one question were
+// both written, and a disarm after the write could remove the next
+// question's arm. The line names its question, so a child that timed
+// it out meanwhile drops it rather than reading it as a steer or as
+// the next question's answer.
+func (s *Supervisor) Answer(id, ask, text string) error {
+	s.mu.Lock()
+	p, ch := s.asks[id], s.kids[id]
+	switch {
+	case p == nil || ch == nil:
+		// Nothing armed, or the ask belongs to a process that is gone:
+		// nothing can read the answer, and a respawn would re-ask.
+		s.mu.Unlock()
 		return ErrNoAsk
-	}
-	// A secret rides as one raw stdin line: a newline would split it
-	// (or wrap it as a prompt). Nothing here logs the text.
-	if p.Secret && strings.ContainsAny(text, "\r\n") {
+	case ask != "" && p.ID != ask:
+		s.mu.Unlock()
+		return ErrAskExpired
+	case p.Secret && strings.ContainsAny(text, "\r\n"):
+		// A secret is one value: a newline in it is a paste gone wrong.
+		// Nothing here logs the text.
+		s.mu.Unlock()
 		return ErrBadAnswer
 	}
-	s.mu.Lock()
-	ch, ok := s.kids[id]
-	s.mu.Unlock()
-	if !ok {
-		// The ask belongs to a process that is gone; nothing can read
-		// the answer, and a respawn would re-ask.
-		return ErrNoAsk
-	}
-	if err := s.write(ch, text); err != nil {
-		return err
-	}
-	s.mu.Lock()
 	delete(s.asks, id)
 	s.mu.Unlock()
+	line, _ := json.Marshal(map[string]string{"answer": text, "ask": p.ID})
+	if err := s.write(ch, string(line)); err != nil {
+		s.mu.Lock()
+		if _, again := s.asks[id]; !again {
+			s.asks[id] = p // unwritten: still the question to answer
+		}
+		s.mu.Unlock()
+		return err
+	}
 	return nil
 }
 

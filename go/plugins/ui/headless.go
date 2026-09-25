@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/andreylukin/bough/internal/linegate"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -308,8 +309,11 @@ func headlessPump() {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
+	cwd, _ := os.Getwd()
+	gate := linegate.Open("in", cwd) // nil outside a model test
 	for sc.Scan() {
-		hlLineIn(sc.Text())
+		done := gate.Hold("")
+		done(hlLineIn(sc.Text()))
 	}
 
 	// EOF: no line can answer an ask now, so fail a pending one (and
@@ -380,15 +384,30 @@ func askEnded(ev Event) bool {
 	return t == "ask" || t == "secret"
 }
 
-// hlLineIn routes one stdin line.
-func hlLineIn(line string) {
-	// A pending secret takes the raw line: no JSON sniffing, so a value
-	// that happens to start with "{" is still the answer.
+// hlTyped is BOUGH_TYPED_ANSWERS, which serve sets on every child it
+// runs: an answer then arrives as {"answer", "ask"} naming its question,
+// and an untyped line is never an answer. Guarded by hlMu for tests.
+var hlTyped = os.Getenv("BOUGH_TYPED_ANSWERS") != ""
+
+// hlLineIn routes one stdin line and says where it went.
+func hlLineIn(line string) string {
+	// A typed answer goes to the question it names or nowhere: serve
+	// wrote it while that question was armed, and the child may have
+	// timed it out (and asked the next, a secret perhaps) since.
 	hlMu.Lock()
 	secret := hlAsk != nil && hlAsk.secret
+	typed := hlTyped
 	hlMu.Unlock()
-	if secret && hlAnswerPending(line) {
-		return
+	if id, text, ok := typedAnswer(line); typed && ok {
+		if hlAnswerTo(id, text) {
+			return "answer"
+		}
+		return "drop"
+	}
+	// A pending secret takes the raw line: no JSON sniffing, so a value
+	// that happens to start with "{" is still the answer.
+	if !typed && secret && hlAnswerPending(line) {
+		return "answer"
 	}
 	// A JSON object line {"prompt": "..."} is one multi-line prompt:
 	// the way a harness hands over a task brief with its newlines.
@@ -403,27 +422,32 @@ func hlLineIn(line string) {
 			// notice as its answer. Not a prompt, so no done is owed.
 			if obj.Notice != "" {
 				hlNotice(obj.Notice)
-				return
+				return "notice"
 			}
 			if obj.Prompt != "" {
 				line = obj.Prompt
 			}
 		}
 	}
-	if hlAnswerPending(line) {
-		return // the line answered a pending tools.ask
+	// Under serve an untyped line is a prompt even with a question
+	// open: serve arms a question only once it reads the child's event,
+	// so a /prompt it let through in that gap would be eaten as the
+	// answer to a question the person never saw answered.
+	if !typed && hlAnswerPending(line) {
+		return "answer" // the line answered a pending tools.ask
 	}
 	if strings.HasPrefix(line, "/") && hlDispatch(line) {
-		return // dispatched: never reaches the loop/LLM
+		return "command" // dispatched: never reaches the loop/LLM
 	}
 	if strings.HasPrefix(line, "!") {
 		hlBang(line)
-		return // ran as a shell command: never reaches the loop/LLM
+		return "bang" // ran as a shell command: never reaches the loop/LLM
 	}
 	if hlSteerLine(line) {
-		return // mid-turn: steered the running turn (its own done still ends it)
+		return "steer" // mid-turn: steered the running turn (its own done still ends it)
 	}
 	hlSubmit(line)
+	return "input"
 }
 
 // hlNoticeWait bounds how long a notice waits for job-notices. serve
@@ -486,9 +510,17 @@ func hlSteerLine(line string) bool {
 // any: a bare number picks that option, anything else is the literal
 // answer (same mapping as the composer). True when the line was
 // consumed as an answer.
-func hlAnswerPending(line string) bool {
+func hlAnswerPending(line string) bool { return hlAnswerTo("", line) }
+
+// hlAnswerTo is hlAnswerPending for the pending ask only if it is id
+// ("" takes whichever is pending).
+func hlAnswerTo(id, line string) bool {
 	hlMu.Lock()
 	pa, ans := hlAsk, hlAnswer
+	if pa != nil && id != "" && pa.id != id {
+		hlMu.Unlock()
+		return false
+	}
 	hlAsk = nil
 	hlMu.Unlock()
 	if pa != nil && ans == nil {
@@ -525,6 +557,21 @@ func hlAwaitAnswerer() askAnswers {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// typedAnswer reads serve's {"answer": text, "ask": id} line.
+func typedAnswer(line string) (id, text string, ok bool) {
+	if !strings.HasPrefix(line, "{") {
+		return "", "", false
+	}
+	var obj struct {
+		Answer *string `json:"answer"`
+		Ask    string  `json:"ask"`
+	}
+	if json.Unmarshal([]byte(line), &obj) != nil || obj.Answer == nil || obj.Ask == "" {
+		return "", "", false
+	}
+	return obj.Ask, *obj.Answer, true
 }
 
 // hlTurnErr is an error the running turn has not recovered from yet: set
