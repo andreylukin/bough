@@ -2,6 +2,7 @@ package serve
 
 import (
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -104,5 +105,38 @@ func TestGuardToken(t *testing.T) {
 	c := rec.Result().Cookies()
 	if rec.Code != http.StatusOK || len(c) != 1 || c[0].Value != "sekret" || !c[0].HttpOnly || c[0].SameSite != http.SameSiteStrictMode {
 		t.Errorf("page = %d cookies %+v", rec.Code, c)
+	}
+}
+
+// A browser keys cookies by host, not port: two serves on one host
+// (a fixture-HOME preview beside the real one) share one jar. Opening
+// the second must not replace the cookie the first tab sends, nor
+// reloading the first the second's.
+func TestGuardCookieIsPortScoped(t *testing.T) {
+	t.Parallel()
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	a := httptest.NewServer(Guard(ok, "token-a", false, ""))
+	defer a.Close()
+	b := httptest.NewServer(Guard(ok, "token-b", false, ""))
+	defer b.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	get := func(url string) int {
+		t.Helper()
+		resp, err := c.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	get(a.URL + "/")
+	get(b.URL + "/")
+	if code := get(a.URL + "/api/sessions"); code != http.StatusOK {
+		t.Errorf("serve A after serve B's page = %d, want 200", code)
+	}
+	get(a.URL + "/")
+	if code := get(b.URL + "/api/sessions"); code != http.StatusOK {
+		t.Errorf("serve B after serve A's page = %d, want 200", code)
 	}
 }

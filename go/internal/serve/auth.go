@@ -11,8 +11,27 @@ import (
 
 // TokenCookie carries the per-install token for the UI. HttpOnly so
 // page script never sees it; SameSite=Strict so another site cannot
-// ride it.
+// ride it. The cookie a serve sets is CookieName of the port it listens
+// on; the bare name is still read (a tab an older build signed in, and
+// test helpers that sign in without loading "/").
 const TokenCookie = "bough_serve_token"
+
+// CookieName is the token cookie of the serve listening on port. A
+// browser does not scope cookies by port, so under one name a second
+// serve on the same host (a fixture-HOME preview) replaced the first
+// tab's cookie and every /api call of that tab answered 401.
+func CookieName(port string) string { return TokenCookie + "_" + port }
+
+// cookieName is the token cookie of the serve r reached: named for the
+// port it was accepted on, which is serve's own behind a proxy too.
+func cookieName(r *http.Request) string {
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if _, port, err := net.SplitHostPort(a.String()); err == nil {
+			return CookieName(port)
+		}
+	}
+	return TokenCookie
+}
 
 // Guard wraps the API with the checks a local server with no login
 // needs: a Host that is this machine (DNS rebinding), no cross-origin
@@ -43,7 +62,7 @@ func Guard(h http.Handler, token string, remote bool, host string) http.Handler 
 		}
 		if r.URL.Path == "/" && loop && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			http.SetCookie(w, &http.Cookie{
-				Name: TokenCookie, Value: token, Path: "/",
+				Name: cookieName(r), Value: token, Path: "/",
 				HttpOnly: true, SameSite: http.SameSiteStrictMode,
 			})
 		}
@@ -55,6 +74,8 @@ func hasToken(r *http.Request, token string) bool {
 	got := ""
 	if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
 		got = strings.TrimPrefix(a, "Bearer ")
+	} else if c, err := r.Cookie(cookieName(r)); err == nil {
+		got = c.Value
 	} else if c, err := r.Cookie(TokenCookie); err == nil {
 		got = c.Value
 	}
