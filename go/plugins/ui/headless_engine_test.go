@@ -48,6 +48,37 @@ func TestHeadlessJSONForwardsCallDelta(t *testing.T) {
 	}
 }
 
+// Under --json a done carries running, jobs and wake: serve reads them to
+// keep a background agent whose calls became jobs in its running slot
+// and unreported, and dropping it made every interim close look final.
+func TestHeadlessJSONDoneCarriesRunning(t *testing.T) {
+	var out bytes.Buffer
+	oldOut, oldJSON := hlOut, HeadlessJSON
+	hlOut, HeadlessJSON = &out, true
+	defer func() { hlOut, HeadlessJSON = oldOut, oldJSON }()
+
+	hlPending.Store(2)
+	defer hlPending.Store(0)
+	hlPrint(Event{Kind: "done", Data: map[string]any{"running": 1, "jobs": 2, "files": []string{"a.go"}}})
+	hlPrint(Event{Kind: "done", Data: map[string]any{"wake": true}})
+	var got []map[string]any
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(l), &obj); err != nil {
+			t.Fatalf("line %q: %v", l, err)
+		}
+		if obj["kind"] == "done" {
+			got = append(got, obj)
+		}
+	}
+	if len(got) != 2 || got[0]["running"] != 1.0 || got[0]["jobs"] != 2.0 || got[1]["wake"] != true {
+		t.Fatalf("done lines = %v", got)
+	}
+	if _, ok := got[0]["files"]; ok {
+		t.Fatalf("done line carries more than serve reads: %v", got[0])
+	}
+}
+
 // A wake turn's done was never paid for by a stdin line: it must not
 // take one off, or the drain ends while a typed line still runs.
 func TestHeadlessWakeDoneKeepsPending(t *testing.T) {

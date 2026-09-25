@@ -697,6 +697,48 @@ func (s *Store) openTurn() bool {
 	return open
 }
 
+// deadJobs are the "finished" entries for typed jobs started and never
+// finished, in the order they started. Job ids restart with the
+// process, so a later start of an id replaces the earlier one.
+func (s *Store) deadJobs() []map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	open := map[string]map[string]any{}
+	var order []string
+	for _, e := range s.entries {
+		ev, _ := e.Data["event"].(string)
+		if e.Kind != "job" || ev == "" {
+			continue
+		}
+		id := fmt.Sprint(e.Data["id"])
+		switch ev {
+		case "started":
+			if _, ok := open[id]; !ok {
+				order = append(order, id)
+			}
+			open[id] = e.Data
+		case "finished":
+			delete(open, id)
+		}
+	}
+	var out []map[string]any
+	for _, id := range order {
+		d, ok := open[id]
+		if !ok {
+			continue
+		}
+		end := map[string]any{"id": d["id"], "event": "finished"}
+		for _, k := range []string{"cmd", "call"} {
+			if v, ok := d[k]; ok {
+				end[k] = v
+			}
+		}
+		out = append(out, end)
+		delete(open, id)
+	}
+	return out
+}
+
 // onlyMeta reports whether nothing but the "meta" entry was recorded.
 func (s *Store) onlyMeta() bool {
 	s.mu.Lock()
@@ -814,6 +856,14 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		// loop's [cancelled] note instead of an unanswered prompt it
 		// might pick back up. "interrupted" tells the UI it was not esc.
 		s.Append("cancelled", map[string]any{"interrupted": true})
+	}
+	if !created {
+		// A job runs in the process that started it, so one the log
+		// never saw finish died with that process. Unrecorded, the
+		// resumed session listed it as running (serve's RunningJobs).
+		for _, j := range s.deadJobs() {
+			s.Append("job", j)
+		}
 	}
 	// A person resuming a session (TUI, or serve's child for a prompt
 	// sent from the web) makes it theirs, even one born headless: an

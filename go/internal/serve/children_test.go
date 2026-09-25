@@ -540,3 +540,84 @@ func TestAMessagedChildHoldsARunningSlot(t *testing.T) {
 		t.Fatalf("stopChild = %q %v, want running", was, err)
 	}
 }
+
+// An agent whose turn closed with its calls adopted as jobs is still
+// working: serve keeps its running slot, so its row says running (the
+// Work dialog offers Stop) rather than done while the parent's count
+// says one is running.
+func TestAWaitingChildRowSaysRunning(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t, envTurns+"=1")
+	f.seed(t, "parent")
+	_, body := f.do(t, "POST", "/api/sessions", `{"prompt":"WAITJOB","spawnedBy":"parent","maxRunning":1}`)
+	id := rowOf(t, body)["id"].(string)
+	waitFor(t, "the interim close", func() bool {
+		es := mustEntries(t, f.fixture, id)
+		return len(es) > 0 && es[len(es)-1].Kind == "done"
+	})
+	time.Sleep(200 * time.Millisecond) // the done event reaches serve
+	if r, _, _ := f.sup.agentCounts("parent"); r != 1 {
+		t.Fatalf("running = %d while the agent waits on its job, want 1", r)
+	}
+	_, body = f.do(t, "GET", "/api/sessions/parent/children", "")
+	kids, _ := body["children"].([]any)
+	if len(kids) != 1 || kids[0].(map[string]any)["status"] != "running" {
+		t.Fatalf("children = %v, want the waiting agent running", kids)
+	}
+}
+
+// Stop on an agent waiting on its job ends it: the process exits and
+// the job with it, so its transcript and its report say stopped. They
+// said finished, with the interim reply, as if nothing was cut short.
+func TestStopAWaitingChildSaysStopped(t *testing.T) {
+	t.Parallel()
+	f := childFixture(t)
+	id, _, err := f.sup.CreateChild(CreateOptions{Prompt: "WAITJOB", SpawnedBy: "parent"}, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the interim close", func() bool {
+		es := mustEntries(t, f, id)
+		return len(es) > 0 && es[len(es)-1].Kind == "done"
+	})
+	time.Sleep(200 * time.Millisecond) // the done event reaches serve
+	if was, err := f.sup.stopChild(id); err != nil || was != "running" {
+		t.Fatalf("stopChild = %q %v, want running", was, err)
+	}
+	got := waitNotices(t, f, "parent", 1)
+	if len(got) != 1 || !strings.Contains(got[0], " stopped]") {
+		t.Fatalf("notices = %q, want one stopped", got)
+	}
+	if st, _ := StatusOf(mustEntries(t, f, id), f.sup.Live(id)); st != StatusStopped {
+		t.Fatalf("status = %s, want stopped", st)
+	}
+}
+
+// A waiting agent messaged again answers, and the parent is told, but
+// the job its earlier turn adopted still runs: the agent keeps its
+// running slot, so the queue does not start another past the cap.
+func TestAChildCloseBesideAJobKeepsItsSlot(t *testing.T) {
+	t.Parallel()
+	f := childFixture(t)
+	id, _, err := f.sup.CreateChild(CreateOptions{Prompt: "WAITJOB", SpawnedBy: "parent"}, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the interim close", func() bool {
+		es := mustEntries(t, f, id)
+		return len(es) > 0 && es[len(es)-1].Kind == "done"
+	})
+	later, queued, err := f.sup.CreateChild(CreateOptions{Prompt: "later", SpawnedBy: "parent"}, 0, 1)
+	if err != nil || !queued {
+		t.Fatalf("second CreateChild = %q %v %v, want queued", later, queued, err)
+	}
+	if err := f.sup.Send(id, "BESIDE"); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitNotices(t, f, "parent", 1); len(got) != 1 || !strings.Contains(got[0], "finished] echo BESIDE") {
+		t.Fatalf("notices = %q, want the BESIDE reply once", got)
+	}
+	if r, q, _ := f.sup.agentCounts("parent"); r != 1 || q != 1 {
+		t.Fatalf("running, queued = %d, %d beside the job, want 1, 1", r, q)
+	}
+}

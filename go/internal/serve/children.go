@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -335,9 +336,14 @@ func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 			// the running cap.
 			return
 		}
+		go s.report(id, m.SpawnedBy, kind)
+		if kind == "done" && num(extra["jobs"]) > 0 {
+			// A final reply, but jobs an earlier turn adopted still run:
+			// the agent is working until their wake turn closes.
+			return
+		}
 		// Not "error": the loop writes it MID-turn, several per turn.
 		delete(s.running, id)
-		go s.report(id, m.SpawnedBy, kind)
 		go s.drainQueue()
 	}
 }
@@ -394,6 +400,20 @@ func LastTurn(entries []history.Entry) (reply string, errored bool) {
 // The event is only the trigger: the closing entry on disk decides, so
 // the reply the parent reads is the one the child actually recorded.
 func (s *Supervisor) report(id, parent, trigger string) {
+	if trigger == "exit" {
+		s.mu.Lock()
+		stopped := s.waitStops[id]
+		delete(s.waitStops, id)
+		s.mu.Unlock()
+		// The process is gone, so nothing else writes its file. Only a
+		// wait still closed by its done: a turn that opened in the
+		// meantime was cancelled by the stop itself.
+		if entries, err := s.Entries(id); stopped && err == nil {
+			if st, _ := StatusOf(entries, false); st == StatusDone {
+				_, _ = history.AppendFile(filepath.Join(s.opt.HistDir, id+".jsonl"), "cancelled", nil)
+			}
+		}
+	}
 	deadline := time.Now().Add(reportWait)
 	var key int64
 	var word string
@@ -593,6 +613,13 @@ func (s *Supervisor) agentCounts(parent string) (running, queued, total int) {
 	return running, queued, total
 }
 
+// holdsSlot says whether a background agent is counted running.
+func (s *Supervisor) holdsSlot(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running[id]
+}
+
 // queuedIDs are the children waiting for a slot, oldest first.
 func (s *Supervisor) queuedIDs() []string {
 	s.mu.Lock()
@@ -680,6 +707,16 @@ func (s *Supervisor) stopChild(id string) (string, error) {
 	s.mu.Unlock()
 	if !running || !live {
 		return "idle", nil
+	}
+	// A slot with no turn open is an agent waiting on jobs its turn
+	// adopted: SIGINT ends the idle process and the jobs with it, and
+	// nothing it writes says so. Its exit records the stop (report).
+	if entries, err := s.Entries(id); err == nil {
+		if st, _ := StatusOf(entries, true); st == StatusDone {
+			s.mu.Lock()
+			s.waitStops[id] = true
+			s.mu.Unlock()
+		}
 	}
 	if err := s.Interrupt(id); err != nil {
 		return "", err

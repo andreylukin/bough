@@ -260,6 +260,9 @@ type Supervisor struct {
 	queue      []queuedChild
 	running    map[string]bool
 	maxRunning int
+	// waitStops are children stopped while they waited on their jobs
+	// with no turn open: their exit is recorded as the stop (report).
+	waitStops map[string]bool
 
 	// spawnArgs is the extra argv and env a Create asked for, per id, so
 	// a respawn through ensure starts the session the same way.
@@ -315,6 +318,7 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		meta:      map[string]SessionMeta{},
 		mains:     map[string]string{},
 		running:   map[string]bool{},
+		waitStops: map[string]bool{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {

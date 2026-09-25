@@ -1041,6 +1041,18 @@ func (a *actorState) doneData(running int, stop string) map[string]any {
 	if running > 0 {
 		data["running"] = running
 	}
+	// Jobs earlier turns adopted that still run: this close is final,
+	// but the session is not done working, and serve keeps a background
+	// agent's running slot until they end.
+	jobs := -running
+	for id, ad := range a.adopted {
+		if _, out := a.m.Outstanding[id]; out && !ad.ended {
+			jobs++
+		}
+	}
+	if jobs > 0 {
+		data["jobs"] = jobs
+	}
 	if a.wake {
 		data["wake"] = true
 	}
@@ -1118,9 +1130,12 @@ func (a *actorState) cancelTurn(stop string) {
 			parked[id] = true
 		}
 	}
-	// Completions the model has not been shown yet are parked too.
+	// Completions the model has not been shown yet are parked too, a
+	// job's that ended while this turn was open included: it reported
+	// into the turn being cancelled, and unparked it woke the model into
+	// a turn of its own right after the cancel.
 	for _, r := range append(append([]string(nil), a.m.Reasons...), a.m.TurnReasons...) {
-		if kind, id, _ := strings.Cut(r, ":"); kind == "call" && a.adopted[id] == nil {
+		if kind, id, _ := strings.Cut(r, ":"); kind == "call" && (a.adopted[id] == nil || a.adopted[id].ended) {
 			parked[id] = true
 		}
 	}
