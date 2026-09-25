@@ -6233,7 +6233,7 @@ export default function App() {
                // Until Archived has loaded, a failed read is its read: the
                // section says so with its own Retry, and a second notice
                // over the list said the same failure twice.
-               loadErr={archived && !rowsAll ? null : loadErr} onRetry={() => void refresh()} />
+               loadErr={archived && !rowsAll ? null : loadErr} onRetry={() => { if (loadedAt === null) setLoadErr(null); void refresh(); }} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">
