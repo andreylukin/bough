@@ -1,0 +1,249 @@
+---
+# The child's admit is where this flow ends (ExpandAt has no successor):
+# that is the goal state, not a deadlock.
+deadlock_detection: false
+---
+
+# An "@" file mention from the composer's picker to what the model is sent
+# (go/tests/model/README.md). skills_mentions.fizz stops at the draft; this
+# flow follows a picked path through Send to the child's admit, where
+# loop.ExpandAt turns "@path" into a "[file: path]" attachment block.
+#
+# The code it is about:
+#   web/src/mention.tsx useFiles   GET /api/files?q&session, 140 ms after the
+#                                  last key; the reply is tagged with its
+#                                  token and a cleaned-up effect's reply is
+#                                  dropped (live = false)
+#   serve/files.go API.files       searches the session's cwd as history
+#                                  lists it (a project session's primary
+#                                  worktree), else serve's home
+#   plugins/loop/loop.go ExpandAt  regular files under the child's root only,
+#                                  64 KiB each, then a "[truncated ...]" note
+#   unreal/session/actor.go admit  ExpandAt(line, the session's working
+#                                  dir: the primary worktree in an orb)
+#   web/src/app.tsx <Thread key=row.id>  switching sessions remounts the
+#                                  composer, so the old picker unmounts
+#
+# This spec is the flow as it must behave. Where the product falls short
+# today, the comment on the action says so; the model-based tests are what
+# show it.
+#
+# Fields, all on the one Mention role:
+#   view      the open session: none | a | b. b is the session switched to
+#             while a's picker was still asking.
+#   orb       the open session is a project (orb) session. Its child chdirs
+#             into the primary worktree; its recorded cwd is where it was
+#             started (~).
+#   picker    none | debouncing (the 140 ms after a key) | fetching |
+#             hung (the server took the request and never answers) |
+#             results | error (a "Couldn't load files" line with Retry).
+#   stale     a reply to an older token, or to the other session, is still
+#             on the wire.
+#   shown     whose rows the picker shows: "" | current | stale.
+#   searched  the root the shown rows were searched under: "" |
+#             expand_root (the root the child expands @paths against) |
+#             other.
+#   picked    what the draft's one mention names: none | file | dir |
+#             big (a file over ExpandAt's 64 KiB).
+#   dirNoted  the picker said, before the pick, that a directory attaches
+#             nothing.
+#   msg       the message: none | sent (the child has it, admit pending) |
+#             expanded | truncated | not_expanded.
+#
+# Scope: one mention per message and one message per walk; an empty
+# result list is left out (nothing to pick, the same terminal as Dismiss);
+# returning to session a after the switch is draft persistence
+# (localStorage per session), not this flow, so b is only entered once.
+
+role Mention:
+    action Init:
+        self.view = "none"
+        self.orb = False
+        self.picker = "none"
+        self.stale = False
+        self.shown = ""
+        self.searched = ""
+        self.picked = "none"
+        self.dirNoted = False
+        self.msg = "none"
+
+    # --- which session is open ---------------------------------------------
+
+    # Two actions, not a oneof: fizzbee-mbt checks a step against the fork's
+    # intermediate node.
+    atomic action OpenLocal:
+        require self.view == "none"
+        self.view = "a"
+        self.orb = False
+
+    atomic action OpenOrb:
+        require self.view == "none"
+        self.view = "a"
+        self.orb = True
+
+    # --- the picker ------------------------------------------------------
+
+    # "@" starting a word: a bare "@" asks too (the top of the tree).
+    atomic action TypeAt:
+        require self.view != "none" and self.picker == "none" and self.picked == "none" and self.msg == "none"
+        self.picker = "debouncing"
+
+    # The 140 ms debounce ran out with no newer key: the request goes.
+    atomic fair<strong> action Debounced:
+        require self.picker == "debouncing"
+        self.picker = "fetching"
+
+    # The server answers the current token, searched under the root the
+    # child expands against. For an orb session both are the primary
+    # worktree; admit used to expand against the engine's cwd from before
+    # the orb moved the process there ($HOME), so a picked file went to
+    # the model as bare text (the MBT stage's finding).
+    atomic fair<strong> action ReplyArrives:
+        require self.picker == "fetching"
+        self.picker = "results"
+        self.shown = "current"
+        self.searched = "expand_root"
+
+    atomic fair action ReplyFails:
+        require self.picker == "fetching"
+        self.picker = "error"
+
+    # The server took the request and never answers (a walk of a huge home
+    # that git does not cover, a wedged serve). Not fair: it is the world
+    # choosing.
+    atomic action ServerHangs:
+        require self.picker == "fetching"
+        self.picker = "hung"
+
+    # The client gives up on a hung read and says so, with Retry. Today
+    # useFiles' fetch has no timeout (useSkills has 15 s): the picker says
+    # "Finding files..." forever.
+    atomic fair<strong> action TimedOut:
+        require self.picker == "hung"
+        self.picker = "error"
+
+    atomic action Retry:
+        require self.picker == "error"
+        self.picker = "debouncing"
+
+    # Another letter of the token. A request already sent is abandoned, not
+    # cancelled: its reply can still arrive. Rows of an older token are not
+    # shown (useFiles keys them by token).
+    atomic action TypeToken:
+        require self.picker != "none"
+        if self.picker == "fetching":
+            self.stale = True
+        self.picker = "debouncing"
+        self.shown = ""
+        self.searched = ""
+
+    # Escape, or a blur: the picker goes; an in-flight reply is abandoned.
+    atomic action Dismiss:
+        require self.picker != "none"
+        if self.picker == "fetching":
+            self.stale = True
+        self.picker = "none"
+        self.shown = ""
+        self.searched = ""
+
+    # Another session opened while this one's picker was still asking. The
+    # composer remounts on the new row with its own (empty) draft; the
+    # other session is the same kind as this one.
+    atomic action SwitchSession:
+        require self.view == "a" and self.picker in ["debouncing", "fetching", "hung"]
+        if self.picker == "fetching":
+            self.stale = True
+        self.view = "b"
+        self.picker = "none"
+        self.shown = ""
+        self.searched = ""
+        self.picked = "none"
+        self.dirNoted = False
+
+    # The abandoned reply lands. It is dropped: nothing on screen changes.
+    atomic action StaleReply:
+        require self.stale
+        self.stale = False
+
+    # Enter, Tab or a click replaces the token with "@<path> ".
+    atomic action PickFile:
+        require self.picker == "results"
+        self.picker = "none"
+        self.shown = ""
+        self.searched = ""
+        self.picked = "file"
+
+    atomic action PickBig:
+        require self.picker == "results"
+        self.picker = "none"
+        self.shown = ""
+        self.searched = ""
+        self.picked = "big"
+
+    # A directory row. ExpandAt attaches regular files only, so the picker
+    # must say a directory attaches nothing. Today the row says only
+    # "directory" and the "@dir" goes to the model as bare text.
+    atomic action PickDir:
+        require self.picker == "results"
+        self.picker = "none"
+        self.shown = ""
+        self.searched = ""
+        self.picked = "dir"
+        self.dirNoted = True
+
+    # --- Send, then the child's admit --------------------------------------
+
+    # Enter with no picker owning it.
+    atomic action Send:
+        require self.picker == "none" and self.picked != "none" and self.msg == "none"
+        self.msg = "sent"
+
+    # admit: ExpandAt over the line, against the child's root.
+    atomic fair action ExpandAt:
+        require self.msg == "sent"
+        if self.picked == "file":
+            self.msg = "expanded"
+        elif self.picked == "big":
+            self.msg = "truncated"
+        else:
+            self.msg = "not_expanded"
+
+action Init:
+    mention = Mention()
+
+# The picker only offers what Send attaches, or says a directory attaches
+# nothing: a picked file always reaches the model (whole, or cut with a
+# note), and a mention that attaches nothing was announced as such.
+always assertion OffersWhatSendAttaches:
+    if mention.msg == "not_expanded" and not mention.dirNoted:
+        return False
+    if mention.picked == "file" and mention.msg not in ["none", "sent", "expanded"]:
+        return False
+    if mention.picked == "big" and mention.msg not in ["none", "sent", "truncated"]:
+        return False
+    return True
+
+# The picker searches the root the child expands against.
+always assertion SearchesExpandRoot:
+    return mention.searched in ["", "expand_root"]
+
+# A reply for another session or an older token is never shown.
+always assertion NeverShowsStale:
+    return mention.shown != "stale"
+
+# Rows are on screen only as results, and results always have rows.
+always assertion ResultsHaveRows:
+    return (mention.picker == "results") == (mention.shown != "")
+
+# A request that went out always resolves: rows, or an error with Retry.
+always eventually assertion FetchingResolves:
+    return mention.picker not in ["fetching", "hung"]
+
+# An open @ picker ends in results or an error with Retry, never an
+# indefinite wait.
+always eventually assertion PickerAnswers:
+    return mention.picker not in ["debouncing", "fetching", "hung"]
+
+# A sent message is always admitted.
+always eventually assertion SentIsAdmitted:
+    return mention.msg != "sent"

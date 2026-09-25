@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -466,7 +467,7 @@ func (a *actorState) admit(line string) (text, blocked string) {
 	}
 	var b strings.Builder
 	b.WriteString(line)
-	for _, block := range loop.ExpandAt(line, a.r.d.Cwd) {
+	for _, block := range loop.ExpandAt(line, a.expandRoot()) {
 		b.WriteString("\n\n" + block)
 	}
 	// The harness takes no user images: a pasted path becomes a pointer
@@ -483,6 +484,22 @@ func (a *actorState) admit(line string) (text, blocked string) {
 		}
 	}
 	return b.String(), ""
+}
+
+// expandRoot is where an "@path" resolves: the directory the session
+// works in. d.Cwd is taken when the engine mounts, and in a project
+// session the orb row mounts after it and moves the process into the
+// primary worktree, so d.Cwd is still $HOME there: every @ the picker
+// offered (it searches the worktree) went to the model as bare text.
+func (a *actorState) expandRoot() string {
+	if a.r.d.Orb != nil {
+		if _, ok := a.r.d.Orb(); ok {
+			if wd, err := os.Getwd(); err == nil {
+				return wd
+			}
+		}
+	}
+	return a.r.d.Cwd
 }
 
 func skillName(block string) string {
