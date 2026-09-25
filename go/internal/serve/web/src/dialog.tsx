@@ -157,9 +157,9 @@ export function DialogHost({ seed }: { seed?: { req: Req; text: string } } = {})
   useEffect(() => {
     if (!req) return;
     requestAnimationFrame(() => {
-      if (req.kind === "text") { input.current?.focus(); input.current?.select(); }
-      // A safe confirm starts on Cancel: Enter alone never archives.
-      else (req.kind === "keys" || (req.kind === "confirm" && req.safe) ? cancel : ok).current?.focus();
+      const at = openFocus(req);
+      if (at === "input") { input.current?.focus(); input.current?.select(); }
+      else (at === "cancel" ? cancel : ok).current?.focus();
     });
   }, [req]);
 
@@ -201,6 +201,13 @@ export function DialogHost({ seed }: { seed?: { req: Req; text: string } } = {})
                 onDismiss={dismiss} onFinish={finish} refs={{ box, input, ok, cancel }} />,
     document.body,
   );
+}
+
+/** The control a request opens on: pure, so a render test can ask what the effect will focus. */
+export function openFocus(req: Req): "input" | "cancel" | "ok" {
+  if (req.kind === "text") return "input";
+  // A safe confirm starts on Cancel: Enter alone never archives.
+  return req.kind === "keys" || (req.kind === "confirm" && req.safe) ? "cancel" : "ok";
 }
 
 /**
@@ -270,7 +277,10 @@ export function DialogView({ req, text, saving, failed, onText: setText, onSubmi
             <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
                     onClick={() => finish(a)}>{a}</button>
           )) : <button ref={ok} className={"btn " + (req.danger ? "btn-danger" : "btn-primary")}
-                  disabled={blocked || saving} onClick={submit}>
+                  // Busy, not disabled, while saving: disabling the focused
+                  // button dropped focus to <body>, so a refused save left
+                  // the keyboard nowhere. submit ignores a press meanwhile.
+                  disabled={blocked} aria-disabled={saving || undefined} onClick={submit}>
             {saving ? req.action.replace(/e?$/, "ing…") : req.action}
           </button>}
         </div>

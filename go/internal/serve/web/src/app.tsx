@@ -277,6 +277,11 @@ export function focusAppOnRoute(doc: Document) {
   doc.querySelector<HTMLElement>(".app")?.focus({ preventScroll: true });
 }
 
+/** A session's archive confirm, as askConfirm's arguments: safe, so it opens on Cancel. */
+export function archiveAsk(r: Row): [string, string, { action: string; safe: boolean }] {
+  return ["Archive this session?", `“${sessionTitle(r)}” leaves the list. It stays under Archived and can be restored.`, { action: "Archive", safe: true }];
+}
+
 /** Back and forward keep their slot with no history, so the icons after them never shift. */
 export function HistoryArrows({ back, forward }: { back: boolean; forward: boolean }) {
   const hide = !back && !forward;
@@ -5206,6 +5211,9 @@ export default function App() {
   // opened never overwrites the one that includes it.
   const readSeq = useRef(0);
   const projectsAt = useRef(0);
+  // The projects list too: a poll's read that left before a delete must
+  // not land after the delete's own read and bring the project back.
+  const projectsSeq = useRef(0);
   // A poll never stacks on a read still out: one list request at a time.
   const inFlight = useRef(false);
   const refresh = useCallback(async (poll = false) => {
@@ -5216,7 +5224,9 @@ export default function App() {
     // An action's read is awaited whole: a dialog that closes on it must
     // hand focus back to the list as it now is, not the one it replaces.
     let projectsRead: Promise<void> | undefined;
-    if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now(); projectsRead = api.projects().then(setProjects, () => {}); }
+    if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now();
+      const pseq = ++projectsSeq.current;
+      projectsRead = api.projects().then((ps) => { if (pseq === projectsSeq.current) setProjects(ps); }, () => {}); }
     const seq = ++readSeq.current;
     inFlight.current = true;
     try {
@@ -5243,12 +5253,11 @@ export default function App() {
   const lastRefresh = useRef(refresh);
   useEffect(() => {
     // The first read is the mount's; a later change (Archived) reads at once too.
-    // Only streaming flipping on skips it: opening Archived with a session
-    // open sat on "Loading archived…" until the 12 s poll.
-    const archivedChanged = lastRefresh.current !== refresh;
-    lastRefresh.current = refresh;
-    if (!mountedRefresh.current || !streaming || archivedChanged) void refresh();
+    // Only a stream opening waits for the poll: opening Archived with a
+    // session open used to say "Loading archived…" for the whole 12 s.
+    if (!mountedRefresh.current || !streaming || lastRefresh.current !== refresh) void refresh();
     mountedRefresh.current = true;
+    lastRefresh.current = refresh;
     // A hidden tab does not poll; coming back reads at once.
     const t = setInterval(() => { if (!document.hidden) void refresh(true); }, streaming ? POLL_MS * 3 : POLL_MS);
     const back = () => { if (!document.hidden) void refresh(true); };
@@ -5741,8 +5750,7 @@ export default function App() {
     if (r.archived) return act(async () => { await api.unarchive(r.id); mark(false); }, "unarchive");
     const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
     if (n === 0) {
-      const ok = await askConfirm("Archive this session?", `“${sessionTitle(r)}” leaves the list. It stays under Archived and can be restored.`,
-        { action: "Archive", safe: true });
+      const ok = await askConfirm(...archiveAsk(r));
       return ok ? act(async () => { await api.archive(r.id); mark(true); }, "archive") : false;
     }
     const pick = await askChoice(`Archive ${sessionTitle(r)}?`,
