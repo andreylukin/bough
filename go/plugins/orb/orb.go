@@ -22,6 +22,7 @@ import (
 	"github.com/andreylukin/bough/internal/container"
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/loop"
@@ -152,6 +153,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("orb: home dir: %w", err)
 	}
+	// Model tests hold the row here, the history written, before it reads
+	// project.yml again.
+	testhold.At("orb-load." + slug)
 	p, err := projectdef.Load(home, slug)
 	if err != nil {
 		return fmt.Errorf("orb: open %s: %w", slug, err)

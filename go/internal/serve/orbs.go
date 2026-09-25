@@ -31,6 +31,7 @@ import (
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/google/uuid"
 )
@@ -463,6 +464,8 @@ func (a *API) putOrbFile(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	// Model tests hold a save here, past the project check.
+	testhold.At("save-checked." + p.Slug + "." + name)
 	if err := projectdef.WriteFile(a.sup.Home(), p.Slug, name, body.Text); err != nil {
 		// A validation list is for the person at the editor; send it bare.
 		if inv := (*projectdef.Invalid)(nil); errors.As(err, &inv) {
