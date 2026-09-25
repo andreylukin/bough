@@ -26,10 +26,19 @@ func secretEnv(t *testing.T) (home string, stored map[string]string) {
 		t.Fatal(err)
 	}
 	stored = map[string]string{}
-	oldW, oldH := secrets.KeychainWrite, userHome
+	oldR, oldW, oldD, oldH := secrets.KeychainRead, secrets.KeychainWrite, secrets.KeychainDelete, userHome
+	secrets.KeychainRead = func(service string) (string, error) {
+		if v, ok := stored[service]; ok {
+			return v, nil
+		}
+		return "", secrets.ErrNotFound
+	}
 	secrets.KeychainWrite = func(service, value string) error { stored[service] = value; return nil }
+	secrets.KeychainDelete = func(service string) error { delete(stored, service); return nil }
 	userHome = func() (string, error) { return home, nil }
-	t.Cleanup(func() { secrets.KeychainWrite, userHome = oldW, oldH })
+	t.Cleanup(func() {
+		secrets.KeychainRead, secrets.KeychainWrite, secrets.KeychainDelete, userHome = oldR, oldW, oldD, oldH
+	})
 	return home, stored
 }
 
@@ -76,7 +85,9 @@ func TestSecretStoresAndRedacts(t *testing.T) {
 		}
 	}
 	es := hist.all()
-	if len(es) != 2 || es[0].Data["secret"] != true || es[1].Data["text"] != "[secret stored]" || es[1].Data["secret"] != true {
+	// The answer line says the value arrived, not that it was stored:
+	// it is written before the keychain or project.yml is touched.
+	if len(es) != 2 || es[0].Data["secret"] != true || es[1].Data["text"] != "[secret received]" || es[1].Data["secret"] != true {
 		t.Fatalf("history entries = %+v", es)
 	}
 	p, err := projectdef.Load(home, "demo")
@@ -107,22 +118,58 @@ func TestSecretStoreErrorHasNoValue(t *testing.T) {
 
 func TestSecretDeclinedAndNoProject(t *testing.T) {
 	_, stored := secretEnv(t)
-	_, a, code, _, _ := mount(t, nil)
+	_, a, code, hist, _ := mount(t, nil)
 	fn := code.tools["secret"].(func(string, string, ...string) (string, error))
 	if _, err := fn("TOKEN", "why"); err == nil || err.Error() != "secret: pass the project slug" {
 		t.Fatalf("no project: err = %v", err)
 	}
-	for _, ans := range []string{"(declined)", ""} {
+	for _, ans := range []string{"(declined)", "", " \n"} {
 		answerNext(t, a, ans)
 		if _, err := fn("TOKEN", "why", "demo"); err == nil || err.Error() != "secret: user declined" {
 			t.Fatalf("answer %q: err = %v", ans, err)
 		}
 		a.emit = func(Event) {}
+		// The transcript says declined, never "[secret stored]".
+		es := hist.all()
+		if last := es[len(es)-1]; last.Kind != "ask/answer" || last.Data["text"] != "(declined)" {
+			t.Fatalf("answer %q: history ends %+v", ans, last)
+		}
 	}
 	if len(stored) != 0 {
 		t.Fatalf("declined ask stored %v", stored)
 	}
 	if _, err := fn("bad-name", "why", "demo"); err == nil {
 		t.Fatal("invalid name accepted")
+	}
+}
+
+// A SetSecret that fails (the project was deleted while the question was
+// open) must not leave the value it just stored in the keychain with
+// nothing referencing it; a value that was there before is put back.
+func TestSecretSetFailureUndoesTheStore(t *testing.T) {
+	for _, prev := range []string{"", "old-value"} {
+		home, stored := secretEnv(t)
+		if prev != "" {
+			stored["bough/demo/TOKEN"] = prev
+		}
+		write := secrets.KeychainWrite
+		secrets.KeychainWrite = func(service, v string) error {
+			// The person deletes the project between the store and SetSecret.
+			os.RemoveAll(filepath.Join(home, ".bough", "projects", "demo"))
+			return write(service, v)
+		}
+		_, a, code, _, _ := mount(t, nil)
+		fn := code.tools["secret"].(func(string, string, ...string) (string, error))
+		answerNext(t, a, "tok-new")
+		if _, err := fn("TOKEN", "why", "demo"); err == nil || strings.Contains(err.Error(), "tok-new") {
+			t.Fatalf("prev %q: err = %v", prev, err)
+		}
+		got, ok := stored["bough/demo/TOKEN"]
+		if prev == "" && ok {
+			t.Fatalf("keychain kept the unreferenced value: %v", stored)
+		}
+		if prev != "" && got != prev {
+			t.Fatalf("keychain = %q, want the earlier %q back", got, prev)
+		}
 	}
 }

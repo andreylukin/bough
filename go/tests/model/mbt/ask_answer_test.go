@@ -268,7 +268,7 @@ func (a *askAnswerAdapter) GetState() (map[string]any, error) {
 				msgAnswered = true
 			case q[str(e.Data["id"])] == "q1" && !strings.HasPrefix(text, "ans-q1-"):
 				wrong = true
-			case q[str(e.Data["id"])] == "q2" && text != "[secret stored]":
+			case q[str(e.Data["id"])] == "q2" && text != "[secret received]":
 				wrong = true
 			}
 		case "input":

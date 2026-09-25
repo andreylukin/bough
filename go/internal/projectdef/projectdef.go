@@ -370,30 +370,90 @@ func checkSecret(name, ref string) error {
 }
 
 // SetSecret points name at ref in the project's secrets, dropping an env
-// entry of the same name, and writes project.yml through WriteFile.
+// entry of the same name. Like SetName it edits the file rather than
+// marshalling Def back over it, which dropped every comment and
+// reordered every key: the document's nodes keep their comments.
 func SetSecret(home, slug, name, ref string) error {
-	p, err := Load(home, slug)
-	if err != nil {
+	if err := ValidSlug(slug); err != nil {
 		return err
 	}
-	if p.Def.Secrets == nil {
-		p.Def.Secrets = map[string]string{}
+	return locked(home, slug, func() error {
+		p, err := Load(home, slug)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(p.Dir, FileYAML)
+		old, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+		}
+		b, err := withSecret(old, name, ref)
+		if err != nil {
+			return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+		}
+		// A secret ref is not a host edit: skip CheckHost so a fresh skeleton
+		// (placeholder repo) or a vanished repo does not block storing it.
+		if _, err := Parse(b); err != nil {
+			return err
+		}
+		if err := atomicWrite(path, b, 0o644); err != nil {
+			return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+		}
+		return nil
+	})
+}
+
+// withSecret sets secrets.<name> to ref in the YAML document text and
+// removes env.<name>, keeping every other node and its comments.
+func withSecret(text []byte, name, ref string) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(text, &doc); err != nil {
+		return nil, err
 	}
-	p.Def.Secrets[name] = ref
-	delete(p.Def.Env, name)
-	b, err := yaml.Marshal(p.Def)
-	if err != nil {
-		return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+	if doc.Kind == 0 {
+		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	}
-	// A secret ref is not a host edit: skip CheckHost so a fresh skeleton
-	// (placeholder repo) or a vanished repo does not block storing it.
-	if _, err := Parse(b); err != nil {
-		return err
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("%s is not a mapping", FileYAML)
 	}
-	if err := atomicWrite(filepath.Join(Root(home), slug, FileYAML), b, 0o644); err != nil {
-		return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+	str := func(s string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s} }
+	value := func(m *yaml.Node, key string) (int, *yaml.Node) {
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			if m.Content[i].Value == key {
+				return i, m.Content[i+1]
+			}
+		}
+		return -1, nil
 	}
-	return nil
+	if _, env := value(root, "env"); env != nil && env.Kind == yaml.MappingNode {
+		if i, _ := value(env, name); i >= 0 {
+			env.Content = slices.Delete(env.Content, i, i+2)
+		}
+	}
+	_, secrets := value(root, "secrets")
+	if secrets == nil || secrets.Kind != yaml.MappingNode || secrets.Tag == "!!null" {
+		if i, _ := value(root, "secrets"); i >= 0 {
+			root.Content = slices.Delete(root.Content, i, i+2)
+		}
+		secrets = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content, str("secrets"), secrets)
+	}
+	if _, v := value(secrets, name); v != nil {
+		*v = *str(ref)
+	} else {
+		secrets.Content = append(secrets.Content, str(name), str(ref))
+	}
+	var out strings.Builder
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return []byte(out.String()), nil
 }
 
 // RepoName is the worktree directory name: Name, else the basename of the
@@ -600,7 +660,21 @@ func ReadFile(home, slug, name string) (string, error) {
 	return string(b), nil
 }
 
+// ErrStale is a save whose base is no longer what the file holds:
+// another writer changed it since the editor loaded it.
+var ErrStale = errors.New("projectdef: the file changed since it was loaded; reload it and redo the edit")
+
+// WriteFileIf is WriteFile for an editor: base is the text it loaded,
+// and the save is refused with ErrStale unless the file still holds it.
+func WriteFileIf(home, slug, name, base, text string) error {
+	return writeFile(home, slug, name, &base, text)
+}
+
 func WriteFile(home, slug, name, text string) error {
+	return writeFile(home, slug, name, nil, text)
+}
+
+func writeFile(home, slug, name string, base *string, text string) error {
 	if err := checkName(slug, name); err != nil {
 		return err
 	}
@@ -608,6 +682,22 @@ func WriteFile(home, slug, name, text string) error {
 	if _, err := os.Stat(dir); err != nil {
 		return fmt.Errorf("projectdef: write %s/%s: %w", slug, name, err)
 	}
+	return locked(home, slug, func() error {
+		if base != nil {
+			// A file the editor found missing loads as "".
+			cur, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("projectdef: write %s/%s: %w", slug, name, err)
+			}
+			if string(cur) != *base {
+				return ErrStale
+			}
+		}
+		return writeLocked(home, slug, dir, name, text)
+	})
+}
+
+func writeLocked(home, slug, dir, name, text string) error {
 	path := filepath.Join(dir, name)
 	if name == FileYAML {
 		d, err := Parse([]byte(text))
@@ -697,18 +787,20 @@ func SetName(home, slug, name string) error {
 		return fmt.Errorf("projectdef: set name %s: %q is not a name (one line, not empty)", slug, name)
 	}
 	path := filepath.Join(Root(home), slug, FileYAML)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("projectdef: set name %s: %w", slug, err)
-	}
-	text := withNameLine(string(b), nameLine(name))
-	if _, err := Parse([]byte(text)); err != nil {
-		return err
-	}
-	if err := atomicWrite(path, []byte(text), 0o644); err != nil {
-		return fmt.Errorf("projectdef: set name %s: %w", slug, err)
-	}
-	return nil
+	return locked(home, slug, func() error {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("projectdef: set name %s: %w", slug, err)
+		}
+		text := withNameLine(string(b), nameLine(name))
+		if _, err := Parse([]byte(text)); err != nil {
+			return err
+		}
+		if err := atomicWrite(path, []byte(text), 0o644); err != nil {
+			return fmt.Errorf("projectdef: set name %s: %w", slug, err)
+		}
+		return nil
+	})
 }
 
 // nameLine renders `name: <x>` on one line, quoting whatever needs it.
