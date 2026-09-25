@@ -93,7 +93,12 @@ function useDirs(q: string, open: boolean, on: boolean): { folder: DirHit | null
   const [res, setRes] = useState<{ q: string; folder: DirHit | null; dirs: DirHit[]; home: string }>({ q: "", ...NO_DIRS });
   useEffect(() => {
     const typed = q.trim();
-    if (!on || !open || !isPathQuery(typed)) { setRes({ q: "", ...NO_DIRS }); return; }
+    // Every lookup starts from no answer, the one for this very path
+    // included: `~/wor` → Tab → `~/wor` again showed the first answer's
+    // rows while the new read was out, and when that read gave up (15 s)
+    // they turned into "No results" under the person's cursor.
+    setRes({ q: "", ...NO_DIRS });
+    if (!on || !open || !isPathQuery(typed)) return;
     const ctl = new AbortController();
     const t = setTimeout(() => {
       getJSON<{ folder?: DirHit; dirs?: DirHit[] }>("/api/dirs?path=" + encodeURIComponent(typed), ctl.signal)
@@ -366,6 +371,10 @@ export function Palette(props: PaletteProps) {
     opener.current = document.activeElement;
     field.current?.focus();
   }, [open, initialQuery]);
+
+  // Another mode is another list: a row picked in the last one (⌥N's
+  // "New project") must not come back as Enter's when that mode does.
+  useEffect(() => { setAtId(null); }, [mode]);
 
   useEffect(() => {
     if (!open) return;

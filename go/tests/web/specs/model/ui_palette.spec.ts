@@ -33,7 +33,6 @@ interface Ctx {
   search: Route[];   // held /api/search reads
   dirs: Route[];     // held /api/dirs reads
   post: Route | null; // the held create
-  ids: string[];     // sessions this walk made, for the trace check
   carrier: string;   // what the last read found up: pal | dialog | creating | row
 }
 
@@ -184,7 +183,6 @@ async function reset(c: Ctx): Promise<void> {
   queue(c.dir, name, { mode: 'ok', text: `noted: ${c.phrase}` });
   const res = await ok(await api.post('/api/sessions', { data: { cwd: home, prompt: 'hello' } }), 'create S');
   c.s = (await res.json()).session.id;
-  c.ids.push(c.s);
   await waitTaken(c.dir, name);
   await until('S never finished its first turn', async () => {
     const r = await api.get(`/api/sessions/${c.s}`);
@@ -205,7 +203,7 @@ modelTests<Ctx>({
 
   async init(page, serve) {
     test.info().setTimeout(60_000);
-    const c: Ctx = { page, serve, dir: controlDir(serve.home), s: '', phrase: '', turn: '', search: [], dirs: [], post: null, ids: [], carrier: 'row' };
+    const c: Ctx = { page, serve, dir: controlDir(serve.home), s: '', phrase: '', turn: '', search: [], dirs: [], post: null, carrier: 'row' };
     await reset(c);
     await page.addInitScript(() => { try { localStorage.setItem('bough:welcome-done', '1'); } catch { /* storage off */ } });
     await page.route((u) => u.pathname === '/api/search', (r) => { c.search.push(r); });
@@ -276,7 +274,6 @@ modelTests<Ctx>({
       if (!r) throw new Error('ui_palette: no create in flight');
       c.post = null;
       const res = await r.fetch();
-      if (res.status() === 201) c.ids.push((await res.json()).session.id);
       await r.fulfill({ response: res });
     },
 
@@ -310,7 +307,9 @@ modelTests<Ctx>({
       text: '.pal-group, .pal-label, .pal-hint, .pal-count, .pal-k, .pal-none-1, .pal-none-2, .pal-tip, .pal-mode, .pal-aim, .dlg-title, .updated-text',
     }, where);
   },
-  sessions: (c) => c.ids,
+  // The palette is the page's own state: no transcript records it, so
+  // there is nothing for the trace check to replay (and no projection).
+  sessions: () => [],
   async cleanup(c) {
     for (const r of [...c.search.splice(0), ...c.dirs.splice(0)]) await go(r);
     await c.post?.abort().catch(() => {});
