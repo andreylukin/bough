@@ -54,6 +54,12 @@ func FailedBuild(home, slug, hash string) bool {
 // sessions opened during one build cause one build. A waiter with a log
 // tails the running build's build.log into it.
 func EnsureImage(ctx context.Context, rt container.Runtime, home string, p projectdef.Project, log io.Writer) (string, error) {
+	// The hash reads setup.sh off disk, so it must read project.yml off
+	// disk too: a caller's p is from Prepare, and a repo added since with
+	// a step using its lockfile failed as "no repo tracks it".
+	if fresh, err := projectdef.Load(home, p.Slug); err == nil && fresh.Dir == p.Dir {
+		p = fresh
+	}
 	hash, err := projectdef.ImageHash(home, p)
 	if err != nil {
 		return "", fmt.Errorf("orb: image %s: %w", p.Slug, err)

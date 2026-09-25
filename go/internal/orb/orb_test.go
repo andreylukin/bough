@@ -351,6 +351,42 @@ func TestOpenReplacesUnprovenContainer(t *testing.T) {
 	}
 }
 
+// A start that fails before the container (here the image hash) leaves
+// the container as it was, so the next start of the same definition
+// reuses it: the failed start's state.json used to say no image, and the
+// next start recreated a container that ran the right one.
+func TestOpenReusesContainerAfterFailedStart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	p := newProject(t, home, "ff", "  - path: "+newRepo(t)+"\n")
+	rt := container.NewFake()
+	o, err := Open(ctx, rt, home, "s6", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setup := filepath.Join(p.Dir, projectdef.FileSetup)
+	good, err := os.ReadFile(setup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Written past the editor's check, as an agent's file tools can.
+	os.WriteFile(setup, []byte("#!/bin/sh\n# bough:step deps\n# bough:uses no.such.lock\ntrue\n"), 0o755)
+	if _, err := Open(ctx, rt, home, "s6", p, ""); err == nil {
+		t.Fatal("a start whose setup.sh declares an untracked file did not fail")
+	}
+	os.WriteFile(setup, good, 0o755)
+	if _, err := Open(ctx, rt, home, "s6", p, ""); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(rt.CallList(), "remove "+container.OrbName("s6")); n != 0 {
+		t.Fatalf("the container of the same image was recreated: %v", rt.CallList())
+	}
+}
+
 // killFake is a runtime with a guest-side kill, like Apple.
 type killFake struct {
 	*container.Fake
@@ -477,6 +513,37 @@ func TestEnsureImageRehashUnderLock(t *testing.T) {
 	}
 	if n := count(rt.CallList(), "commit "); n != 1 || count(rt.CallList(), "commit "+oldTag) != 0 {
 		t.Fatalf("calls %v", rt.CallList())
+	}
+}
+
+// A start hashes one definition, the one on disk: the child loads
+// project.yml at Prepare, and a repo added before Start (with a setup.sh
+// step that uses its lockfile) used to meet the new setup.sh with the
+// old repo list and fail with "no repo tracks it".
+func TestEnsureImageHashesTheCurrentDefinition(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	a, b := newRepo(t), newRepo(t)
+	os.WriteFile(filepath.Join(b, "b.lock"), []byte("v1\n"), 0o644)
+	git(t, b, "add", "-A")
+	git(t, b, "commit", "-qm", "lock")
+	stale := newProject(t, home, "grow", "  - path: "+a+"\n")
+	if err := projectdef.WriteFile(home, "grow", projectdef.FileYAML, "repos:\n  - path: "+a+"\n  - path: "+b+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectdef.WriteFile(home, "grow", projectdef.FileSetup, "#!/bin/sh\n# bough:step deps\n# bough:uses b.lock\ntrue\n"); err != nil {
+		t.Fatal(err)
+	}
+	rt := container.NewFake()
+	rt.AddImage(projectdef.BaseTag())
+	tag, err := EnsureImage(context.Background(), rt, home, stale, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := projectdef.Load(home, "grow")
+	hash, err := projectdef.ImageHash(home, fresh)
+	if err != nil || tag != projectdef.ImageTag("grow", hash) {
+		t.Fatalf("tag %s, want the current definition's %s (%v)", tag, hash, err)
 	}
 }
 
