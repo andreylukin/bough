@@ -155,11 +155,11 @@ export const api = {
   /** Removes the definition directory and everything keyed by the slug; conversations stay. */
   deleteProject: (slug: string) => req<{ ok: true }>(`/api/projects/${slug}`, { method: "DELETE" }),
   /** One project's page: its main thread, its threads and their orbs. Reading never starts anything. */
-  project: (slug: string) => req<ProjectDetail>(`/api/projects/${slug}`),
+  project: (slug: string, signal?: AbortSignal) => req<ProjectDetail>(`/api/projects/${slug}`, { signal }),
   /** Send to the project, which is its main thread — created on the first message. */
   messageProject: (slug: string, text: string) =>
     req<{ ok: true; main: string }>(`/api/projects/${slug}/message`, { method: "POST", body: JSON.stringify({ text }) }),
-  orb: (slug: string) => req<OrbDetail>(`/api/projects/${slug}/orb`),
+  orb: (slug: string, signal?: AbortSignal) => req<OrbDetail>(`/api/projects/${slug}/orb`, { signal }),
   putOrbFile: (slug: string, name: OrbFile, text: string) =>
     req<{ ok: true; orb: OrbSummary }>(`/api/projects/${slug}/orb/files/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ text }) }),
   buildOrb: (slug: string) => req<{ build: OrbBuild }>(`/api/projects/${slug}/orb/build`, { method: "POST", body: "{}" }),

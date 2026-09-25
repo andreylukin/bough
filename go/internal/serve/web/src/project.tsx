@@ -671,11 +671,21 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
   // The session on screen, main included; "" is the home.
   const [open, setOpen] = useState("");
 
+  // Leaving the page (or turning to another project) cancels its reads.
+  // The orb read probes the container runtime and can take seconds; left
+  // running, those reads queued behind the page's event streams and
+  // reached serve after the page was gone — a 404 in the console once
+  // the project was deleted meanwhile.
+  const reads = useRef(new AbortController());
+  useEffect(() => { const c = new AbortController(); reads.current = c; return () => c.abort(); }, [slug]);
+
   // When the detail on screen was read; a focus newer than it waits for the next read.
   const loadedAt = useRef(0);
   const load = useCallback(async (): Promise<ProjectDetail | undefined> => {
-    try { const d = await api.project(slug); loadedAt.current = Date.now(); setDetail(d); setErr(""); setMissing(false); return d; }
+    const { signal } = reads.current;
+    try { const d = await api.project(slug, signal); loadedAt.current = Date.now(); setDetail(d); setErr(""); setMissing(false); return d; }
     catch (e) {
+      if (signal.aborted) return undefined;
       setErr(e instanceof Error ? e.message : String(e));
       // Only an authoritative 404 says the project is gone; anything else can be retried.
       setMissing((e as { status?: number }).status === 404);
@@ -687,8 +697,9 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
     // writes them too. A project whose runtime is down still has files.
     // A failure here is said out loud: the project itself reads fine, so
     // swallowing it left the editor spinning with nothing to click.
-    try { setFiles((await api.orb(slug)).files); setFilesErr(""); }
-    catch (e) { setFilesErr(e instanceof Error ? e.message : String(e)); }
+    const { signal } = reads.current;
+    try { setFiles((await api.orb(slug, signal)).files); setFilesErr(""); }
+    catch (e) { if (!signal.aborted) setFilesErr(e instanceof Error ? e.message : String(e)); }
   }, [slug]);
 
   useEffect(() => { setDetail(undefined); setFiles(undefined); setFilesErr(""); setMissing(false); setOpen(""); }, [slug]);
