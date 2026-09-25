@@ -245,13 +245,21 @@ async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
   };
 }
 
-// Waits for a held read to exist, moving the page's clock to its next poll.
-async function nextPoll(c: Ctx): Promise<void> {
-  for (let i = 0; i < 20 && !heldTree(c).length; i++) {
-    await c.page.clock.fastForward(10_000);
-    await c.page.waitForTimeout(20);
+// Waits until the reads the walk holds satisfy ok.
+async function waitHeld(c: Ctx, ok: () => boolean): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!ok()) {
+    if (Date.now() > deadline) throw new Error(`held reads not there: ${c.held.map((r) => r.request().url()).join(', ') || 'none'}`);
+    await new Promise((r) => setTimeout(r, 20));
   }
-  if (!heldTree(c).length) throw new Error('no tree poll to hold');
+}
+
+// Moves the page's clock one interval, which fires exactly one tree
+// poll, and waits for it to be held. Moving it again while the fetch is
+// still on its way fired a second poll that stayed held past the step.
+async function nextPoll(c: Ctx): Promise<void> {
+  if (!heldTree(c).length) await c.page.clock.fastForward(10_000);
+  await waitHeld(c, () => heldTree(c).length > 0);
 }
 
 const tabButton = (c: Ctx, name: string) => c.page.locator('.chg-page [role="tab"]', { hasText: name });
@@ -312,16 +320,19 @@ modelTests<Ctx>({
     ToSession: (c) => tabButton(c, 'Session edits').click(),
     ToTree: (c) => tabButton(c, 'Working tree').click(),
     ExpandA: (c) => cardSummary(c, 'a').click(),
+    // Click, then let go: a poll held since the failure (the state
+    // checks move the page clock) would otherwise answer first and take
+    // the Retry button away before the click lands.
     async Retry(c) {
-      letGo(c);
       await c.page.locator('.chg-page').getByRole('button', { name: 'Retry' }).click();
+      letGo(c);
     },
 
     async Answer(c) { letGo(c); },
 
     async AnswerFails(c) {
-      // The opening reads, the tree's included, have all gone out.
-      await c.page.waitForTimeout(50);
+      // Both opening reads (edits, tree) are held before either fails.
+      await waitHeld(c, () => c.held.some((r) => /\/edits(\?|$)/.test(r.request().url())) && heldTree(c).length > 0);
       for (const r of c.held.splice(0)) fail(r);
     },
 
