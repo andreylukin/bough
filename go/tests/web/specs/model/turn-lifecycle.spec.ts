@@ -190,6 +190,7 @@ function dropQueued(dir: string): void {
 }
 
 async function endCall(c: Ctx): Promise<void> {
+  c.holding = true;
   fs.writeFileSync(c.gateF, '');
   c.gateF = '';
   await waitTaken(c.dir, c.next);
@@ -210,6 +211,9 @@ function closed(c: Ctx): void {
 // page's clock: move it past the 120 ms debounce first, and give the
 // page up to wait ms to ask.
 async function land(c: Ctx, wait: number): Promise<void> {
+  // Only modeled records wait for CatchUp. Resume metadata and queued
+  // follow-up reads can land while the modeled transcript is current.
+  c.holding = false;
   await c.page.clock.fastForward(1000);
   await until('the page to ask for the transcript', () => c.since.length > 0 || undefined, wait).catch(() => {});
   for (const r of c.since.splice(0)) {
@@ -262,7 +266,6 @@ modelTests<Ctx>({
     await page.goto(`${serve.url}/#/s/${c.id}`);
     await page.locator('#composer').waitFor();
     await page.locator('.thread-head .head-main > .status').waitFor();
-    c.holding = true;
     return c;
   },
 
@@ -311,6 +314,7 @@ modelTests<Ctx>({
 
     // --- the child ---
     async Input(c) {
+      c.holding = true;
       fs.writeFileSync(path.join(c.gates, c.word), '');
       await waitTaken(c.dir, c.held);
       await until('running', async () => (await apiRow(c)).status === 'running' || undefined);
@@ -325,6 +329,7 @@ modelTests<Ctx>({
     // The entry the fragments built, and a call to a tool that does not
     // exist (recorded at once, never a running row) so the turn goes on.
     async Reply(c) {
+      c.holding = true;
       const next = name(c, 't');
       queue(c.dir, next, { mode: 'block' });
       releaseCall(c.dir, c.held, { text: `reply ${next}`, call: { name: 'no_such_tool' } });
@@ -345,6 +350,7 @@ modelTests<Ctx>({
     },
     CallEnd: (c) => endCall(c),
     async Finish(c) {
+      c.holding = true;
       if (c.gateF) await endCall(c);
       releaseWith(c.dir, c.held, { mode: 'ok', text: `finished ${c.held}` });
       c.want.push({ what: 'say', text: `finished ${c.held}` });
@@ -353,6 +359,7 @@ modelTests<Ctx>({
       closed(c);
     },
     async Fail(c) {
+      c.holding = true;
       releaseWith(c.dir, c.held, { mode: 'error', error: 'model says no' });
       c.want.push({ what: 'text', text: 'model says no' });
       c.held = '';
@@ -361,6 +368,7 @@ modelTests<Ctx>({
     },
     // The child dies mid-turn (the archive kill, undone at once).
     async Crash(c) {
+      c.holding = true;
       await archive(c);
       await unarchive(c);
       if (c.gateF) fs.writeFileSync(c.gateF, '');
