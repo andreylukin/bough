@@ -158,7 +158,7 @@ type Options struct {
 	// <HoldDir>/<point> exists, and says so with <point>.at. Points are
 	// "claim" (before claiming a created child), "reap" (before dropping
 	// its lease), "archive-end-<id>" (before ending an archived child),
-	// archive-ending/killing/flagging, report-<id>, and send-<id>.
+	// archive-ending/killing/flagging, report-<id>, send-<id>, and close.
 	// Model tests need to act inside these otherwise sub-tick windows.
 	// "" (every real serve) never holds.
 	HoldDir string
@@ -175,6 +175,9 @@ var (
 	// ErrPendingAsk is Send refusing a line while an ask is armed: the
 	// child would read it as the answer.
 	ErrPendingAsk = errors.New("serve: supervisor: a pending ask takes the next line; answer it first")
+	// ErrElsewhere is a session another process has open (a terminal
+	// `bough -r` holds its lease): a child here would be a second writer.
+	ErrElsewhere = errors.New("serve: supervisor: session is open in another process")
 )
 
 const (
@@ -761,6 +764,10 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 	if p := s.meta[id].ProjectDeleted; p != "" {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("serve: supervisor: %s: project %s: %w", id, p, ErrProjectDeleted)
+	}
+	if pid := history.LeaseHolder(filepath.Join(s.opt.HistDir, id+".jsonl")); pid != 0 {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("serve: supervisor: %s (pid %d): %w", id, pid, ErrElsewhere)
 	}
 	// Reserve the lease before releasing the mutex, so a concurrent
 	// ensure waits for this spawn rather than starting a second one.
@@ -2507,6 +2514,7 @@ func (s *Supervisor) Close() error {
 	}
 	s.mu.Unlock()
 
+	s.hold("close", nil)
 	for _, ch := range kids {
 		s.killChild(ch)
 	}

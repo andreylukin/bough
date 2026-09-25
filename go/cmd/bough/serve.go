@@ -135,30 +135,45 @@ func runningServe(home string) (webSession, bool) {
 }
 
 // writeServePidfile records "<pid> <addr>\t<cwd>\t<config>\t<caps>".
-// A pidfile naming a live foreign pid is left alone: a second daemon
-// that fails to bind must not leave the file naming its own dead pid
-// while the first one serves on — and two supervisors would mean two
-// writers per session file. The returned cleanup (nil on failure)
-// removes the file on clean shutdown.
-func writeServePidfile(home, addr string) func() {
+// A pidfile naming a live foreign pid is an error: that serve may have
+// closed its port and still be killing its children (a SIGINT, a `serve
+// stop` that gave up waiting), and two supervisors would mean two
+// writers per session file. The returned cleanup removes the file on
+// clean shutdown, if it still names this process.
+func writeServePidfile(home, addr string) (func(), error) {
 	pf := servePidfile(home)
 	if b, err := os.ReadFile(pf); err == nil {
 		if pid, _, _, _, _, perr := parsePidfile(string(b)); perr == nil && pid != os.Getpid() && alive(pid) {
-			fmt.Fprintf(os.Stderr, "bough serve: already running (pid %d); leaving its pidfile alone\n", pid)
-			return nil
+			return nil, fmt.Errorf("serve: already running (pid %d, %s); not starting a second supervisor", pid, pf)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(pf), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "bough serve: pidfile:", err)
-		return nil
+		return nil, nil
 	}
 	dir, _ := os.Getwd()
 	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\t%s\n",
 		os.Getpid(), addr, dir, webConfig, ""), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "bough serve: pidfile:", err)
-		return nil
+		return nil, nil
 	}
-	return func() { os.Remove(pf) }
+	return func() { releaseServePidfile(home, os.Getpid()) }, nil
+}
+
+// releaseServePidfile removes the pidfile if it names pid and pid is
+// this process or dead. Whoever else it names now is a serve that
+// started after pid stopped serving, and removing its file hid it from
+// `serve status` and let the next start run beside it.
+func releaseServePidfile(home string, pid int) {
+	pf := servePidfile(home)
+	b, err := os.ReadFile(pf)
+	if err != nil {
+		return
+	}
+	named, _, _, _, _, perr := parsePidfile(string(b))
+	if perr == nil && named == pid && (pid == os.Getpid() || !alive(pid)) {
+		os.Remove(pf)
+	}
 }
 
 // launchServe starts `bin serve --run addr` detached (own session,
@@ -234,7 +249,13 @@ func runServe(args []string) {
 		for i := 0; i < 100 && alive(w.pid); i++ {
 			time.Sleep(50 * time.Millisecond)
 		}
-		os.Remove(servePidfile(home))
+		// A daemon still reaping keeps its pidfile, so the next start
+		// waits for it rather than running a second supervisor beside it.
+		releaseServePidfile(home, w.pid)
+		if alive(w.pid) {
+			fmt.Printf("bough serve: signalled http://%s (pid %d); it is still stopping its sessions\n", w.addr, w.pid)
+			return
+		}
 		fmt.Printf("bough serve: stopped http://%s (pid %d)\n", w.addr, w.pid)
 		return
 	case "--run":
@@ -347,7 +368,21 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	// sessions resolve; only the TUI path set this, so serve always said
 	// "(embedded)" even with a ~/.bough/bough.yml in force.
 	webConfig = resolveConfig(false, "").describe()
-	if done := writeServePidfile(home, addr); done != nil {
+	// Bind, then claim the pidfile, and only then load meta.json and
+	// drain the queue: a start that finds the port taken, or another
+	// serve still stopping, exits having spawned and written nothing.
+	// Draining first started a queued agent (and saved meta.json under a
+	// live serve) that the failed start's Close then killed.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("serve: listen %s: %w", addr, err)
+	}
+	defer ln.Close()
+	done, err := writeServePidfile(home, addr)
+	if err != nil {
+		return err
+	}
+	if done != nil {
 		defer done()
 	}
 	rt, err := serveOrbRuntime(home)
@@ -367,12 +402,6 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	}
 	defer sup.Close()
 
-	// Listen before serving so a taken port is an error here, not a
-	// line in a log nobody reads.
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("serve: listen %s: %w", addr, err)
-	}
 	api := serve.NewAPI(sup)
 	api.SetDefaults(configuredIn)
 	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure, host)}

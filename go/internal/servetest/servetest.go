@@ -113,6 +113,21 @@ func (s *Server) Shutdown() {
 	}
 }
 
+// Command is bin with args run as this server's processes run: on its
+// HOME and environment (plus env), from its start directory, output into
+// Output(), in a process group of its own. A test that plays a second
+// process on the same HOME (a second serve, `bough serve stop`, a
+// terminal `bough -r`) starts it with this and owns it: it starts,
+// waits for and kills it itself.
+func (s *Server) Command(bin string, env []string, args ...string) *exec.Cmd {
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = filepath.Join(s.Home, s.opts.Dir)
+	cmd.Env = append(childEnv(s.Home, s.opts.Env), env...)
+	cmd.Stdout, cmd.Stderr = s.out, s.out
+	setProcessGroup(cmd)
+	return cmd
+}
+
 // Resume starts serve again on the same HOME and address after Shutdown,
 // from bin ("" is the binary it last ran), and waits for it to answer.
 // A restart test uses a copy of the binary as the "new build".

@@ -111,7 +111,9 @@ func restartServe(home, bin string, out io.Writer) error {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		os.Remove(servePidfile(home)) // best-effort; the exiting process usually removed it
+		// Only its own, now stale: the exiting process usually removed
+		// it, and a launchd respawn may already have written its own.
+		releaseServePidfile(home, cur.pid)
 	}
 
 	// On macOS the restart goes through launchd, which also adopts a
