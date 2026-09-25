@@ -1,0 +1,164 @@
+# The background-job half of orb_exec_restart_vs_external_stop, split
+# off to keep each graph small: a job running in a project session's orb
+# while a stop made outside the child (serve's Stop orb / reaper, `bough
+# project stop`) and the child's exec-seam restart race it. The stop's
+# stoppedAt, Kill and the status serve shows are the parent flow's; here
+# only what the job's exit reads matters.
+#
+# A background job (plugins/tools/jobs.go:462) whose command exits with
+# an error asks Orb.StoppedSince(started) (orb.go:531): state.json says
+# stopped with updatedAt >= started, or the container is not running
+# NOW. True: the job is recorded and nothing wakes the turn (the stop
+# killed it). False: the turn is woken with the failure.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - The classification never reads serve's stoppedAt, only state.json
+#     and the runtime, so serve and the CLI stop classify alike: one
+#     ExternalStop here.
+#   - A job can start while a stop is marked and rt.Stop has not yet
+#     taken the container down; that mark is older than the job
+#     (updatedAt < started), so only a mark made while the job lived
+#     (jmark) counts.
+#   - The job's exit is read whenever c.Wait returns, which is not when
+#     the stop happened: the classification answers "is it stopped now",
+#     not "did a stop kill this job".
+#
+# Refuted here: strong forms fizz breaks on this spec as written (each
+# checked by appending it; see the flow's notes):
+#   StoppedJobNeverWakes  not (job woke and cause stop): ExternalStop ->
+#     JobStarts -> RuntimeStopOk -> ChildExec -> ChildStarted -> JobExits:
+#     the child restarted the container (another exec) before the killed
+#     job's exit was read, so StoppedSince says no and the stop's kill
+#     wakes the turn as a failure.
+#   OwnFailureNeverSilenced  not (job quiet and cause self): JobStarts ->
+#     ExternalStop -> JobFails -> JobExits: the job's own failure is read
+#     while a stop is marked and is silenced, even when that stop then
+#     fails (RuntimeStopErr) and the container never went down.
+#
+# Fields (role Orb):
+#   file    state.json status: running | stopped (MarkStopped) | starting
+#           (the child's restart in flight)
+#   ctr     the container: running | stopped
+#   stop    none | marked (MarkStopped written, rt.Stop in flight)
+#   pfile   what MarkStopped saved for a Restore
+#   step    the child's exec: idle | starting
+#   job     none | run | killed (by a stop, exit not yet read) | failing
+#           (its own error, exit not yet read) | quiet | woke (read:
+#           silent, or woke the turn)
+#   jcause  why the read job died: "" | stop | self
+#   jrst    the child restarted the container between the job's kill and
+#           its read
+#   jmark   a MarkStopped was written while the job lived
+#   jstop   jmark, or a stop took the container down while the job lived
+
+role Orb:
+    action Init:
+        self.file = "running"
+        self.ctr = "running"
+        self.stop = "none"
+        self.pfile = ""
+        self.step = "idle"
+        self.job = "none"
+        self.jcause = ""
+        self.jrst = False
+        self.jmark = False
+        self.jstop = False
+
+    # MarkStopped: whoever stops, state.json says stopped first.
+    atomic action ExternalStop:
+        require self.stop == "none"
+        self.pfile = self.file
+        self.file = "stopped"
+        self.stop = "marked"
+        if self.job in ("run", "killed", "failing"):
+            self.jmark = True
+            self.jstop = True
+
+    atomic fair action RuntimeStopOk:
+        require self.stop == "marked"
+        self.ctr_down()
+        self.stop = "none"
+        self.pfile = ""
+
+    # rt.Stop errs, the container still runs: Restore.
+    atomic action RuntimeStopErr:
+        require self.stop == "marked"
+        self.file = self.pfile
+        self.stop = "none"
+        self.pfile = ""
+
+    # rt.Stop errs but the container went down: Restore all the same.
+    atomic action RuntimeStopErrButDown:
+        require self.stop == "marked" and self.ctr == "running"
+        self.ctr_down()
+        self.file = self.pfile
+        self.stop = "none"
+        self.pfile = ""
+
+    # ensureRunningLocked: another exec finds the container stopped and
+    # writes starting.
+    atomic action ChildExec:
+        require self.step == "idle" and self.ctr != "running"
+        if self.job == "killed":
+            self.jrst = True
+        self.step = "starting"
+        self.file = "starting"
+
+    # The restart finishes: container up, resume.sh done, running.
+    atomic fair action ChildStarted:
+        require self.step == "starting"
+        self.ctr = "running"
+        self.step = "idle"
+        self.file = "running"
+
+    atomic action JobStarts:
+        require self.step == "idle" and self.ctr == "running"
+        require self.job in ("none", "quiet", "woke")
+        self.job = "run"
+        self.jcause = ""
+        self.jrst = False
+        self.jmark = False
+        self.jstop = False
+
+    # The job's own command fails.
+    atomic action JobFails:
+        require self.job == "run"
+        self.job = "failing"
+
+    # c.Wait returns with an error: StoppedSince(started).
+    atomic fair action JobExits:
+        require self.job in ("killed", "failing")
+        self.jcause = "stop" if self.job == "killed" else "self"
+        stopped = (self.file == "stopped" and self.jmark) or self.ctr != "running"
+        self.job = "quiet" if stopped else "woke"
+
+    # The container goes down; the job's command dies with it.
+    atomic func ctr_down():
+        if self.ctr == "running":
+            self.ctr = "stopped"
+            if self.job in ("run", "killed", "failing"):
+                self.jstop = True
+            if self.job == "run":
+                self.job = "killed"
+
+action Init:
+    orb = Orb()
+
+# A job a stop killed wakes the turn as a failure only when the child
+# restarted the container before its exit was read (the strong form,
+# without jrst, is refuted above).
+always assertion StoppedJobWokeOnlyAfterRestart:
+    return not (orb.job == "woke" and orb.jcause == "stop") or orb.jrst
+
+# A job's own failure is silenced only when a stop touched it while it
+# lived (the strong form, never silenced, is refuted above).
+always assertion OwnFailureSilencedOnlyUnderAStop:
+    return not (orb.job == "quiet" and orb.jcause == "self") or orb.jstop
+
+# A job's exit is read.
+always eventually assertion JobExitClassified:
+    return orb.job not in ("killed", "failing")
+
+# The child's restart settles.
+always eventually assertion ExecSettles:
+    return orb.step == "idle"
