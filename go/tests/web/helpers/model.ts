@@ -223,7 +223,11 @@ function saveTranscripts(serve: Serve, spec: string, ids: string[], title: strin
   if (!root) return;
   const dir = path.join(root, spec);
   fs.mkdirSync(dir, { recursive: true });
-  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  // Capped: a MODEL_COVER=transitions walk is dozens of actions long, and
+  // the whole title as a file name is past the 255-byte limit
+  // (ENAMETOOLONG, which then hid the walk's own result). "path-<i>-"
+  // and the session id keep the name unique.
+  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 100);
   for (const id of ids) {
     const src = path.join(serve.home, '.bough', 'history', id + '.jsonl');
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, `${slug}-${id}.jsonl`));
