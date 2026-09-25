@@ -31,13 +31,21 @@ test("typed job started with no outcome runs only while the session is live", ()
 });
 
 test("legacy [failed] is failed with no invented exit; [exited N] reads N and the recorded time", () => {
-  expect(parseLegacyJob("job 6 [failed] bun test (1s): exit status 1\nCannot find module")).toEqual({ id: 6, life: "failed", cmd: "bun test", ms: 1000, output: "Cannot find module" });
+  expect(parseLegacyJob("job 6 [failed] bun test (1s): exit status 1\nCannot find module")).toEqual({ id: 6, life: "failed", cmd: "bun test", ms: 1000, output: "Cannot find module", reason: "exit status 1" });
   expect(parseLegacyJob("job 2 [exited 1] make check (1m 5s)\nFAIL x")).toMatchObject({ life: "failed", exit: 1, ms: 65000 });
   expect(parseLegacyJob("job 2 [exited 0] true (0s)\n")).toEqual({ id: 2, life: "finished", exit: 0, cmd: "true", output: "" });
   expect(parseLegacyJob("not a job")).toBeNull();
   const [w] = jobsFromLines([line("job", "job 6 [failed] bun test (1s)\n", { text: "job 6 [failed] bun test (1s)\n" })], "s", true);
   expect(w).toMatchObject({ life: "failed", outputState: "empty", ms: 1000 });
   expect("exit" in w).toBe(false);
+});
+
+test("a killed job says why it ended, not its last line of output", () => {
+  const note = (reason: string) => jobsFromLines([line("job", `job 1 [failed] loop (3s): ${reason}\nready`)], "s", true)[0];
+  expect(note("signal: killed")).toMatchObject({ life: "failed", exitNote: "Killed" });
+  expect(note("killed after 5m0s")).toMatchObject({ exitNote: "Killed after 5m0s" });
+  expect(note("killed when bough quit")).toMatchObject({ exitNote: "Killed when bough quit" });
+  expect(note("exit status 3").exitNote).toBeUndefined();
 });
 
 test("legacy output merges onto typed metadata by id; matched notices are no outcome", () => {

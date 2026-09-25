@@ -445,6 +445,10 @@ export function groupTurns(lines: Line[]): Turn[] {
     if (!cur) cur = { seq: l.seq, prompt: null, body: [], done: null };
     if (l.kind === "done" || l.kind === "cancelled") {
       cur.done = l;
+      // The engine's step or cost budget cancels the turn and writes only
+      // a done that says why ("stop"); it read "Done" as if the agent had
+      // finished. "error" is a failed turn, which says so itself.
+      if (l.kind === "done" && typeof l.data?.stop === "string" && l.data.stop !== "error") cur.stopped = true;
       turns.push(cur);
       track(cur);
       cur = null;

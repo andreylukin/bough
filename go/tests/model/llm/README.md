@@ -31,6 +31,11 @@ Create waits for that file, so a test can hold a session in
 "starting"; a restart or reload of a session that has a file is not
 held.
 
+Each taken turn also leaves `<name>.request`, the user messages its
+request carried (`control.Request`), written before the `.taken`
+rename: an input sent at a request boundary, like a job's `[notice]`,
+is recorded nowhere else.
+
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
 hanging. Session titles and other `Complete` calls never take a turn.

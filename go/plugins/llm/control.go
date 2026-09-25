@@ -225,7 +225,11 @@ type controlCall struct {
 
 // take claims the next queued turn. A name the test is still writing
 // ends in .tmp and is skipped, so a half-written file is never read.
-func (c *controlLLM) take() (name string, t controlTurn, ok bool, err error) {
+// The request's user messages go to <name>.request before the turn is
+// marked taken: an input sent at a request boundary (a job notice, a
+// steer) is recorded nowhere else, so this is how a test sees what
+// reached the model.
+func (c *controlLLM) take(r ullm.Request) (name string, t controlTurn, ok bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ents, err := os.ReadDir(c.dir)
@@ -247,19 +251,34 @@ func (c *controlLLM) take() (name string, t controlTurn, ok bool, err error) {
 	// and rename it first: that name is gone, and the next one is ours
 	// to try, not an error that fails the turn.
 	for _, name = range names {
-		taken := filepath.Join(c.dir, name+".taken")
-		if err := os.Rename(filepath.Join(c.dir, name+".json"), taken); err != nil {
+		claimed := filepath.Join(c.dir, name+".claimed")
+		if err := os.Rename(filepath.Join(c.dir, name+".json"), claimed); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			return "", t, false, err
 		}
-		b, err := os.ReadFile(taken)
+		b, err := os.ReadFile(claimed)
 		if err != nil {
 			return "", t, false, err
 		}
 		if err := json.Unmarshal(b, &t); err != nil {
 			return "", t, false, fmt.Errorf("llm-control: %s.json: %w", name, err)
+		}
+		user := []string{}
+		for _, it := range r.Input {
+			if m, ok := it.Data.(ullm.Message); ok && it.Type == ullm.ItemMessage && m.Role == ullm.RoleUser {
+				user = append(user, m.Text)
+			}
+		}
+		if b, err := json.Marshal(user); err != nil {
+			return "", t, false, err
+		} else if err := os.WriteFile(filepath.Join(c.dir, name+".request"), b, 0o644); err != nil {
+			return "", t, false, err
+		}
+		// Taken also promises the request snapshot is ready to inspect.
+		if err := os.Rename(claimed, filepath.Join(c.dir, name+".taken")); err != nil {
+			return "", t, false, err
 		}
 		c.n++
 		return name, t, true, nil
@@ -280,7 +299,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 	if err := ctx.Err(); err != nil {
 		return ullm.Response{}, err
 	}
-	name, turn, ok, err := a.c.take()
+	name, turn, ok, err := a.c.take(r)
 	if err != nil {
 		return ullm.Response{}, err
 	}

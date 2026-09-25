@@ -223,6 +223,22 @@ func WaitTaken(t testing.TB, dir, name string, timeout time.Duration) {
 	t.Fatalf("llm-control: turn %q not taken after %s", name, timeout)
 }
 
+// Request is the user messages the request that took turn name carried,
+// oldest first (<name>.request, written before the turn is marked
+// taken): what reached the model, which history does not record for an
+// input sent at a request boundary.
+func Request(dir, name string) ([]string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, name+".request"))
+	if err != nil {
+		return nil, err
+	}
+	var user []string
+	if err := json.Unmarshal(b, &user); err != nil {
+		return nil, fmt.Errorf("llm-control: %s.request: %w", name, err)
+	}
+	return user, nil
+}
+
 // bootDir holds the hold_boot handshake: <id>.waiting, its content the
 // session's role ("main" for a project's main thread, else "session"),
 // while a fresh session is held before its history file exists, and
