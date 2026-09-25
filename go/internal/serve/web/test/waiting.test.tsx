@@ -202,3 +202,12 @@ test("MB-STREAM: Stop is a secondary button that names Esc", () => {
   expect(html).toMatch(/class="btn btn-ghost composer-stop"[^>]*aria-keyshortcuts="Escape"/);
   expect(html).toContain('title="Stop (Esc)"');
 });
+
+// The turn is still open while it waits on a question: the person can
+// end it from the page, as serve's interrupt does, without answering.
+test("a turn waiting on a question still offers Stop", () => {
+  const ask = { id: "ask-1", text: "Which colour?", options: ["red", "blue"], secret: false, seq: 3 };
+  const html = renderToStaticMarkup(<Thread row={{ ...row, status: "needs-you", live: true, ask } as unknown as Row} lines={[]} sending={[]} {...props} />);
+  expect(html).toContain("ask-option");
+  expect(html).toMatch(/class="btn btn-ghost composer-stop"[^>]*aria-label="Stop"/);
+});

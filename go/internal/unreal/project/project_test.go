@@ -329,6 +329,16 @@ func TestGoldens(t *testing.T) {
 				b.status("j2", waiting(e), finish(t, e, operation.StatusFailed, "", "Uncaught 1", toolreg.Handle{})),
 			}
 		},
+		// A run_js the person stopped is recorded canceled, as a native call is.
+		"run_js_cancel": func(t *testing.T) (Config, []step) {
+			var b builder
+			k := op(t, "k", "j1", "run_js", `{"code":"tools.bash('sleep 100')"}`)
+			return cfg(), []step{
+				b.response("r1", "", toolCall("j1", "run_js", `{"code":"tools.bash('sleep 100')"}`)),
+				b.status("j1", waiting(k), k),
+				b.status("j1", waiting(k), finish(t, k, operation.StatusCanceled, "", "", toolreg.Handle{Error: "cancelled by the user"})),
+			}
+		},
 		// A child projects under sub:, with a numeric worker; its deltas, thinking and progress stay home.
 		"child": func(t *testing.T) (Config, []step) {
 			var b builder

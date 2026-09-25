@@ -141,6 +141,8 @@ export const isNativeCall = (l: Line) => isCall(l) && typeof l.data?.id === "str
 /** A native call still running: the live start, never recorded. */
 export const callRunning = (l: Line) => l.data?.phase === "start";
 export const callFailed = (l: Line) => typeof l.data?.error === "string" || (typeof l.data?.exit === "number" && l.data.exit !== 0);
+/** Stopped by the person: a call's or a program's end that is a stop, not a failure. */
+export const canceled = (l?: Line) => l?.data?.canceled === true;
 /** "Running go test ./...": what a call in flight is doing. */
 export const callStep = (l: { data?: Record<string, unknown>; text: string }) => [presentTense(callVerb(String(l.data?.tool ?? ""))), l.text].filter(Boolean).join(" ");
 
@@ -499,14 +501,19 @@ const TOOL = new Set(["code", "result", "job", "call"]);
 export function groupTools(items: Item[], codes: string[]): Item[] {
   const out: Item[] = [];
   let run: Line[] = [];
+  // Lines that landed while a program in the run still ran: shown after
+  // the run, in their order (see below).
+  let held: Item[] = [];
   const flush = () => {
     // Even a single call is emitted as a run: the renderer pairs a call
     // with its output, and only wraps runs of two or more in a header.
     if (run.some((l) => l.kind === "code" || isNativeCall(l))) out.push({ kind: "tools", seq: run[0].seq, lines: run });
     else for (const l of run) out.push({ kind: "line", seq: l.seq, line: l });
     run = [];
+    out.push(...held);
+    held = [];
   };
-  for (const it of items) {
+  for (const [i, it] of items.entries()) {
     // A background agent's finish note is not part of the work around it.
     if (it.kind === "line" && isAgentNotice(it.line)) { flush(); out.push(it); continue; }
     if (it.kind === "line" && TOOL.has(it.line.kind)) { run.push(it.line); continue; }
@@ -517,6 +524,15 @@ export function groupTools(items: Item[], codes: string[]): Item[] {
     // An ask sits between the call that asked and that call's result; it
     // renders as its own card, so it must not split the pair or the run.
     if (it.kind === "line" && it.line.kind === "ask") continue;
+    // On the engine a reply's calls run in parallel: an answer to the ask
+    // beside a program, a steer or a provider error is recorded before the
+    // program's result. Splitting the run there parted the program from
+    // its result, and it read "Running" for good.
+    const open = run.filter((l) => l.kind === "code").length > run.filter((l) => l.kind === "result").length;
+    if (open && it.kind === "line" && items.slice(i + 1).some((x) => x.kind === "line" && x.line.kind === "result")) {
+      held.push(it);
+      continue;
+    }
     flush();
     out.push(it);
   }
@@ -766,10 +782,10 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
         else if (isNativeCall(l)) {
           // No block around it: the call is the action, and its own record says whether it failed.
           actions++;
-          if (callFailed(l)) failed++;
+          if (callFailed(l) && !canceled(l)) failed++;
           step = callRunning(l) ? callStep(l) : pastTense(callStep(l));
         } else if (l.kind === "call") step = callStep(l); // the runtime's word beats the label read off the source
-        else if (l.kind === "result") { step = pastTense(step); if ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l)) failed++; }
+        else if (l.kind === "result") { step = pastTense(step); if (!canceled(l) && ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l))) failed++; }
         else if (l.kind === "job") {
           const id = typeof l.data?.id === "number" ? String(l.data.id) : /^job (\d+) /.exec(l.text)?.[1];
           if (!id || !jobs.has(id)) actions++;

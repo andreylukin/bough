@@ -327,6 +327,23 @@ func (a *actorState) providerError(text string) {
 		return
 	}
 	fg := a.foreground()
+	if slices.ContainsFunc(fg, a.blocking) {
+		// An ask or secret still waits on the person: the turn stays
+		// open, as evaluate keeps it for a blocking call, and the answer
+		// reaches the model with the other calls' results once all have
+		// ended. Adopted, the ask closed the turn with the Asker still
+		// blocking and nothing on screen to answer it. The request is
+		// over, failed or not: the steers and notices that waited for its
+		// boundary go in now, as response() sends them.
+		for _, q := range a.steerQ {
+			a.send(q)
+		}
+		for _, q := range a.noticeQ {
+			a.send(q)
+		}
+		a.steerQ, a.noticeQ = nil, nil
+		return
+	}
 	for _, c := range fg {
 		a.adopt(c)
 	}

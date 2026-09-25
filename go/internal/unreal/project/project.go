@@ -323,6 +323,11 @@ func (p *Projector) status(it sessionstore.Item, st sessionstore.ToolCallStatus)
 			// loop's does; the recorded result carries the error key.
 			out = append(out, p.live("error", errText, nil))
 		}
+		// Stopped, not failed: the page reads a native call's end the
+		// same way, and showed a stopped program as a failure without it.
+		if canceled {
+			data["canceled"] = true
+		}
 		return append(out, p.rec(it, "result", text, data))
 	}
 	data := map[string]any{"ms": ms}

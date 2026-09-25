@@ -698,6 +698,42 @@ func TestSupervisorAskEndedInHistoryDisarms(t *testing.T) {
 	}
 }
 
+// The engine's native ask runs beside other calls of the same reply, so
+// a sibling run_js's result, its live error, a stderr line or a recorded
+// error note all land while the ask is open; none of them is its end,
+// and disarming on them made the page's answer 409 while the Asker
+// still waited. Only the ask's own call ending (or the turn's close)
+// disarms it. Found by tests/model/mbt/ask_beside_parallel_calls_test.go
+// (SiblingEndOk after AskOpens with a run_js sibling; HookErrorNote).
+func TestSupervisorNativeAskOutlivesItsSiblings(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	emit := func(kind, text string, extra map[string]any) {
+		f.sup.mu.Lock()
+		f.sup.emitLocked("sess-native", kind, text, extra)
+		f.sup.mu.Unlock()
+	}
+	emit("ask", "which?", map[string]any{"id": "ask-1", "call": "c1"})
+	for _, ev := range []struct {
+		kind  string
+		extra map[string]any
+	}{
+		{"error", nil},
+		{"result", map[string]any{"code": "1", "error": "boom"}},
+		{"call", map[string]any{"tool": "bash", "id": "c2", "exit": 3}},
+		{"call", map[string]any{"tool": "ask", "id": "c3"}},
+	} {
+		emit(ev.kind, "", ev.extra)
+		if f.sup.PendingAsk("sess-native") == nil {
+			t.Fatalf("a %s %v disarmed the native ask of call c1", ev.kind, ev.extra)
+		}
+	}
+	emit("call", "which?", map[string]any{"tool": "ask", "id": "c1", "error": "ask: no answer after 10m0s"})
+	if a := f.sup.PendingAsk("sess-native"); a != nil {
+		t.Fatalf("the ask's own call ended and it is still armed: %+v", a)
+	}
+}
+
 func TestSupervisorNonJSONStdoutIsSurfaced(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNoise+"=1")

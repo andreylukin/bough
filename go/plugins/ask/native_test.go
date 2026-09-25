@@ -101,6 +101,50 @@ func TestNativeSecretNeverReturnsTheValue(t *testing.T) {
 	}
 }
 
+// A native ask or secret names its call in the ask entry and event, so
+// serve, the row and headless can tell its end from a sibling's: on the
+// engine a run_js beside it ends with a result that is not the ask's.
+// A code-mode ask names none, and its block's result stays its end.
+func TestNativeAskNamesItsCall(t *testing.T) {
+	_, _ = secretEnv(t)
+	reg, a, _, hist := mountNative(t)
+	var evs []Event
+	a.emit = func(ev Event) {
+		evs = append(evs, ev)
+		go a.Answer(ev.ID, "yes")
+	}
+	ask, _ := reg.Lookup("ask")
+	if r, _ := ask.Call(context.Background(), agenttools.Call{ID: "c1", Args: json.RawMessage(`{"question":"ship it?"}`)}); r.Text != "yes" {
+		t.Fatalf("ask = %+v", r)
+	}
+	secret, _ := reg.Lookup("secret")
+	if r, _ := secret.Call(context.Background(), agenttools.Call{ID: "c2", Args: json.RawMessage(`{"name":"API_KEY","question":"q","project":"demo"}`)}); r.Error != "" {
+		t.Fatalf("secret = %+v", r)
+	}
+	var calls []any
+	for _, e := range hist.all() {
+		if e.Kind == "ask" {
+			calls = append(calls, e.Data["call"])
+		}
+	}
+	if fmt.Sprint(calls) != "[c1 c2]" || len(evs) != 2 || evs[0].Data["call"] != "c1" || evs[1].Data["call"] != "c2" {
+		t.Fatalf("ask entries name calls %v, events %+v; want c1 then c2", calls, evs)
+	}
+	_, ca, _, chist, _ := mount(t, nil)
+	ca.emit = func(ev Event) {
+		if ev.Data != nil {
+			t.Errorf("a code-mode ask event names a call: %+v", ev)
+		}
+		go ca.Answer(ev.ID, "ok")
+	}
+	if _, err := ca.ask("code mode?"); err != nil {
+		t.Fatal(err)
+	}
+	if d := chist.all()[0].Data; d["call"] != nil {
+		t.Fatalf("a code-mode ask entry names a call: %v", d)
+	}
+}
+
 // Two asks from one reply run at once on the engine: the second is not
 // put to the user until the first is answered, so the one answer slot
 // every UI keeps always belongs to the question on screen.

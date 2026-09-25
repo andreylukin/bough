@@ -1,0 +1,30 @@
+[
+  {
+    "Kind": "code",
+    "Text": "tools.bash('sleep 100')",
+    "Data": {
+      "hseq": 2,
+      "text": "tools.bash('sleep 100')"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "error",
+    "Text": "cancelled by the user",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "result",
+    "Text": "Cancelled: cancelled by the user",
+    "Data": {
+      "canceled": true,
+      "code": "tools.bash('sleep 100')",
+      "error": "cancelled by the user",
+      "hseq": 3,
+      "ms": 250,
+      "text": "Cancelled: cancelled by the user"
+    },
+    "Record": true
+  }
+]

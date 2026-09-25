@@ -270,6 +270,31 @@ func TestControlBlockReleaseBash(t *testing.T) {
 	WaitTaken(t, r.dir(), "002", time.Second)
 }
 
+// A held turn released with Calls answers with all of them in one
+// reply, and the engine runs them at once: two bash calls that each
+// wait for the other's file both finish, which they could not one after
+// the other.
+func TestControlBlockReleaseCalls(t *testing.T) {
+	t.Parallel()
+	r := start(t, "--json")
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "never sent"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "after both calls"})
+	wait := func(mine, other string) string {
+		return fmt.Sprintf("touch %s; for i in $(seq 200); do [ -f %s ] && echo both-ran && exit 0; sleep 0.05; done; exit 1", mine, other)
+	}
+	ReleaseWith(t, r.dir(), "001", Turn{Calls: []Call{
+		{ID: "a", Name: "bash", Args: map[string]any{"command": wait("a.flag", "b.flag")}},
+		{ID: "b", Name: "bash", Args: map[string]any{"command": wait("b.flag", "a.flag")}},
+	}})
+	r.waitFor("after both calls")
+	code, out := r.finish()
+	if code != 0 || strings.Count(out, "both-ran") < 2 || strings.Contains(out, "never sent") {
+		t.Fatalf("exit %d; want both calls to run at once:\n%s", code, out)
+	}
+}
+
 // Say streams live text out of a held turn without ending it: the delta
 // is on stdout, and the turn still waits for its release.
 func TestControlBlockSay(t *testing.T) {

@@ -12,7 +12,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { focusComposerKey, isMac, newSessionKey, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, programRan, codeLabel, callVerb, callFailed, callRunning, callsHeadline, callStep, isCall, isNativeCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, storedNotices, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, programRan, codeLabel, callVerb, callFailed, canceled, callRunning, callsHeadline, callStep, isCall, isNativeCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, storedNotices, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -1850,7 +1850,7 @@ function callFacts(code: Line, result?: Line, calls: Line[] = []): CallFacts {
   const call = parseCall(code.text);
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  const failed = (exit !== undefined && exit !== 0) || Boolean(thrownError(result));
+  const failed = !canceled(result) && ((exit !== undefined && exit !== 0) || Boolean(thrownError(result)));
   // Recorded calls name the block by what it actually did; the first one
   // leads, and " +N" says how many more there were (the gist convention).
   if (calls.length) {
@@ -1920,7 +1920,7 @@ function nativeFacts(l: Line): CallFacts {
   return {
     verb: callVerb(str(d.tool)), gist: l.text, cmd: str(d.cmd) || l.text,
     exit: typeof d.exit === "number" ? d.exit : undefined, ms: typeof d.ms === "number" ? d.ms : undefined,
-    failed: !callRunning(l) && callFailed(l), preview: out.slice(0, 3).join("\n") || undefined,
+    failed: !callRunning(l) && !canceled(l) && callFailed(l), preview: out.slice(0, 3).join("\n") || undefined,
   };
 }
 
@@ -2317,9 +2317,11 @@ export function ToolCall({ code, result, calls = [], live, stopped, current, spa
   // and how long it ran. Older results carry neither and show neither.
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  // A block that threw failed, whatever exit its bash calls had.
-  const rawThrown = thrownError(result);
-  const failed = (exit !== undefined && exit !== 0) || Boolean(rawThrown);
+  // A block that threw failed, whatever exit its bash calls had; one
+  // the person stopped did not fail, and says it was cancelled.
+  const stoppedHere = canceled(result);
+  const rawThrown = stoppedHere ? undefined : thrownError(result);
+  const failed = !stoppedHere && ((exit !== undefined && exit !== 0) || Boolean(rawThrown));
   const thrown = rawThrown && cleanError(rawThrown);
   // A question nobody answered is an outcome, not an exception to parse.
   const timedOut = /ask: no answer after (\S+)/.exec(out);
@@ -2365,6 +2367,7 @@ export function ToolCall({ code, result, calls = [], live, stopped, current, spa
         </> : !label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
         {thrown && <span className="tool-thrown" title={thrown}>{firstLine(thrown)}</span>}
         {failed && <FailMark />}
+        {stoppedHere && <span className="tool-unrecorded tool-stopped"><StopMark />Cancelled</span>}
         {(exitBad || meta.some(Boolean)) && (
           <span className="num tool-meta">{exitBad && <span className="tool-meta-failed">exit {exit}</span>}{exitBad && meta.some(Boolean) ? " · " : ""}{meta.filter(Boolean).join(" · ")}</span>
         )}
@@ -4578,7 +4581,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     ro.observe(el);
     return () => { ro.disconnect(); root.style.removeProperty("--composer-h"); };
   }, []);
-  useEffect(() => { if (!live) setStopping(""); }, [live]);
+  // A stop from a question never made the turn live: its end is the
+  // status leaving needs-you.
+  const waitsOnYou = row.status === "needs-you";
+  useEffect(() => { if (!live && !waitsOnYou) setStopping(""); }, [live, waitsOnYou]);
   useEffect(() => {
     if (!restoreOnStop.current || running || loading) return;
     const t = stoppedPrompt(lines);
@@ -5122,11 +5128,13 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               )}
               <JumpLatest away={away} fresh={newest > awayAt.current} onClick={() => toLatest()} />
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
-              {/* Not before the transcript is read: the header names no status until then, and a Stop beside it claimed a turn it could not show. */}
-              {live && !loading && (stopping === "failed"
-                ? <button className="btn composer-stop-retry" onClick={stop} title="Stop (Esc)" aria-keyshortcuts="Escape">Retry stop</button>
+              {/* A turn waiting on a question is still open: it can be
+                  stopped without answering. Esc stays with the answer
+                  being typed, so only the button says it. */}
+              {(live || waitsOnYou) && !loading && (stopping === "failed"
+                ? <button className="btn composer-stop-retry" onClick={stop} title={live ? "Stop (Esc)" : "Stop"} aria-keyshortcuts={live ? "Escape" : undefined}>Retry stop</button>
                 : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
-                          aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Stop (Esc)" aria-keyshortcuts="Escape">
+                          aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title={live ? "Stop (Esc)" : "Stop"} aria-keyshortcuts={live ? "Escape" : undefined}>
                     {stopping === "stopping" ? <span className="composer-spin" aria-hidden="true" />
                       : <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="currentColor" /></svg>}
                   </button>)}

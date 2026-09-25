@@ -131,7 +131,8 @@ func Interrupted() bool {
 type hlAskState struct {
 	id      string
 	options []string
-	secret  bool // tools.secret: the line is a credential, taken raw and never printed
+	secret  bool   // tools.secret: the line is a credential, taken raw and never printed
+	call    string // the engine call a native ask blocks; "" from a code block
 }
 
 // runHeadless wires this mount's inputs and broadcaster into the pump,
@@ -204,12 +205,17 @@ func hlPrint(ev Event) {
 	}
 	if ev.Kind == "ask" {
 		hlMu.Lock()
-		hlAsk = &hlAskState{id: ev.ID, options: ev.Options, secret: ev.Secret}
+		call, _ := ev.Data["call"].(string)
+		hlAsk = &hlAskState{id: ev.ID, options: ev.Options, secret: ev.Secret, call: call}
 		hlMu.Unlock()
 		if HeadlessJSON {
 			extra := map[string]any{"id": ev.ID, "options": ev.Options}
 			if ev.Secret {
 				extra["secret"] = true
+			}
+			if call != "" {
+				// serve's arm keys on it the same way (supervisor.go).
+				extra["call"] = call
 			}
 			hlLine(hlOut, "ask", ev.Text, extra)
 			return
@@ -223,20 +229,23 @@ func hlPrint(ev Event) {
 		}
 		return
 	}
-	if ev.Kind == "done" || ev.Kind == "error" {
-		// The turn ended (or the ask timed out into a run error):
-		// stop routing stdin to a dead ask.
+	if ev.Kind == "done" {
+		// The turn ended: stop routing stdin to a dead ask. An "error" is
+		// not an end: on the engine a sibling call's failure, a stderr
+		// line or a refusal note lands while a native ask still waits, and
+		// clearing on it made the next line a steer past the question. A
+		// code-mode ask that errors ends with its block's result below.
 		hlMu.Lock()
 		hlAsk = nil
 		hlMu.Unlock()
 	}
-	if askEnded(ev) {
+	hlMu.Lock()
+	if hlAsk != nil && askEnded(ev, hlAsk.call) {
 		// The ask returned with no answer (a timeout): the next line is
 		// a steer again, not an answer Asker.Answer would refuse and lose.
-		hlMu.Lock()
 		hlAsk = nil
-		hlMu.Unlock()
 	}
+	hlMu.Unlock()
 	switch ev.Kind {
 	case "error":
 		// Held until the turn ends: a failed code block is followed by the
@@ -370,18 +379,21 @@ func drainEngine() {
 }
 
 // askEnded reports an event that means the pending ask has returned,
-// answered or not: a code block's result (tools.ask blocks its block),
-// or the recorded end of the engine's native ask or secret call. serve's
-// StatusOf and its arm read the same events.
-func askEnded(ev Event) bool {
+// answered or not: for a code-mode ask (call "") its block's result, as
+// tools.ask blocks its block; for the engine's native ask or secret the
+// recorded end of its own call, since a sibling run_js in the same reply
+// records a result too. serve's StatusOf and its arm read the same
+// events.
+func askEnded(ev Event, call string) bool {
 	if ev.Kind == "result" {
-		return true
+		return call == ""
 	}
 	if ev.Kind != "call" || ev.Data["phase"] == "start" {
 		return false
 	}
 	t, _ := ev.Data["tool"].(string)
-	return t == "ask" || t == "secret"
+	id, _ := ev.Data["id"].(string)
+	return (t == "ask" || t == "secret") && (call == "" || id == call)
 }
 
 // hlTyped is BOUGH_TYPED_ANSWERS, which serve sets on every child it

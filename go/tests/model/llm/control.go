@@ -19,11 +19,14 @@ import (
 )
 
 // Turn is one queued model response. Mode is "ok", "error", "slow",
-// "block" or "call" (one call of Tool with Args, e.g. tools.ask). Call,
+// "block" or "call" (one call of Tool with Args, e.g. tools.ask); a
+// release may also be "refuse" (a provider refusal with Error as its
+// message, and Calls if any). Call,
 // on a release, answers with that tool call after Text, so the turn
-// goes on instead of ending. Calls, on an "ok" turn, are tool calls the
-// response makes instead of text: the engine runs them and asks again,
-// and the next queued turn answers that request.
+// goes on instead of ending. Calls, on an "ok" turn or a release, are
+// tool calls the response makes instead of text: the engine runs them
+// (in parallel) and asks again, and the next queued turn answers that
+// request.
 type Turn struct {
 	Mode    string         `json:"mode"`
 	Text    string         `json:"text,omitempty"`
@@ -263,6 +266,20 @@ func WaitBooting(t testing.TB, dir, id string, timeout time.Duration) string {
 func ReleaseBoot(t testing.TB, dir, id string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(bootDir(dir), id+".release"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Stderr makes every process mounting the row print text as one line on
+// its stderr (the first to claim it): serve relays it as a live "error"
+// event, as it does any line a child writes there.
+func Stderr(t testing.TB, dir, name, text string) {
+	t.Helper()
+	p := filepath.Join(dir, name+".stderr")
+	if err := os.WriteFile(p+"-tmp", []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(p+"-tmp", p); err != nil {
 		t.Fatal(err)
 	}
 }
