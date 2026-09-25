@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/serve/watch"
 	"github.com/andreylukin/bough/plugins/history"
@@ -347,6 +349,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Cwd     string `json:"cwd"`
 		Prompt  string `json:"prompt"`
+		ID      string `json:"id"` // a local session's id, minted by the client
 		Mode    string `json:"mode"`
 		Project string `json:"project"` // project slug, project mode only
 		// Background agent fields: a session starting a child.
@@ -382,7 +385,29 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: cwd %q is not a directory", body.Cwd))
 		return
 	}
-	id, err := a.sup.Create(CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt})
+	// The page names each press's session, so a Retry of a press whose
+	// 201 was lost (a serve restart mid-answer) is answered with the
+	// session it made instead of a second one.
+	if body.ID != "" {
+		if _, err := uuid.Parse(body.ID); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: id %q is not a uuid", body.ID))
+			return
+		}
+		if in, ok := a.info(body.ID); ok {
+			// The restart that lost the 201 can kill the child before it
+			// recorded the first prompt it was handed; the page is still
+			// showing it as sending, so it is handed over again.
+			if es, _ := history.Read(in.Path); body.Prompt != "" && !hasInput(es) {
+				if err := a.sup.Send(body.ID, body.Prompt); err != nil {
+					writeErr(w, statusFor(err), fmt.Errorf("serve: api: create session: resend the first prompt: %w", err))
+					return
+				}
+			}
+			a.writeRow(w, http.StatusOK, body.ID)
+			return
+		}
+	}
+	id, err := a.sup.Create(CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, ID: body.ID})
 	if err != nil {
 		writeErr(w, statusFor(err), fmt.Errorf("serve: api: create session: %w", err))
 		return

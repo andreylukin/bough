@@ -1,0 +1,381 @@
+# Creating a local session when it goes wrong, and when two creates
+# overlap: the create times out, the child exits, the child's history
+# file lands as the deadline kills it, writing the first prompt fails,
+# serve restarts mid-create (and the 201 of a finished create is lost),
+# the toast's Retry, a double click on the Overview's New session, and
+# the person moving (palette, another route) while a create is pending.
+# One person, one page, one serve, at most two presses per round (A,
+# then B while A is pending); session_create.fizz is the one clean
+# create at a time.
+#
+# Client: app.tsx start() -> act(POST /api/sessions {cwd, prompt}); on
+# 201 markCreated, setPending (non-empty prompt only), openSession,
+# closePalette; on an error act's toast "Couldn't start a session" with
+# Retry, which re-runs the same start (a new POST). Server: api.go
+# createSession -> supervisor.go Create -> createWithID: spawn with
+# BOUGH_SESSION_ID, poll for <id>.jsonl, claim, writePrompt, waitMeta,
+# 201; kill at createTimeout (10 s); "exited before writing history" on
+# the child's exit. Shutdown (serve.go) waits 5 s for in-flight
+# requests, then sup.Close sets closed and kills the claimed children.
+#
+# THIS SPEC IS THE CONTRACT, NOT TODAY'S PRODUCT. Every invariant below
+# fails against the code as it is; each "today:" note names the action
+# where the product departs and what it does instead (the mutation that
+# proves the invariant can fail is that note, applied to the action):
+#
+# - PromptWriteFails. today: createWithID returns (id, err) after the
+#   claim, and api.go createSession answers 500 and drops the id: the
+#   toast says it failed while a claimed child and its history file
+#   live on (stray, sessions 1), and Retry makes a second session.
+# - ServeRestart with a create's child spawned. today: Close kills only
+#   claimed children, so the unclaimed one outlives serve (a stray); and
+#   were its file to land after Close, claim refuses ("closed") and the
+#   SIGKILL leaves the meta-only file (a SIGKILL skips the clean
+#   shutdown that deletes it). The file on disk but unclaimed is not a
+#   state a restart finds: serve claims it within one 50 ms poll
+#   (stage 2, the server walk, showed the "failed" this spec first had
+#   there was "lost").
+# - HistoryAfterDeadline (and ChildExitsEarly after the file): the Stat
+#   miss, the deadline check and the kill are not atomic with the
+#   child's write, so the file can land between them: 500, and a
+#   meta-only session is left behind.
+# - Retry after a lost 201 (ServeRestart on a claimed create). today:
+#   the POST re-runs and makes a second session; the contract is that
+#   the retry of one press answers the session that press already made.
+# - OverviewNew. today: the button is not disabled while creating, so a
+#   double click POSTs twice and makes two sessions (the second click is
+#   press B with kind new while A is pending).
+# - Deliver. today: `creating` is one boolean, so the first landing's
+#   finally clears StartingStatus while the second POST is pending; and
+#   every landing runs openSession + closePalette, closing a palette the
+#   person opened meanwhile, moving them off a route they chose, and
+#   landing an earlier press over a later one.
+#
+# Where the mapped model disagreed with the code:
+# - "posting" and "spawned_no_history" are one state (spawned): the
+#   spawn happens inside the POST before anything answers. A failed
+#   spawn (fork error) is the same 500 as ChildExitsEarly.
+# - "closing (claim refuses)" is not a state of its own: Close runs
+#   after Shutdown has waited on the request, so it is part of
+#   ServeRestart (spawned and hist fail, claimed is lost).
+# - An empty create writes no prompt (writePrompt only runs for a
+#   non-empty one), so PromptWriteFails is a typed create's only.
+# - Sidebar New and Cmd/Alt+N only open the palette (OpenPalette); the
+#   Overview's New session button is the only one-click create.
+# - The toast's Retry is disabled while busy, so it needs no create in
+#   flight; the toast shows the last failure only (one setErr).
+# - "An orphan is reaped or visible eventually": the only session the
+#   contract leaves without a landing is a lost 201's, and the list shows
+#   it from the restart's poll on (lost), so it is by construction.
+# - The spawnArgs entry createWithID writes before the spawn is never
+#   removed on a failed create: a leak in memory only (a resume of that
+#   id is impossible, it has no file), not modelled.
+
+def inflight(s):
+    return s in ("spawned", "hist", "claimed")
+
+role Room:
+    action Init:
+        # Per press (A first, B second in a round): none | spawned (POST
+        # in flight, child running, no history file) | hist (its file is
+        # on disk, not yet claimed) | claimed (claimed, prompt written,
+        # the 201 on its way) | done (landed) | failed (5xx or dropped
+        # connection, nothing made) | lost (made, but the 201 was lost to
+        # a restart; the list shows its row: the page's poll after the
+        # restart is folded into ServeRestart, as in serve_restart_resume).
+        self.a = "none"
+        self.b = "none"
+        # typed: the palette's Start with a first message; new: the
+        # Overview's New session button, prompt "".
+        self.ka = "none"
+        self.kb = "none"
+        # Session files on disk made for each press.
+        self.sa = 0
+        self.sb = 0
+        # A live child that belongs to no press the page is waiting on or
+        # landed (an id dropped with an error).
+        self.stray = False
+        # The page: StartingStatus shown, the palette up, where it is
+        # (overview | chosen: a route the person picked | A | B: the
+        # session a press made), the last press, whether the person has
+        # moved (palette, route) since it, the toast (whose Retry), and
+        # the Sending previews.
+        self.starting = False
+        self.palette = False
+        self.route = "overview"
+        self.last = "none"
+        self.moved = False
+        self.toast = "none"
+        self.pa = False
+        self.pb = False
+
+    # ---- the person ----
+
+    # Cmd/Alt+N, the sidebar's New, or Find: before the first press, or
+    # while a create is pending, when it counts as moving on. (Once the
+    # round has settled, a palette is session_create.fizz's business.)
+    atomic action OpenPalette:
+        require not self.palette
+        require self.a == "none" or inflight(self.a) or inflight(self.b)
+        self.palette = True
+        if inflight(self.a) or inflight(self.b):
+            self.moved = True
+
+    atomic action Escape:
+        require self.palette
+        self.palette = False
+
+    # Another session from the list, or a view, while a create is
+    # pending (with none pending it is plain navigation, not this flow's).
+    atomic action Navigate:
+        require not self.palette and self.route != "chosen"
+        require inflight(self.a) or inflight(self.b)
+        self.route = "chosen"
+        self.moved = True
+
+    # The palette's "Start a session: “…”" row: the palette closes on the
+    # pick (afterClose), then start runs. A second Start while the first
+    # is pending is a second press, on purpose.
+    atomic action StartTyped:
+        require self.palette and (self.a == "none" or (self.b == "none" and inflight(self.a)))
+        self.palette = False
+        self.moved = False
+        self.starting = True
+        if self.a == "none":
+            self.a = "spawned"
+            self.ka = "typed"
+            self.last = "A"
+        else:
+            self.b = "spawned"
+            self.kb = "typed"
+            self.last = "B"
+
+    # The Overview's New session: start(dir, ""). Disabled while a
+    # create is in flight, so a double click is one create.
+    atomic action OverviewNew:
+        require self.route == "overview" and not self.palette and self.a == "none"
+        require not inflight(self.b)
+        self.moved = False
+        self.starting = True
+        self.a = "spawned"
+        self.ka = "new"
+        self.last = "A"
+
+    atomic action DismissToast:
+        require self.toast != "none"
+        self.toast = "none"
+
+    # The toast's Retry (disabled while busy). A clean failure starts the
+    # same press again; a press whose session exists (its 201 was lost)
+    # is answered with that session, not a second one.
+    atomic action RetryA:
+        require self.toast == "A" and not inflight(self.a) and not inflight(self.b)
+        self.toast = "none"
+        self.last = "A"
+        self.moved = False
+        self.starting = True
+        if self.a == "failed":
+            self.a = "spawned"
+        else:
+            self.a = "claimed"
+
+    atomic action RetryB:
+        require self.toast == "B" and not inflight(self.a) and not inflight(self.b)
+        self.toast = "none"
+        self.last = "B"
+        self.moved = False
+        self.starting = True
+        if self.b == "failed":
+            self.b = "spawned"
+        else:
+            self.b = "claimed"
+
+    # The round is over: nothing pending, no toast, no preview.
+    # The person is back on the overview; the sessions stay on the list.
+    atomic action Reset:
+        require not inflight(self.a) and not inflight(self.b) and self.toast == "none"
+        require self.a != "none"
+        require not self.pa and not self.pb
+        self.a = "none"
+        self.b = "none"
+        self.ka = "none"
+        self.kb = "none"
+        self.sa = 0
+        self.sb = 0
+        self.palette = False
+        self.route = "overview"
+        self.last = "none"
+        self.moved = False
+
+    # ---- press A's create ----
+
+    atomic action WriteHistoryA:
+        require self.a == "spawned"
+        self.a = "hist"
+        self.sa = self.sa + 1
+
+    atomic fair action ClaimA:
+        require self.a == "hist"
+        self.a = "claimed"
+
+    atomic fair action CreateTimeoutA:
+        require self.a == "spawned"
+        self.fail("A")
+
+    atomic action ChildExitsEarlyA:
+        require self.a == "spawned"
+        self.fail("A")
+
+    # The file lands between the last Stat and the kill: removed with it.
+    atomic action HistoryAfterDeadlineA:
+        require self.a == "spawned"
+        self.fail("A")
+
+    # The file lands, is claimed, and stdin refuses the first line: the
+    # child is killed and its file removed, so the 500 is the whole
+    # truth. One step from spawned: serve claims and writes within one
+    # poll of the file landing, so nothing else happens in between (the
+    # server walk found the file gone at every later step).
+    atomic action PromptWriteFailsA:
+        require self.a == "spawned" and self.ka == "typed"
+        self.fail("A")
+
+    atomic fair action DeliverA:
+        require self.a == "claimed"
+        self.a = "done"
+        self.starting = inflight(self.b)
+        if self.ka == "typed":
+            self.pa = True
+        if self.last == "A" and not self.moved:
+            self.route = "A"
+            self.palette = False
+
+    atomic fair action RecordedA:
+        require self.pa
+        self.pa = False
+
+    # ---- press B's create ----
+    #
+    # B is a second palette Start while A is pending (typed; it exists
+    # for the overlap). A's ChildExitsEarly, HistoryAfterDeadline and
+    # PromptWriteFails would be B's too, mirrored; they are left out to
+    # keep the graph near 1500 states (CreateTimeoutB and ServeRestart
+    # still fail B, so its toast, Retry and StartingStatus are covered).
+
+    atomic action WriteHistoryB:
+        require self.b == "spawned"
+        self.b = "hist"
+        self.sb = self.sb + 1
+
+    atomic fair action ClaimB:
+        require self.b == "hist"
+        self.b = "claimed"
+
+    # Every create waits the same createTimeout from its own spawn, and A
+    # was spawned first: B cannot time out while A is still waiting.
+    atomic fair action CreateTimeoutB:
+        require self.b == "spawned" and self.a != "spawned"
+        self.fail("B")
+
+    atomic fair action DeliverB:
+        require self.b == "claimed"
+        self.b = "done"
+        self.starting = inflight(self.a)
+        if self.kb == "typed":
+            self.pb = True
+        if self.last == "B" and not self.moved:
+            self.route = "B"
+            self.palette = False
+
+    atomic fair action RecordedB:
+        require self.pb
+        self.pb = False
+
+    # ---- serve ----
+
+    # SIGTERM/kickstart (down and up again in one step). Shutdown waits
+    # on the POSTs, then Close: a create without its file is killed; one
+    # with its file is claimed within a poll (50 ms) of the file landing,
+    # long before any restart the page could race, so its session stays
+    # like a claimed one's, and its 201 never reaches the page. (A file
+    # landing in the instant between Close and exit is removed with its
+    # killed child, so that create is one without its file.) Every
+    # pending POST ends in the toast; the last one wins it.
+    atomic action ServeRestart:
+        require inflight(self.a) or inflight(self.b)
+        if self.a in ("hist", "claimed"):
+            self.a = "lost"
+            self.toast = "A"
+        elif inflight(self.a):
+            self.a = "failed"
+            self.sa = 0
+            self.toast = "A"
+        if self.b in ("hist", "claimed"):
+            self.b = "lost"
+            self.toast = "B"
+        elif inflight(self.b):
+            self.b = "failed"
+            self.sb = 0
+            self.toast = "B"
+        self.starting = False
+
+    # A failed POST: its toast, and StartingStatus only while the other
+    # press is still pending.
+    atomic func fail(p):
+        if p == "A":
+            self.a = "failed"
+            self.starting = inflight(self.b)
+        else:
+            self.b = "failed"
+            self.starting = inflight(self.a)
+        self.toast = p
+
+action Init:
+    room = Room()
+
+# A 5xx create leaves no history file behind.
+always assertion FailedLeavesNoSession:
+    return (room.a != "failed" or room.sa == 0) and (room.b != "failed" or room.sb == 0)
+
+# An id Create returns with an error is opened or killed, never dropped:
+# no live child the page is not waiting on or showing.
+always assertion NoStrayChild:
+    return not room.stray
+
+# One press, at most one session, however it was retried.
+always assertion OneSessionPerPress:
+    return room.sa <= 1 and room.sb <= 1
+
+# One click of New creates at most one: never two New creates at once.
+always assertion OneCreatePerNewClick:
+    return not (inflight(room.a) and inflight(room.b) and room.ka == "new" and room.kb == "new")
+
+# StartingStatus is shown iff at least one create is in flight.
+always assertion StartingIffInFlight:
+    return room.starting == (inflight(room.a) or inflight(room.b))
+
+# A failed create never shows a Sending preview.
+always assertion NoPreviewWithoutSession:
+    return (not room.pa or room.a == "done") and (not room.pb or room.b == "done")
+
+# A landing moves the page only for the last press, and only when the
+# person has not moved since it: it never closes a palette opened after
+# the create started, or pulls them off a route they chose.
+transition assertion LandingRespectsPerson(before, after):
+    b = before.room
+    a = after.room
+    landed_a = b.a == "claimed" and a.a == "done"
+    landed_b = b.b == "claimed" and a.b == "done"
+    if not landed_a and not landed_b:
+        return True
+    if (landed_a and b.last == "A" or landed_b and b.last == "B") and not b.moved:
+        return True
+    return a.route == b.route and a.palette == b.palette
+
+# Every POST settles, to a landing or a toast, within the create timeout.
+always eventually assertion CreatesSettle:
+    return not inflight(room.a) and not inflight(room.b)
+
+# A Sending preview gives way to the recorded turn.
+always eventually assertion PreviewLands:
+    return not room.pa and not room.pb

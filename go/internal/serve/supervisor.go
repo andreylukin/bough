@@ -258,6 +258,9 @@ type Supervisor struct {
 	nextID int
 	meta   map[string]SessionMeta
 	closed bool
+	// creating holds the children createWithID spawned and has not
+	// claimed yet: they are in no lease, and Close must still kill them.
+	creating map[*child]bool
 	// metaVersion and legacy are meta.json as it was READ: the schema
 	// version, and the pre-version-2 label table migrateProjects folds
 	// into ~/.bough/projects. Both are empty once the migration ran.
@@ -517,17 +520,47 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 		return "", err
 	}
 	path := filepath.Join(s.opt.HistDir, id+".jsonl")
+	// Until the claim the child is in no lease, so Close did not see it:
+	// a restart mid-create left it running with nobody to answer
+	// (tests/model/specs/create_races_failures.fizz, NoStrayChild).
+	s.mu.Lock()
+	if s.creating == nil {
+		s.creating = map[*child]bool{}
+	}
+	s.creating[ch] = true
+	closed := s.closed
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.creating, ch)
+		s.mu.Unlock()
+	}()
+	if closed {
+		s.failCreate(ch, path)
+		return "", fmt.Errorf("serve: supervisor: closed")
+	}
 	deadline := time.Now().Add(createTimeout)
 	for {
 		if _, err := os.Stat(path); err == nil {
 			s.hold("claim", ch.done)
 			if err := s.claim(ch, id); err != nil {
-				s.killChild(ch)
+				s.mu.Lock()
+				closed := s.closed
+				s.mu.Unlock()
+				if closed {
+					s.failCreate(ch, path)
+				} else {
+					s.killChild(ch) // the file is the leased session's
+				}
 				return "", err
 			}
 			if prompt != "" {
 				if err := s.writePrompt(ch, prompt); err != nil {
-					return id, err
+					// Answered with the id dropped, this left a live,
+					// claimed session behind a create the page was told
+					// had failed, and Retry made a second one.
+					s.failCreate(ch, path)
+					return "", err
 				}
 			}
 			s.waitMeta(ch, id, deadline)
@@ -535,11 +568,13 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 		}
 		select {
 		case <-ch.done:
+			// The file can land between the Stat and the exit.
+			s.failCreate(ch, path)
 			return "", fmt.Errorf("serve: supervisor: session exited before writing history")
 		default:
 		}
 		if time.Now().After(deadline) {
-			s.killChild(ch)
+			s.failCreate(ch, path)
 			return "", fmt.Errorf("serve: supervisor: %s did not appear in %s", path, createTimeout)
 		}
 		time.Sleep(createPoll)
@@ -563,6 +598,16 @@ func (s *Supervisor) hold(point string, done <-chan struct{}) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+// failCreate ends a create that answers an error: the child is killed and
+// a history file it wrote meanwhile is removed, so a failed create
+// leaves no session behind. The file can land after the last Stat and
+// before the kill, and a SIGKILL skips the clean shutdown that deletes
+// a file holding only its meta.
+func (s *Supervisor) failCreate(ch *child, path string) {
+	s.killChild(ch)
+	os.Remove(path)
 }
 
 // waitMeta holds a new session's id back until its history file has
@@ -2203,6 +2248,11 @@ func (s *Supervisor) Close() error {
 	s.queue = nil
 	kids := make([]*child, 0, len(s.kids))
 	for _, ch := range s.kids {
+		kids = append(kids, ch)
+	}
+	// And every create's unclaimed child: its Create removes any file
+	// it wrote once it sees the exit.
+	for ch := range s.creating {
 		kids = append(kids, ch)
 	}
 	s.mu.Unlock()

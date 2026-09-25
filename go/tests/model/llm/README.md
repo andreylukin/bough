@@ -33,7 +33,11 @@ project's main thread, else `session`) and waits for
 `boot/<id>.release` (`Booting`, `WaitBooting`, `ReleaseBoot`). serve's
 Create waits for that file, so a test can hold a session in
 "starting"; a restart or reload of a session that has a file is not
-held.
+held. The held process writes its pid to `boot/<id>.pid` (`BootPID`);
+`boot/<id>.exit` makes it exit 3 instead (`ExitBoot`), and
+`boot/<id>.nostdin`, written before the release (`BreakStdinBoot`),
+makes it drop serve's stdin pipe as it goes on, so serve's write of
+the first prompt fails while the child lives.
 
 Each taken turn also leaves `<name>.request`, the user messages its
 request carried (`control.Request`), written before the `.taken`
