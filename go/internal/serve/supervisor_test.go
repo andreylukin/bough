@@ -714,6 +714,24 @@ func TestSupervisorAskEndedInHistoryDisarms(t *testing.T) {
 	}
 }
 
+func TestSupervisorAnswerRejectsAskEndedDuringReload(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envAsk+"=1")
+	f.seed(t, "sess-reload")
+	if err := f.sup.Send("sess-reload", "question time"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the ask", func() bool { return f.sup.PendingAsk("sess-reload") != nil })
+	// The UI row is absent when the ask ends: history records the end,
+	// but no event reaches serve to clear its arm before Answer.
+	f.seed(t, "sess-reload",
+		history.Entry{Seq: 2, Kind: "ask", Data: map[string]any{"id": "q1", "question": "which?"}},
+		history.Entry{Seq: 3, Kind: "call", Data: map[string]any{"tool": "ask", "id": "c1", "error": "timed out"}})
+	if err := f.sup.Answer("sess-reload", "q1", "late answer"); !errors.Is(err, ErrNoAsk) {
+		t.Fatalf("Answer after the ask ended in history = %v, want ErrNoAsk", err)
+	}
+}
+
 // The engine's native ask runs beside other calls of the same reply, so
 // a sibling run_js's result, its live error, a stderr line or a recorded
 // error note all land while the ask is open; none of them is its end,

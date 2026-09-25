@@ -1278,6 +1278,9 @@ func (s *Supervisor) Send(id, text string) error {
 // it out meanwhile drops it rather than reading it as a steer or as
 // the next question's answer.
 func (s *Supervisor) Answer(id, ask, text string) error {
+	// An ask can end while the UI row is unmounted, without emitting its
+	// end event. Refresh that arm before atomically claiming an answer.
+	s.PendingAsk(id)
 	s.mu.Lock()
 	p, ch := s.asks[id], s.kids[id]
 	switch {
