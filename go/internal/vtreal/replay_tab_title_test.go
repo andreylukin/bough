@@ -31,7 +31,7 @@ func tabTitleTape(t *testing.T, name string) string {
 func tabTitleSlow(tape string) string {
 	return strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}\n", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 150}\n", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 150%s}\n", tape, hurryKey), 1)
 }
 
 // tabTitleWait polls the recorded title until it equals want.
@@ -58,6 +58,7 @@ func TestTabTitleBootRunDone(t *testing.T) {
 	tabTitleWait(a, "bough")
 	tabTitleSend(a, "fix the flaky test")
 	tabTitleWait(a, "● fix the flaky test")
+	hurry(t, a.home) // seen running: let it finish
 	if !a.waitDone(1, 30*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
@@ -111,5 +112,6 @@ func TestTabTitleResumedSessionTitle(t *testing.T) {
 	tabTitleWait(a, "✓ Flaky test hunt")
 	tabTitleSend(a, "one more thing")
 	tabTitleWait(a, "● Flaky test hunt")
+	hurry(t, a.home) // seen running: let it finish
 	tabTitleWait(a, "✓ Flaky test hunt")
 }

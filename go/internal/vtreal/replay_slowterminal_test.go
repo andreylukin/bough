@@ -63,7 +63,7 @@ func slowterminalNew(tb testing.TB, cols, rows, chunk int, every time.Duration) 
 	})
 	t.Emu = emu
 	setTitle := func(s string) { t.mu.Lock(); t.title = s; t.mu.Unlock() }
-	out := newTitleFilter(emu, setTitle)
+	out := newTitleFilter(stampWriter{emu, &t.lastOut}, setTitle)
 	go func() {
 		buf := make([]byte, chunk)
 		for {
@@ -210,7 +210,7 @@ func TestSlowTerminalEscCancelsStreaming(t *testing.T) {
 	if strings.Contains(s, "ALPHAEND") {
 		t.Fatalf("the reply kept streaming after esc:\n%s", s)
 	}
-	a.check("after cancel")
+	a.checkOn("after cancel", s)
 }
 
 // A long streamed reply and a huge block result end on the same
@@ -233,14 +233,24 @@ func TestSlowTerminalConverges(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			tape := c.tape(t)
-			run := func(slow bool) *app {
+			// The fast and slow runs are independent processes: both
+			// start before either is waited on, so the two streams
+			// overlap instead of queueing (the long one is ~4 s each).
+			begin := func(slow bool) *app {
 				a := slowterminalStart(t, 100, 30, cancelConfig(tape, c.delay), slow)
+				if !slow {
+					hurry(t, a.home) // nothing to do mid-stream: unpaced
+				}
 				a.typeText(c.input)
 				a.key(uv.KeyEnter, 0)
 				if slow {
 					time.Sleep(200 * time.Millisecond)
 					a.typeText("typed during")
+					hurry(t, a.home) // typed while it streams: the rest may flood in
 				}
+				return a
+			}
+			finish := func(a *app, slow bool) {
 				if !a.waitDone(1, 60*time.Second) {
 					t.Fatalf("slow=%v: turn never finished:\n%s", slow, a.text())
 				}
@@ -252,11 +262,17 @@ func TestSlowTerminalConverges(t *testing.T) {
 					a.key(uv.KeyEsc, 0)
 					a.waitFor("draft cleared")
 				}
-				return a
 			}
-			fa := run(false)
+			fa, sa := begin(false), begin(true)
+			finish(fa, false)
+			// The reference is the turn's final frame: the done entry lands
+			// before the repaint that drops the streaming cursor, and in a
+			// loaded run a settle could return the frame before it.
+			fa.waitUntil(func(s string) bool {
+				return !strings.Contains(s, liveGlueCursor) && !liveGlueHasSpinner(s)
+			}, "the fast run's final frame")
 			fast, fastRSS := slowterminalNorm(fa.settled()), slowterminalRSS(t, fa)
-			sa := run(true)
+			finish(sa, true)
 			sa.slowterminalConverge(fast, 30*time.Second)
 			sa.check("slow converged")
 			slowRSS := slowterminalRSS(t, sa)

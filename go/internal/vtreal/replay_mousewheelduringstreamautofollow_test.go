@@ -94,11 +94,13 @@ func TestMouseWheelDuringStreamAutofollow(t *testing.T) {
 	t.Parallel()
 	a := startCfg(t, 100, 24, cancelConfig(mouseWheelDuringStreamAutofollowTape(t), 30))
 
+	hurry(t, a.home) // turn 1 only fills the transcript: unpaced
 	a.typeText("ask 1")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor("EARLY-40")
 	scrollingIdle(t, a, 1)
 	a.settled()
+	unhurry(t, a.home)
 
 	a.typeText("ask 2")
 	a.key(uv.KeyEnter, 0)
@@ -148,6 +150,7 @@ func TestMouseWheelDuringStreamAutofollow(t *testing.T) {
 	})
 
 	t.Run("FinalLineVisibleAfterEnd", func(t *testing.T) {
+		hurry(t, a.home) // the mid-stream checks are done: the rest lands at once
 		if !a.waitDone(2, 60*time.Second) {
 			t.Fatalf("the streaming turn never finished:\n%s", a.text())
 		}

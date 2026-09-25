@@ -33,7 +33,7 @@ func TestWebModeOfflineArtifactButtonWhileTurnBusy(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	words := make([]string, 150)
+	words := make([]string, 100)
 	for i := range words {
 		words[i] = fmt.Sprintf("w%03d", i)
 	}
@@ -61,7 +61,8 @@ func TestWebModeOfflineArtifactButtonWhileTurnBusy(t *testing.T) {
 
 	p.send("tell me a long story")
 	// Headless prints the reply only at its done, so the press is timed:
-	// 150 words at 50 ms stream for ~7.5 s; 1 s in is mid-turn.
+	// 100 words at 50 ms stream for ~5 s: 1 s in is mid-turn, and the
+	// watcher's next 2 s sweep still finds the turn busy.
 	time.Sleep(time.Second)
 	r, err := http.Post(url+"/answers", "application/json", strings.NewReader(
 		`{"kind":"action","value":{"type":"continue_conversation","message":"Keep SQLite"},"state":{"pick":"sqlite"}}`))

@@ -9,9 +9,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+var uniqueSeq atomic.Int64
+
+// uniqueID names something one test owns — a tmux server socket, a
+// process marker for pkill — uniquely within this run and across runs.
+// These names used to end in time.Now().UnixNano() alone, which is
+// microsecond-grained on macOS: two parallel tests starting in the
+// same microsecond shared one tmux server, drove each other's pane
+// (-t 0), and the first cleanup's kill-server took the other's down,
+// which then sat out a 60 s timeout.
+func uniqueID() string {
+	return fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), uniqueSeq.Add(1))
+}
 
 type tmuxApp struct {
 	t    *testing.T
@@ -28,7 +42,7 @@ func startTmux(t *testing.T, cols, rows int) *tmuxApp {
 	if err := os.WriteFile(cfg, []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtreal-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtreal-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color %s -config %s", home, home, bin, cfg)
 	tm.run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), shell)
 	t.Cleanup(func() {

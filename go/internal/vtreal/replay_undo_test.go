@@ -149,7 +149,7 @@ func TestUndoRevertsListedFiles(t *testing.T) {
 		if strings.Contains(s, "keep.txt") {
 			t.Errorf("undo listed a file the turn never wrote:\n%s", s)
 		}
-		a.check("after /undo")
+		a.checkOn("after /undo", s)
 	})
 
 	t.Run("TestUndoFilesOnDisk", func(t *testing.T) {

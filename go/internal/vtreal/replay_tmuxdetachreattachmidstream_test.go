@@ -82,7 +82,9 @@ func TestTmuxDetachReattachMidStream(t *testing.T) {
 	tape := resizeTmuxTape(t)
 	yml := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 400}", tape), 1)
+		// ~22 words at 150ms: ~3.3 s, and the detach lands ~1 s in. At
+		// 400ms the run then waited 8 s for the turn it was not watching.
+		fmt.Sprintf("config: {file: %q, delay_ms: 150}", tape), 1)
 	tm, home := resizeTmuxStart(t, 100, 30, yml)
 	// window-size latest: the window follows the newest client, as a
 	// person reattaching from another terminal would expect.

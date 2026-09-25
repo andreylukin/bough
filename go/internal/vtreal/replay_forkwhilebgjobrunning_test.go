@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -162,15 +163,23 @@ func TestForkWhileBgjobRunning(t *testing.T) {
 	})
 
 	openGate()
-	// Give the notice every chance to land somewhere.
+	// Give the notice every chance to land somewhere: wait for a wake,
+	// or for the job to be over (no process names the fifo any more).
+	// Waiting on the wake alone ran the full 15 s on every pass, since
+	// the passing outcome is often no wake at all.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if forkwhilebgjobrunningWakes(t, orig)+forkwhilebgjobrunningWakes(t, fork) > 0 {
 			break
 		}
+		if exec.Command("pgrep", "-f", fifo).Run() != nil {
+			break
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	time.Sleep(2 * time.Second) // a duplicate wake would land by now
+	// The job notice polls every 200ms at most: a wake, or a duplicate,
+	// would land by now.
+	time.Sleep(2 * time.Second)
 
 	t.Run("wake lands in the fork never", func(t *testing.T) {
 		if n := forkwhilebgjobrunningWakes(t, fork); n != 0 {

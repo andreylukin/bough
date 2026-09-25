@@ -104,7 +104,7 @@ func TestSteerQueuedThenRewind(t *testing.T) {
 		"the spinner to stop after the cancel")
 	time.Sleep(1500 * time.Millisecond) // a stray turn from a queued line would show by now
 	screen := a.settled()
-	a.check("after steer+queue then esc esc")
+	a.checkOn("after steer+queue then esc esc", screen)
 	comp := followUpComposer(a)
 	inputs := steerQueuedThenRewindInputs(a)
 

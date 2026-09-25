@@ -92,8 +92,8 @@ func retryBackoffThenResizeAndQuitTerminal(t *testing.T, cols, rows int, raw io.
 	})
 	term.Emu = emu
 	setTitle := func(s string) { term.mu.Lock(); term.title = s; term.mu.Unlock() }
-	go io.Copy(io.MultiWriter(newTitleFilter(emu, setTitle), raw), pty) //nolint:errcheck // app output → emulator + raw
-	go io.Copy(pty, emu)                                                //nolint:errcheck // keys → app
+	go io.Copy(io.MultiWriter(newTitleFilter(stampWriter{emu, &term.lastOut}, setTitle), raw), pty) //nolint:errcheck // app output → emulator + raw
+	go io.Copy(pty, emu)                                                                            //nolint:errcheck // keys → app
 	return term
 }
 
@@ -167,7 +167,7 @@ func retryBackoffThenResizeAndQuitTmux(t *testing.T, yml string) (*tmuxApp, stri
 	if err := os.WriteFile(cfg, []byte(yml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtreal-rbq-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtreal-rbq-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color OPENAI_API_KEY=test-key %s -config %s", home, home, bin, cfg)
 	tm.run("new-session", "-d", "-x", "120", "-y", "30", shell)
 	t.Cleanup(func() {

@@ -79,7 +79,7 @@ func copyOSC52OverTmuxLargeStart(t *testing.T, yml string) (*tmuxApp, string) {
 	if err := os.Symlink(tmuxBin, filepath.Join(pathDir, "tmux")); err != nil {
 		t.Fatal(err)
 	}
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtosc52-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtosc52-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color PATH=%s %s -config %s", home, home, pathDir, bin, cfg)
 	tm.run("new-session", "-d", "-x", "100", "-y", "30", shell)
 	t.Cleanup(func() {

@@ -85,12 +85,17 @@ func streamPtyFastTape(t *testing.T, n int) string {
 	return streamPtyTape(t, turns...)
 }
 
+// The slow and stall tapes end on the prose, with no stop fence: the
+// replay llm pauses delay_ms after every delta, and the fence's four
+// ("\n", "```stop\n", "done\n", "```") only padded each run by four
+// more pauses (10 s of the stall test's 15) after what is under test.
+// A reply with no js block ends the turn just the same.
 func streamPtySlowTape(t *testing.T) string {
-	return streamPtyTape(t, []streamPtyStep{streamPtyStop("SLOWBEGIN " + strings.Repeat("slow ", 10) + "SLOWEND")})
+	return streamPtyTape(t, []streamPtyStep{{reply: "SLOWBEGIN " + strings.Repeat("slow ", 10) + "SLOWEND"}})
 }
 
 func streamPtyStallTape(t *testing.T) string {
-	return streamPtyTape(t, []streamPtyStep{streamPtyStop("STALLA STALLZ")})
+	return streamPtyTape(t, []streamPtyStep{{reply: "STALLA STALLZ"}})
 }
 
 func streamPtyHugeTape(t *testing.T) string {
@@ -156,6 +161,7 @@ func TestStreamPtySlowStreamDraft(t *testing.T) {
 	if a.doneCount() != 0 {
 		t.Fatalf("the slow stream finished before the draft was typed; the test proved nothing")
 	}
+	hurry(t, a.home) // the draft is in: the rest of the 6 s reply adds nothing
 	if !a.waitDone(1, 30*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
@@ -167,7 +173,7 @@ func TestStreamPtySlowStreamDraft(t *testing.T) {
 	if !strings.Contains(s, "SLOWEND") {
 		t.Errorf("reply incomplete:\n%s", s)
 	}
-	a.check("after slow stream with draft")
+	a.checkOn("after slow stream with draft", s)
 }
 
 // A stream that stalls for 2.5 s between two deltas and then ends: the
@@ -187,6 +193,7 @@ func TestStreamPtyStallThenEnd(t *testing.T) {
 	if !liveGlueHasSpinner(s) {
 		t.Errorf("no spinner during the stall:\n%s", s)
 	}
+	hurry(t, a.home) // end the stall now it has been seen, not at 2.5 s
 	if !a.waitDone(1, 30*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
@@ -249,7 +256,7 @@ func streamPtyTmux(t *testing.T, cols, rows int, yml string) (*tmuxApp, *app) {
 	if err := os.WriteFile(cfg, []byte(yml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtreal-sp-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtreal-sp-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color %s -config %s", home, home, bin, cfg)
 	tm.run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), shell)
 	t.Cleanup(func() {
@@ -268,7 +275,17 @@ func streamPtyTmux(t *testing.T, cols, rows int, yml string) (*tmuxApp, *app) {
 // repaint (a height change away and back) unchanged.
 func streamPtyRedraw(tm *tmuxApp, cols, rows int, where string) {
 	tm.t.Helper()
-	before := tm.settled()
+	// The frame to compare against must be the diff renderer's last,
+	// not one caught before a late final render: two captures 80ms apart
+	// matched mid-render in a loaded run and the huge reply "differed"
+	// by one scrolled row. Hold out for 400ms of stillness.
+	before := tm.screen()
+	for still, deadline := time.Now(), time.Now().Add(5*time.Second); time.Since(still) < 400*time.Millisecond && time.Now().Before(deadline); {
+		time.Sleep(80 * time.Millisecond)
+		if cur := tm.screen(); cur != before {
+			before, still = cur, time.Now()
+		}
+	}
 	tm.resize(cols, rows-1)
 	tm.settled()
 	tm.resize(cols, rows)
@@ -276,9 +293,19 @@ func streamPtyRedraw(tm *tmuxApp, cols, rows int, where string) {
 	if before == after {
 		return
 	}
-	// A repaint still on its way is not a stale cell: give it 2 s and
-	// report only what persists.
-	time.Sleep(2 * time.Second)
+	// A repaint still on its way is not a stale cell: give it up to 10 s
+	// and report only what persists. It usually lands within a few
+	// captures, so stop waiting as soon as the screen is back. After
+	// the 5000-line reply a loaded run took over 2 s to re-lay the
+	// transcript out for the second resize: the capture was still the
+	// rows-1 layout, one row short at the bottom, and read as stale.
+	began := time.Now()
+	for deadline := began.Add(10 * time.Second); time.Now().Before(deadline) && tm.screen() != before; {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if d := time.Since(began); d > 2*time.Second {
+		tm.t.Logf("%s: the forced redraw took %v to land", where, d.Round(time.Millisecond))
+	}
 	if late := tm.settled(); late == before {
 		tm.t.Logf("%s: repaint after the forced redraw took over a settle window to land", where)
 		return

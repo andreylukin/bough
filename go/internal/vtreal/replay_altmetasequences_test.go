@@ -37,7 +37,9 @@ func altmetaWant(a *app, want string) {
 }
 
 func TestAltMetaSequences(t *testing.T) {
+	t.Parallel()
 	t.Run("word_motions", func(t *testing.T) {
+		t.Parallel()
 		a := start(t, 100, 30)
 		a.typeText("one two three")
 		altmetaWant(a, "one two three")
@@ -50,6 +52,7 @@ func TestAltMetaSequences(t *testing.T) {
 		altmetaWant(a, "one twoY Xthree")
 	})
 	t.Run("alt_backspace", func(t *testing.T) {
+		t.Parallel()
 		a := start(t, 100, 30)
 		a.typeText("one two three")
 		altmetaWant(a, "one two three")
@@ -58,6 +61,7 @@ func TestAltMetaSequences(t *testing.T) {
 		altmetaWant(a, "one two Z")
 	})
 	t.Run("alt_dot_inserts_nothing", func(t *testing.T) {
+		t.Parallel()
 		a := start(t, 100, 30)
 		a.typeText("abc")
 		altmetaWant(a, "abc")
@@ -66,6 +70,7 @@ func TestAltMetaSequences(t *testing.T) {
 		altmetaWant(a, "abc!")
 	})
 	t.Run("esc_then_x_is_not_double_esc", func(t *testing.T) {
+		t.Parallel()
 		a := start(t, 100, 30)
 		a.typeText("keep me")
 		altmetaWant(a, "keep me")

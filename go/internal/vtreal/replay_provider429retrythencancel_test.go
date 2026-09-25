@@ -198,7 +198,7 @@ func TestProvider429RetryThenCancel(t *testing.T) {
 		if strings.Contains(s, "✗") {
 			t.Errorf("the cancelled turn drew an error block:\n%s", s)
 		}
-		a.check("after cancel")
+		a.checkOn("after cancel", s)
 
 		srv.answer("SECONDREPLY arrived")
 		sent := time.Now()

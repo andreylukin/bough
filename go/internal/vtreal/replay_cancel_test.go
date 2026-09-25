@@ -33,7 +33,7 @@ func cancelConfig(tape string, delayMS int) string {
 	cfg := replayConfig(tape)
 	out := strings.Replace(cfg,
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS),
+		fmt.Sprintf("config: {file: %q, delay_ms: %d%s}", tape, delayMS, hurryKey),
 		1)
 	if out == cfg {
 		panic("cancelConfig: replayConfig's llm row changed shape; delay_ms not applied")
@@ -81,7 +81,7 @@ func TestCancelEscMidReply(t *testing.T) {
 	if !cancelComposerEmpty(ls[r]) {
 		t.Fatalf("composer is not empty after the cancel (%q):\n%s", ls[r], s)
 	}
-	a.check("after cancel")
+	a.checkOn("after cancel", s)
 
 	// A fresh turn: the aborted reply was consumed, so this one gets
 	// the tape's second reply.
@@ -94,7 +94,7 @@ func TestCancelEscMidReply(t *testing.T) {
 	if strings.Contains(s, "ALPHAEND") {
 		t.Fatalf("the cancelled reply was re-served on the next turn:\n%s", s)
 	}
-	a.check("after the next turn")
+	a.checkOn("after the next turn", s)
 }
 
 // Idle with a draft: the first esc only arms, the second clears.

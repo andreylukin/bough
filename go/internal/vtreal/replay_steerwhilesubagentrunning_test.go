@@ -119,8 +119,7 @@ func TestSteerWhileSubagentRunning(t *testing.T) {
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
-	a.check("after steered turn")
-	screen := a.settled()
+	screen := a.check("after steered turn")
 	path, es := steerWhileSubagentRunningSession(t, a)
 
 	t.Run("SteerGoesToParent", func(t *testing.T) {

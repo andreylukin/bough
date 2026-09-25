@@ -56,11 +56,43 @@ func replayConfig(tape string) string {
 `, tape, tape)
 }
 
+// hurryKey goes on a paced replay row, after its delay_ms: the row
+// paces its words until hurry writes the file, then streams the rest
+// at once. A reply sized to outlast a mid-stream check on a loaded
+// run then costs nothing once the check is done.
+const hurryKey = `, delay_until: "~/.replay-hurry"`
+
+// hurry ends the pacing of every hurryKey row of the bough in home.
+func hurry(t *testing.T, home string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(home, ".replay-hurry"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// unhurry paces the rows again, for a later turn that needs it.
+func unhurry(t *testing.T, home string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(home, ".replay-hurry")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // panicky is what a Go crash or a lipgloss overflow leaves on screen.
 var panicky = regexp.MustCompile(`panic:|goroutine \d+ \[|runtime error:`)
 
-// check is the set of invariants every settled screen must hold.
-func (a *app) check(where string) {
+// check is the set of invariants every settled screen must hold. It
+// returns the settled screen it judged, so a caller with more to assert
+// need not wait out another settle window for the same frame.
+func (a *app) check(where string) string {
+	a.t.Helper()
+	return a.checkOn(where, a.settled())
+}
+
+// checkOn is check starting from s, a screen the caller has just
+// settled with nothing sent since: settling again would only wait out
+// another window on the same frame.
+func (a *app) checkOn(where, s string) string {
 	a.t.Helper()
 	// The screen is eventually consistent and the callers are not: most
 	// reach here through waitDone, which gates on a history entry — a
@@ -68,18 +100,17 @@ func (a *app) check(where string) {
 	// the layout invariant instead of asserting on whichever frame
 	// happened to be current, with a deadline so a composer that never
 	// comes back to the bottom still fails, and still prints the frame.
-	var s string
-	var ls []string
+	ls := strings.Split(s, "\n")
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		s = a.settled()
-		ls = strings.Split(s, "\n")
 		if r := composerRow(ls); r >= 0 && r >= len(ls)-3 {
 			break
 		}
 		if !time.Now().Before(deadline) {
 			break
 		}
+		s = a.settled()
+		ls = strings.Split(s, "\n")
 	}
 	if panicky.MatchString(s) {
 		a.t.Errorf("%s: crash text on screen:\n%s", where, s)
@@ -95,6 +126,7 @@ func (a *app) check(where string) {
 			a.t.Errorf("%s: row %d is %d cells wide in a %d-column pane:\n%s", where, i, w, a.cols, s)
 		}
 	}
+	return s
 }
 
 // doneCount counts finished turns in the newest session file under
@@ -131,7 +163,7 @@ func (a *app) waitDone(n int, timeout time.Duration) bool {
 		if a.doneCount() >= n {
 			return true
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // ~600 calls a run: a coarser poll cost ~15 s of test time
 	}
 	return false
 }

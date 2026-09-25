@@ -18,7 +18,7 @@ var inputGarbageLeak = regexp.MustCompile(`\[<|\d+;\d+[Mm]|\[I|\[O|200~|201~`)
 func inputGarbageRaw(a *app, s string, gap time.Duration) {
 	a.t.Helper()
 	for i := 0; i < len(s); i++ {
-		if _, err := a.term.pty.Write([]byte{s[i]}); err != nil {
+		if _, err := a.term.WriteInput([]byte{s[i]}); err != nil {
 			a.t.Fatal(err)
 		}
 		if gap > 0 {
@@ -47,6 +47,7 @@ func inputGarbageRun(t *testing.T, gap time.Duration, extra string) {
 	time.Sleep(300 * time.Millisecond)
 	a.typeText("draftxyz")
 	inputGarbageRaw(a, inputGarbageBurst(20)+extra, gap)
+	hurry(t, a.home) // the burst went in mid-stream: the rest of the 3000 words need not trickle
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}

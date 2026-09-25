@@ -66,7 +66,7 @@ func bgjobfinishesmidturnTape(t *testing.T, fifo, story string) string {
 func bgjobfinishesmidturnConfig(tape string, delayMS int) string {
 	return strings.Replace(jobsConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: %d%s}", tape, delayMS, hurryKey), 1)
 }
 
 func TestBgjobFinishesMidTurn(t *testing.T) {
@@ -185,8 +185,7 @@ func TestBgjobFinishesMidTurn(t *testing.T) {
 			}
 			return true
 		}, "the job strip to clear")
-		a.check("after wake")
-		if s := a.settled(); strings.Contains(s, "[background job]") {
+		if s := a.check("after wake"); strings.Contains(s, "[background job]") {
 			t.Errorf("wake preamble leaked onto the screen:\n%s", s)
 		}
 	})

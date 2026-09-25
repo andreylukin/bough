@@ -108,7 +108,7 @@ func TestCopyDragFlash(t *testing.T) {
 	if !strings.Contains(s, "OSC 52") {
 		t.Errorf("the flash should name the OSC 52 path:\n%s", s)
 	}
-	a.check("after the drag")
+	a.checkOn("after the drag", s)
 
 	// The flash is a one-key chip: the next key press clears it.
 	a.typeText("x")

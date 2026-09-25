@@ -95,11 +95,10 @@ var openBoxesBorders = map[rune]rune{'╭': '╮', '│': '│', '╰': '╯'}
 // openBoxesCheck judges a settled screen: every row fits the pane in
 // display cells, every box row closes its border, and the composer and
 // status bar are still on the last rows. Every failure prints the
-// screen.
-func openBoxesCheck(a *app, where string) {
+// screen. It returns the settled screen it judged.
+func openBoxesCheck(a *app, where string) string {
 	a.t.Helper()
-	a.check(where) // width in runes, composer, status bar, no crash text
-	s := a.settled()
+	s := a.check(where) // width in runes, composer, status bar, no crash text
 	// SGR from a tool must be styling or gone, never text: an escape
 	// that reaches the grid as characters is a leak.
 	for _, leak := range []string{"\x1b", "[0m", "[31m", "[1m", "[4m"} {
@@ -124,13 +123,14 @@ func openBoxesCheck(a *app, where string) {
 				where, i, string(r[0]), string(got), s)
 		}
 	}
+	return s
 }
 
 // openBoxesExpand clicks the last header on screen whose row matches
-// glyph+tag ("▸ Ran", "▸ result") and waits for it to open.
-func openBoxesExpand(a *app, tag string) {
+// glyph+tag ("▸ Ran", "▸ result") on the settled screen s and waits
+// for it to open.
+func openBoxesExpand(a *app, s, tag string) {
 	a.t.Helper()
-	s := a.settled()
 	row := -1
 	for i, l := range strings.Split(s, "\n") {
 		if strings.Contains(l, "▸ "+tag) {
@@ -167,12 +167,14 @@ func TestOpenBoxes(t *testing.T) {
 				if !a.waitDone(i+1, 60*time.Second) {
 					t.Fatalf("%s: turn never finished:\n%s", where, a.text())
 				}
-				openBoxesCheck(a, where+" collapsed")
-				openBoxesExpand(a, "Ran")
-				openBoxesCheck(a, where+" code box open")
-				openBoxesExpand(a, "result")
-				openBoxesCheck(a, where+" result box open")
-				if s := a.settled(); !strings.Contains(s, c.want) {
+				// Each check settles once and hands its screen on: the
+				// settles in between saw the same frame and only cost
+				// time (six per turn, ~5 s a pane width).
+				s := openBoxesCheck(a, where+" collapsed")
+				openBoxesExpand(a, s, "Ran")
+				s = openBoxesCheck(a, where+" code box open")
+				openBoxesExpand(a, s, "result")
+				if s := openBoxesCheck(a, where+" result box open"); !strings.Contains(s, c.want) {
 					t.Errorf("%s: open result box does not show %q:\n%s", where, c.want, s)
 				}
 				if t.Failed() {

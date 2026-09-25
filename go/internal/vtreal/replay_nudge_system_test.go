@@ -58,8 +58,7 @@ func nudgeSystemResume(t *testing.T) (*app, string) {
 func TestNudgeSystemResumeRows(t *testing.T) {
 	t.Parallel()
 	a, _ := nudgeSystemResume(t)
-	a.check("resumed")
-	s := a.settled()
+	s := a.check("resumed")
 	var sysHead, nudge, one bool
 	for _, l := range strings.Split(s, "\n") {
 		l = strings.TrimSpace(l)
@@ -134,8 +133,7 @@ func TestNudgeSystemLiveNudge(t *testing.T) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
 	a.waitFor("All done.")
-	a.check("after nudge")
-	s := a.settled()
+	s := a.check("after nudge")
 	if !strings.Contains(s, "asking again (1/2)") {
 		t.Errorf("want the loop's one-line nudge note:\n%s", s)
 	}

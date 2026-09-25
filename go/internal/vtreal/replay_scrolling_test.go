@@ -146,7 +146,7 @@ func TestScrolling(t *testing.T) {
 		if r := composerRow(ls); r < 0 || r < len(ls)-3 {
 			t.Fatalf("composer left the bottom while scrolled (row %d of %d):\n%s", r, len(ls), s)
 		}
-		a.check("wheel up")
+		a.checkOn("wheel up", s)
 	})
 
 	t.Run("WheelDownClearsCue", func(t *testing.T) {
@@ -198,7 +198,7 @@ func TestScrolling(t *testing.T) {
 		if strings.Contains(s, scrollingMark(turns)) {
 			t.Fatalf("the last turn is still on screen at the top:\n%s", s)
 		}
-		a.check("home")
+		a.checkOn("home", s)
 		a.key(uv.KeyEnd, 0)
 		a.waitUntil(func(string) bool { return scrollingAtBottom(a) }, "the bottom after end")
 		if strings.Contains(a.text(), scrollingMark(1)) {
@@ -246,7 +246,7 @@ func TestScrolling(t *testing.T) {
 		if strings.Contains(s, "scrolled ↑") {
 			t.Fatalf("follow mode did not resume after submit:\n%s", s)
 		}
-		a.check("follow after submit")
+		a.checkOn("follow after submit", s)
 	})
 
 	// A drag over the transcript selects and copies; it must not move
@@ -310,16 +310,21 @@ func scrollingCueLines(t *testing.T, a *app) int {
 func TestScrollingNewOutputDoesNotFollow(t *testing.T) {
 	t.Parallel()
 	tape := scrollingTape(t, t.TempDir(), 2, 200)
+	// 15ms a word: each turn streams ~3 s, and the scroll and the cue
+	// land within the first second of turn 2. Both turns are paced (the
+	// delay is per tape), so at 25ms the test spent 4 s more waiting.
 	cfg := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 25}", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 15%s}", tape, hurryKey), 1)
 	a := startCfg(t, 100, 24, cfg)
 
+	hurry(t, a.home) // turn 1 only fills the transcript: unpaced
 	a.typeText("ask 1")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor(scrollingMark(1))
 	scrollingIdle(t, a, 1)
 	a.settled()
+	unhurry(t, a.home)
 
 	// Second turn: scroll up while it is still streaming.
 	a.typeText("ask 2")
@@ -333,6 +338,7 @@ func TestScrollingNewOutputDoesNotFollow(t *testing.T) {
 	}, "the scrolled cue mid-turn")
 	a.waitUntil(func(s string) bool { return strings.Contains(s, "↓ new output") },
 		"the new-output cue while scrolled up mid-turn")
+	hurry(t, a.home) // cue seen mid-turn: the rest may land at once
 	if !a.waitDone(2, 30*time.Second) {
 		t.Fatalf("the second turn never finished:\n%s", a.text())
 	}
@@ -340,7 +346,7 @@ func TestScrollingNewOutputDoesNotFollow(t *testing.T) {
 	if !strings.Contains(s, "scrolled ↑") {
 		t.Fatalf("the finished turn pulled the scrolled-up view back to the bottom:\n%s", s)
 	}
-	a.check("new output while scrolled up")
+	a.checkOn("new output while scrolled up", s)
 
 	// End follows again.
 	a.key(uv.KeyEnd, 0)

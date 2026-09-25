@@ -138,7 +138,7 @@ func TestWebModeOffline(t *testing.T) {
 				t.Errorf("server log %q on the TUI:\n%s", bad, s)
 			}
 		}
-		a.check("after bad requests")
+		a.checkOn("after bad requests", s)
 	})
 	t.Run("TestWebModeOfflinePortReleasedOnExit", func(t *testing.T) {
 		webModeOfflineQuit(t, a)

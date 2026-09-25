@@ -130,10 +130,12 @@ func TestSessionPickerFilterUnicodeLarge(t *testing.T) {
 		tm.keys("Enter")
 		tm.waitFor("#0000")
 		tm.keys("Down", "Down", "Down")
-		title := sessionPickerFilterUnicodeLargeSelected(tm.settled(), ids)
-		if ids[title] == "" {
-			t.Fatalf("no selected row after 3 downs (%q):\n%s", title, tm.screen())
-		}
+		// Three downs from the current session's row land on the third
+		// seeded one. tmux's settle (two equal captures 80ms apart) took
+		// a frame between the downs on a loaded run, and the rest of
+		// them then "moved" the selection across the resize.
+		title := sessionPickerFilterUnicodeLargeTitle(2)
+		tm.waitUntil(func(s string) bool { return sessionPickerFilterUnicodeLargeSelected(s, ids) == title }, "the selection 3 rows down on "+title)
 		tm.resize(70, 20)
 		tm.waitUntil(func(s string) bool { return strings.Count(s, "\n") == 19 && strings.Contains(s, "▸ ") }, "picker repaint at 70x20")
 		s := tm.settled()

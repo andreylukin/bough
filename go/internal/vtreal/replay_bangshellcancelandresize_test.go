@@ -9,7 +9,6 @@ package vtreal
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -18,13 +17,14 @@ import (
 )
 
 // bangShellCancelAndResizeStart boots bough in tmux on the bang tape
-// and returns the run's $HOME, a slow ! line and its unique marker.
-func bangShellCancelAndResizeStart(t *testing.T) (*tmuxApp, string, string, string) {
+// and returns the run's $HOME, a slow ! line (ticks lines 0.2 s apart)
+// and its unique marker.
+func bangShellCancelAndResizeStart(t *testing.T, ticks int) (*tmuxApp, string, string, string) {
 	t.Helper()
 	tape, _ := filepath.Abs("testdata/replay/bang-shell.jsonl")
 	tm, home := resizeTmuxStart(t, 100, 30, replayConfig(tape))
-	marker := fmt.Sprintf("bscr-%d-%d", os.Getpid(), time.Now().UnixNano())
-	line := "!sh -c 'for i in $(seq 1 50); do echo bscr-tick-$i; sleep 0.2; done' " + marker
+	marker := "bscr-" + uniqueID()
+	line := fmt.Sprintf("!sh -c 'for i in $(seq 1 %d); do echo bscr-tick-$i; sleep 0.2; done' ", ticks) + marker
 	t.Cleanup(func() { _ = exec.Command("pkill", "-f", marker).Run() })
 	return tm, home, line, marker
 }
@@ -64,13 +64,15 @@ func TestBangShellCancelAndResize(t *testing.T) {
 	t.Parallel()
 	t.Run("TestBangShellCancelAndResizeCompletesAfterResize", func(t *testing.T) {
 		t.Parallel()
-		tm, home, line, marker := bangShellCancelAndResizeStart(t)
+		// 15 ticks (3 s) outlast the resize round trip; this case waits
+		// the command out, and at the others' 50 that took 10 s.
+		tm, home, line, marker := bangShellCancelAndResizeStart(t, 15)
 		resizeTmuxSend(tm, line)
 		bangShellCancelAndResizeWaitAlive(t, tm, marker, true)
 		tm.resize(60, 20)
 		time.Sleep(300 * time.Millisecond)
 		tm.resize(100, 30)
-		tm.waitFor("bscr-tick-50")
+		tm.waitFor("bscr-tick-15")
 		bangShellCancelAndResizeWaitAlive(t, tm, marker, false)
 		resizeTmuxCheck(t, tm, "after slow ! finished", 100)
 		bangShellCancelAndResizeNextTurn(t, tm, home)
@@ -78,7 +80,7 @@ func TestBangShellCancelAndResize(t *testing.T) {
 
 	t.Run("TestBangShellCancelAndResizeStreamsPartialOutput", func(t *testing.T) {
 		t.Parallel()
-		tm, _, line, marker := bangShellCancelAndResizeStart(t)
+		tm, _, line, marker := bangShellCancelAndResizeStart(t, 50)
 		resizeTmuxSend(tm, line)
 		tm.waitFor("bscr-tick-10")
 		if !bangShellCancelAndResizeAlive(marker) {
@@ -88,12 +90,16 @@ func TestBangShellCancelAndResize(t *testing.T) {
 
 	t.Run("TestBangShellCancelAndResizeEscKillsChild", func(t *testing.T) {
 		t.Parallel()
-		tm, home, line, marker := bangShellCancelAndResizeStart(t)
+		tm, home, line, marker := bangShellCancelAndResizeStart(t, 50)
 		resizeTmuxSend(tm, line)
 		tm.waitFor("bscr-tick-10")
 		tm.resize(70, 24)
 		tm.keys("Escape")
 		bangShellCancelAndResizeWaitAlive(t, tm, marker, false)
+		// The child is gone before bough has drawn "! cancelled" into
+		// the box; under a loaded run a frame without it can hold still
+		// for a whole settle window. Wait for the marker, then judge.
+		tm.waitUntil(func(s string) bool { return strings.Contains(strings.ToLower(s), "cancel") }, "the cancelled marker")
 		s := resizeTmuxSettled(tm, 70)
 		if !strings.Contains(s, "bscr-tick-10") || strings.Contains(s, "bscr-tick-50") {
 			t.Fatalf("cancelled box must keep the partial output only:\n%s", s)

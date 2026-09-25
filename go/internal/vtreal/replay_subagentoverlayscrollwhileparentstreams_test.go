@@ -119,7 +119,7 @@ func subagentOverlayScrollWhileParentStreamsConfig(hist, parent string) string {
 	cfg := subagentsConfig(hist)
 	cfg = strings.Replace(cfg,
 		fmt.Sprintf("config: {file: %q}\n- id: codemode", hist),
-		fmt.Sprintf("config: {file: %q, delay_ms: 60}\n- id: codemode", parent), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 60%s}\n- id: codemode", parent, hurryKey), 1)
 	return strings.Replace(cfg,
 		fmt.Sprintf("config: {file: %q, provide: codemode}", hist),
 		fmt.Sprintf("config: {file: %q, provide: codemode}", parent), 1)
@@ -147,10 +147,14 @@ func TestSubagentOverlayScrollWhileParentStreams(t *testing.T) {
 			a := startCfg(t, cols, 30, subagentOverlayScrollWhileParentStreamsConfig(hist, parent))
 			a.waitFor("subagent 3")
 
+			// Focus the card before the parent streams: the focus stays
+			// on it through the turn (enter with a draft sends), and
+			// each of the walk's settles waited out the stream's
+			// repaints, ~9 s of every run.
+			subagentsFocusCard(a, "subagent 2")
 			a.typeText("keep talking")
 			a.key(uv.KeyEnter, 0)
 			a.waitFor("PARENT-")
-			subagentsFocusCard(a, "subagent 2")
 			if strings.Contains(a.text(), "PARENT-END") {
 				t.Fatalf("parent finished before the overlay opened; the tape is too short:\n%s", a.text())
 			}
@@ -186,6 +190,7 @@ func TestSubagentOverlayScrollWhileParentStreams(t *testing.T) {
 				t.Fatalf("overlay snapped to the bottom (%s on screen):\n%s", last, s)
 			}
 
+			hurry(t, a.home) // the rest of the parent's reply lands at once
 			subagentsEsc(a)
 			a.waitUntil(func(s string) bool { return !strings.Contains(s, "esc to close") }, "esc to close the overlay")
 			a.waitFor("PARENT-END")
@@ -196,7 +201,7 @@ func TestSubagentOverlayScrollWhileParentStreams(t *testing.T) {
 			if strings.Contains(s, "W2-LINE-") {
 				t.Errorf("subagent transcript leaked into the parent view:\n%s", s)
 			}
-			a.check("back at the parent")
+			a.checkOn("back at the parent", s)
 		})
 	}
 }

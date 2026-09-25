@@ -145,7 +145,7 @@ func TestRewindAcrossSubagentTurn(t *testing.T) {
 		if !strings.Contains(s, "REPLY-ALPHA") {
 			t.Errorf("turn 1 lost by the rewind:\n%s", s)
 		}
-		a.check("after rewind")
+		a.checkOn("after rewind", s)
 	})
 
 	t.Run("HistoryAfterRewindPoint", func(t *testing.T) {

@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -36,6 +38,9 @@ type Terminal struct {
 	dec       map[ansi.DECMode]ansi.ModeSetting
 	cursor    uv.Position
 	cursorVis bool
+
+	lastOut atomic.Int64 // UnixNano of the last write into the emulator
+	lastIn  atomic.Int64 // UnixNano of the last input sent to the app
 }
 
 type Snapshot struct {
@@ -77,8 +82,8 @@ func NewTerminal(tb testing.TB, cols, rows int) (*Terminal, error) {
 	})
 	t.Emu = emu
 	setTitle := func(s string) { t.mu.Lock(); t.title = s; t.mu.Unlock() }
-	go io.Copy(newTitleFilter(emu, setTitle), pty) //nolint:errcheck // app output → emulator
-	go io.Copy(pty, emu)                           //nolint:errcheck // emulator input (keys, replies) → app
+	go io.Copy(newTitleFilter(stampWriter{emu, &t.lastOut}, setTitle), pty) //nolint:errcheck // app output → emulator
+	go io.Copy(pty, emu)                                                    //nolint:errcheck // emulator input (keys, replies) → app
 	return t, nil
 }
 
@@ -117,6 +122,7 @@ func (t *Terminal) Wait(cmd *exec.Cmd) error { return xpty.WaitProcess(t.tb.Cont
 func (t *Terminal) Close() error { return t.pty.Close() }
 
 func (t *Terminal) Resize(cols, rows int) error {
+	t.stampIn()
 	t.mu.Lock()
 	t.cols, t.rows = cols, rows
 	t.mu.Unlock()
@@ -124,10 +130,21 @@ func (t *Terminal) Resize(cols, rows int) error {
 	return t.pty.Resize(cols, rows)
 }
 
-func (t *Terminal) SendText(s string)         { t.Emu.SendText(s) }
-func (t *Terminal) SendKey(k uv.KeyEvent)     { t.Emu.SendKey(k) }
-func (t *Terminal) SendMouse(m uv.MouseEvent) { t.Emu.SendMouse(m) }
-func (t *Terminal) Paste(s string)            { t.Emu.Paste(s) }
+// Everything sent to the app stamps lastIn: settled waits for the reply
+// to input sent just before it (see LastInput).
+func (t *Terminal) SendText(s string)         { t.stampIn(); t.Emu.SendText(s) }
+func (t *Terminal) SendKey(k uv.KeyEvent)     { t.stampIn(); t.Emu.SendKey(k) }
+func (t *Terminal) SendMouse(m uv.MouseEvent) { t.stampIn(); t.Emu.SendMouse(m) }
+func (t *Terminal) Paste(s string)            { t.stampIn(); t.Emu.Paste(s) }
+
+// WriteInput writes raw bytes to the app, as a terminal that splits or
+// mangles input would.
+func (t *Terminal) WriteInput(p []byte) (int, error) { t.stampIn(); return t.pty.Write(p) }
+
+func (t *Terminal) stampIn() { t.lastIn.Store(time.Now().UnixNano()) }
+
+// LastInput is when input was last sent to the app (the epoch if never).
+func (t *Terminal) LastInput() time.Time { return time.Unix(0, t.lastIn.Load()) }
 
 func (t *Terminal) Snapshot() Snapshot {
 	t.mu.Lock()
@@ -151,3 +168,21 @@ func (t *Terminal) Snapshot() Snapshot {
 	}
 	return s
 }
+
+// stampWriter records when bytes last reached the emulator. It sits
+// under the title filter, so a title-only write (which never touches
+// the cells) does not stamp and a held-back grapheme flushed by the
+// filter's timer does.
+type stampWriter struct {
+	w  io.Writer
+	at *atomic.Int64
+}
+
+func (s stampWriter) Write(p []byte) (int, error) {
+	n, err := s.w.Write(p)
+	s.at.Store(time.Now().UnixNano())
+	return n, err
+}
+
+// LastOutput is when the app's output last reached the screen.
+func (t *Terminal) LastOutput() time.Time { return time.Unix(0, t.lastOut.Load()) }

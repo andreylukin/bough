@@ -62,7 +62,7 @@ func followUpWaitDone(a *app, n int) {
 		if c >= n {
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	a.t.Fatalf("turn %d never finished:\n%s", n, a.text())
 }
@@ -158,7 +158,7 @@ func TestFollowUpRewindSecondTurn(t *testing.T) {
 	if in := followUpKinds(a, "input"); fmt.Sprint(in) != "[alpha]" {
 		t.Errorf("forked session inputs = %q, want [alpha]:\n%s", in, s)
 	}
-	a.check("after rewind")
+	a.checkOn("after rewind", s)
 
 	// Resend: the model is asked exactly once more, so the NEXT tape
 	// reply lands — not beta's again, not end of tape.
@@ -177,7 +177,7 @@ func TestFollowUpRewindSecondTurn(t *testing.T) {
 			t.Errorf("rewound reply resurfaced in the forked session:\n%s", s)
 		}
 	}
-	a.check("after resend")
+	a.checkOn("after resend", s)
 }
 
 func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
@@ -185,7 +185,7 @@ func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
 	tape := followUpTape(t)
 	cfg := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}\n", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 400}\n", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 400%s}\n", tape, hurryKey), 1)
 	if !strings.Contains(cfg, "delay_ms: 400") {
 		t.Fatalf("could not add delay_ms to the replay row:\n%s", cfg)
 	}
@@ -196,6 +196,7 @@ func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
 	a.typeText("beta")
 	a.key(uv.KeyEnter, uv.ModAlt)
 	a.waitFor("beta (queued)")
+	hurry(t, a.home) // queued mid-turn: the rest of both replies may land at once
 	followUpWaitDone(a, 2)
 	a.waitFor("REPLY-BETA")
 	s := a.settled()
@@ -205,5 +206,5 @@ func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
 	if in := followUpKinds(a, "input"); fmt.Sprint(in) != "[alpha beta]" {
 		t.Errorf("inputs = %q, want [alpha beta]:\n%s", in, s)
 	}
-	a.check("after follow-up")
+	a.checkOn("after follow-up", s)
 }

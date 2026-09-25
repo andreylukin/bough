@@ -86,51 +86,61 @@ var (
 	panicBinErr  error
 )
 
+// TestMain runs this build beside the main one, before any test starts.
+// Started by the first case instead, it was the longest wait in the
+// package (85 s on a loaded run), all five cases held a parallel slot
+// through it, and it took CPU from whatever else was running.
+func init() {
+	prebuilds["TestScrollPanicRestoration"] = func() { panicBinOnce.Do(buildPanicBinOnce) }
+}
+
 func buildPanicBin(t *testing.T) string {
 	t.Helper()
-	panicBinOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "vtreal-panic-")
-		if err != nil {
-			panicBinErr = err
-			return
-		}
-		src, _ := filepath.Abs("../../plugins/ui/model.go")
-		b, err := os.ReadFile(src)
-		if err != nil {
-			panicBinErr = err
-			return
-		}
-		s := string(b)
-		for _, r := range [][2]string{
-			{"func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {\n",
-				"func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {\n\tif c := panicHookUpdate(msg); c != nil {\n\t\treturn m, c\n\t}\n"},
-			{"func (m model) View() tea.View {\n", "func (m model) View() tea.View {\n\tpanicHookView()\n"},
-			{"\t\tev, ok := <-m.events\n", "\t\tev, ok := <-m.events\n\t\tpanicHookPump()\n"},
-		} {
-			if strings.Count(s, r[0]) != 1 {
-				panicBinErr = fmt.Errorf("overlay anchor not found: %q", r[0])
-				return
-			}
-			s = strings.Replace(s, r[0], r[1], 1)
-		}
-		patched := filepath.Join(dir, "model.go")
-		hook := filepath.Join(dir, "panichook.go")
-		_ = os.WriteFile(patched, []byte(s), 0o644)
-		_ = os.WriteFile(hook, []byte(panicHookSrc), 0o644)
-		hookDst, _ := filepath.Abs("../../plugins/ui/zz_panichook.go")
-		ov, _ := json.Marshal(map[string]any{"Replace": map[string]string{src: patched, hookDst: hook}})
-		ovPath := filepath.Join(dir, "overlay.json")
-		_ = os.WriteFile(ovPath, ov, 0o644)
-		panicBin = filepath.Join(dir, "bough-panic"+exeSuffix())
-		out, err := exec.Command("go", "build", "-overlay", ovPath, "-o", panicBin, "../../cmd/bough").CombinedOutput()
-		if err != nil {
-			panicBinErr = fmt.Errorf("build: %v: %s", err, out)
-		}
-	})
+	panicBinOnce.Do(buildPanicBinOnce)
 	if panicBinErr != nil {
 		t.Fatalf("panic binary: %v", panicBinErr)
 	}
 	return panicBin
+}
+
+func buildPanicBinOnce() {
+	dir, err := os.MkdirTemp("", "vtreal-panic-")
+	if err != nil {
+		panicBinErr = err
+		return
+	}
+	src, _ := filepath.Abs("../../plugins/ui/model.go")
+	b, err := os.ReadFile(src)
+	if err != nil {
+		panicBinErr = err
+		return
+	}
+	s := string(b)
+	for _, r := range [][2]string{
+		{"func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {\n",
+			"func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {\n\tif c := panicHookUpdate(msg); c != nil {\n\t\treturn m, c\n\t}\n"},
+		{"func (m model) View() tea.View {\n", "func (m model) View() tea.View {\n\tpanicHookView()\n"},
+		{"\t\tev, ok := <-m.events\n", "\t\tev, ok := <-m.events\n\t\tpanicHookPump()\n"},
+	} {
+		if strings.Count(s, r[0]) != 1 {
+			panicBinErr = fmt.Errorf("overlay anchor not found: %q", r[0])
+			return
+		}
+		s = strings.Replace(s, r[0], r[1], 1)
+	}
+	patched := filepath.Join(dir, "model.go")
+	hook := filepath.Join(dir, "panichook.go")
+	_ = os.WriteFile(patched, []byte(s), 0o644)
+	_ = os.WriteFile(hook, []byte(panicHookSrc), 0o644)
+	hookDst, _ := filepath.Abs("../../plugins/ui/zz_panichook.go")
+	ov, _ := json.Marshal(map[string]any{"Replace": map[string]string{src: patched, hookDst: hook}})
+	ovPath := filepath.Join(dir, "overlay.json")
+	_ = os.WriteFile(ovPath, ov, 0o644)
+	panicBin = filepath.Join(dir, "bough-panic"+exeSuffix())
+	out, err := exec.Command("go", "build", "-overlay", ovPath, "-o", panicBin, "../../cmd/bough").CombinedOutput()
+	if err != nil {
+		panicBinErr = fmt.Errorf("build: %v: %s", err, out)
+	}
 }
 
 func startPanic(t *testing.T, at string) *app {
@@ -165,6 +175,7 @@ func startPanic(t *testing.T, at string) *app {
 }
 
 func TestScrollPanicRestoration(t *testing.T) {
+	t.Parallel()
 	for _, at := range []string{"update", "view", "cmd", "pump", "goroutine"} {
 		t.Run(at, func(t *testing.T) {
 			t.Parallel()
@@ -182,10 +193,16 @@ func TestScrollPanicRestoration(t *testing.T) {
 			case <-time.After(15 * time.Second):
 				t.Fatalf("process did not die after the forced panic:\n%s", a.text())
 			}
+			// Let the emulator drain the restore bytes: up to 2 s, but no
+			// longer than it takes the restored state and the stack to
+			// show (a flat 2 s here was most of each case). A restore that
+			// never comes is judged at the deadline as before.
 			var s Snapshot
-			for range 40 { // let the emulator drain the restore bytes
+			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
 				s = a.term.Snapshot()
-				time.Sleep(50 * time.Millisecond)
+				if !s.AltScreen && s.CursorVis && strings.Contains(a.text(), "goroutine ") {
+					break
+				}
 			}
 			var bad []string
 			if s.AltScreen {

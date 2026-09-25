@@ -51,6 +51,14 @@ func TestResizeStormDuringAskAndPicker(t *testing.T) {
 		t.Logf("storm took %v (slow tmux), still checking", d)
 	}
 	tm.resize(80, 24)
+	// Under load bough can take longer than a settle window to answer
+	// the last resize, and tmux shows its previous, wider frame cut at
+	// 80 columns (options clipped, status bar without "? keys") as a
+	// perfectly still screen. The status bar spans the pane only once
+	// bough has drawn at 80.
+	tm.waitUntil(func(string) bool {
+		return resizeTmuxBarWidth(strings.Split(resizeTmuxScreen(tm), "\n")) >= 78
+	}, "a frame redrawn at 80 columns")
 	s := pickerResizeSettled(tm, 24, "> ")
 	ls := strings.Split(s, "\n")
 	if panicky.MatchString(s) {

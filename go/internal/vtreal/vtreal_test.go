@@ -8,13 +8,16 @@
 package vtreal
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -28,6 +31,11 @@ import (
 
 var bin string // testbin.Path, resolved once in TestMain
 
+// prebuilds are other binaries TestMain builds beside bin, by the name
+// of the test that needs them; each still guards itself with a
+// sync.Once, for a test that runs without TestMain's -run matching.
+var prebuilds = map[string]func(){}
+
 func TestMain(m *testing.M) {
 	// Every child inherits this: none may take the user's page server
 	// port (localhost:7683) and serve this build's pages from a temp HOME.
@@ -40,11 +48,21 @@ func TestMain(m *testing.M) {
 		killChildren()
 		os.Exit(1)
 	}()
+	// Finish auxiliary builds before running timing-sensitive terminal tests.
+	flag.Parse()
+	run := flag.Lookup("test.run").Value.String()
+	var pre sync.WaitGroup
+	for name, b := range prebuilds {
+		if ok, err := regexp.MatchString(run, name); ok || err != nil {
+			pre.Go(b)
+		}
+	}
 	var err error
 	if bin, err = testbin.Path(); err != nil {
 		fmt.Fprintln(os.Stderr, "vtreal:", err)
 		os.Exit(1)
 	}
+	pre.Wait()
 	code := m.Run()
 	killChildren()
 	os.Exit(code)
@@ -91,10 +109,21 @@ type app struct {
 
 func start(t *testing.T, cols, rows int) *app { return startCfg(t, cols, rows, config) }
 
-// startCfg boots bough with the given bough.yml in a fresh $HOME.
-func startCfg(t *testing.T, cols, rows int, yml string) *app {
+// startCfg boots bough with the given bough.yml in a fresh $HOME; env
+// (KEY=value) goes to the child only, so the test can stay parallel.
+func startCfg(t *testing.T, cols, rows int, yml string, env ...string) *app {
+	t.Helper()
+	return startCfgIn(t, "", cols, rows, yml, env...)
+}
+
+// startCfgIn is startCfg running in dir instead of $HOME ("" = $HOME),
+// for a working tree several tests can share read-only.
+func startCfgIn(t *testing.T, dir string, cols, rows int, yml string, env ...string) *app {
 	t.Helper()
 	home := t.TempDir()
+	if dir == "" {
+		dir = home
+	}
 	cfg := filepath.Join(home, "bough.yml")
 	if err := os.WriteFile(cfg, []byte(yml), 0o644); err != nil {
 		t.Fatal(err)
@@ -104,11 +133,12 @@ func startCfg(t *testing.T, cols, rows int, yml string) *app {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "-config", cfg)
-	cmd.Dir = home
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"HOME="+home, "TERM=xterm-256color", "COLORTERM=truecolor",
 		"NO_COLOR=", "BOUGH_VERBOSE=",
 	)
+	cmd.Env = append(cmd.Env, env...)
 	if err := term.Start(cmd); err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +204,39 @@ func (a *app) waitUntil(pred func(screen string) bool, what string) {
 // the composer, and two identical samples of a half-drawn frame then
 // read as "settled" — which is how an assertion about the composer's
 // row saw it four lines off the bottom with blank rows beneath it.
+//
+// The same 120ms window is also judged on the byte stream, polled every
+// 10ms: no output reaching the emulator for 120ms means no cell changed
+// either, and it ends the wait up to 60ms sooner than the sampling grid
+// does, on ~1900 calls a run that together were a third of the
+// package's test time. The window also runs from the last input sent
+// through the terminal, so input sent just before is still answered;
+// a screen already quiet that long with nothing sent since is returned
+// at once (a third of the calls were such, and each used to wait out a
+// fresh window from the call). The samples stay for output that never
+// stops but changes no text.
+//
+// While a turn or a job runs, the spinner and the elapsed timers tick
+// on their own and no two samples match; every such call used to run
+// to the 3.6 s cap. A screen where only those moved for calm (600ms,
+// five times the strict window, so a frame still being painted is not
+// mistaken for one) is returned as settled.
 func (a *app) settled() string {
-	prev := a.text()
+	const quiet, every, calm = 120 * time.Millisecond, 60 * time.Millisecond, 600 * time.Millisecond
+	began := time.Now()
+	prev, prevAt := a.text(), began
+	calmSince := began
 	same := 0
-	for range 60 {
-		time.Sleep(60 * time.Millisecond)
+	for time.Since(began) < 60*every {
+		time.Sleep(10 * time.Millisecond)
+		// A terminal that never stamped (no output yet, or one built
+		// without stampWriter) has no byte clock: samples only.
+		if last := a.term.LastOutput(); last.UnixNano() != 0 && time.Since(last) >= quiet && time.Since(a.term.LastInput()) >= quiet {
+			return a.text()
+		}
+		if time.Since(prevAt) < every {
+			continue
+		}
 		cur := a.text()
 		if cur == prev {
 			same++
@@ -187,10 +245,33 @@ func (a *app) settled() string {
 			}
 		} else {
 			same = 0
+			if untick(cur) != untick(prev) {
+				calmSince = time.Now()
+			} else if time.Since(calmSince) >= calm {
+				return cur
+			}
 		}
-		prev = cur
+		prev, prevAt = cur, time.Now()
 	}
 	return prev
+}
+
+// spinnerFrames are bubbles' MiniDot, the only spinner the ui draws.
+const spinnerFrames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+// elapsedChip is a running timer: "12s", "2m05s".
+var elapsedChip = regexp.MustCompile(`\b(\d+m\d\ds|\d+s)\b`)
+
+// untick blanks what moves on a screen by itself: spinner frames and
+// elapsed timers.
+func untick(s string) string {
+	s = elapsedChip.ReplaceAllString(s, "#s")
+	return strings.Map(func(r rune) rune {
+		if strings.ContainsRune(spinnerFrames, r) {
+			return '*'
+		}
+		return r
+	}, s)
 }
 
 func (a *app) typeText(s string) { a.term.SendText(s) }

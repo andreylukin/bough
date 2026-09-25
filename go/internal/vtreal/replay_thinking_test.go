@@ -150,8 +150,7 @@ func TestThinkingShiftTabReportsNoLevel(t *testing.T) {
 	a.key(uv.KeyTab, uv.ModShift)
 	a.waitUntil(func(s string) bool { return strings.Contains(s, "no thinking level") },
 		"shift+tab to report that this provider has no thinking level")
-	a.check("after shift+tab")
-	if s := a.settled(); strings.Contains(s, "think off") || strings.Contains(s, "think high") {
+	if s := a.check("after shift+tab"); strings.Contains(s, "think off") || strings.Contains(s, "think high") {
 		t.Fatalf("a level chip appeared although the provider has none:\n%s", s)
 	}
 }

@@ -16,7 +16,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // ctrlzInEditorAndBangStart is startTmux with $EDITOR pointed at a
@@ -39,7 +38,7 @@ func ctrlzInEditorAndBangStart(t *testing.T, cols, rows int) (*tmuxApp, string) 
 	if err := os.WriteFile(ed, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtedbang-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtedbang-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color VISUAL= EDITOR=%s %s -config %s", home, home, ed, bin, cfg)
 	tm.run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), shell)
 	t.Cleanup(func() {

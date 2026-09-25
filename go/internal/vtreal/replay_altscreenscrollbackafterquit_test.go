@@ -37,7 +37,7 @@ func altScreenScrollbackAfterQuitStart(t *testing.T, tape string, cols, rows int
 	if err := os.WriteFile(cfg, []byte(replayConfig(tape)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtaltq-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtaltq-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && echo %s && HOME=%s TERM=xterm-256color %s -config %s; echo %s; exec sleep 600",
 		home, altScreenScrollbackAfterQuitBefore, home, bin, cfg, altScreenScrollbackAfterQuitAfter)
 	tm.run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), shell)

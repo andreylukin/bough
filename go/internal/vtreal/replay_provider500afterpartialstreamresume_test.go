@@ -162,8 +162,7 @@ func TestProvider500AfterPartialStreamResume(t *testing.T) {
 	if resumeDones(log) < 1 {
 		t.Fatalf("failed turn never recorded done:\n%s", a.text())
 	}
-	a.check("failed turn")
-	pre := a.settled()
+	pre := a.check("failed turn")
 	before := resumeTranscript(a)
 	if n := len(srv.requests()); n != 1 {
 		t.Errorf("provider called %d times, want 1 (deltas were delivered: no retry)", n)

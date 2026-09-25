@@ -23,7 +23,7 @@ import (
 func liveGlueConfig(tape string, delayMS int) string {
 	return strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: %d%s}", tape, delayMS, hurryKey), 1)
 }
 
 const liveGlueCursor = "▌"
@@ -78,7 +78,7 @@ func liveGlueSettledChecks(a *app, where string) {
 			a.t.Errorf("%s: row %d glues text to the user marker (%q):\n%s", where, i, l, s)
 		}
 	}
-	a.check(where)
+	a.checkOn(where, s)
 }
 
 func TestLiveGlue(t *testing.T) {

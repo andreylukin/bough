@@ -75,6 +75,10 @@ func askThenModelPickerSwapAnswerConfig(tape, srv string) string {
 - id: ask
   plugin: ask
   config: {timeout_minutes: 1}
+# The tape speaks code mode; engine-unreal (the default loop row)
+# cannot drive a replay llm row.
+- id: loop
+  plugin: loop
 - id: session-title
   plugin: session-title
   disabled: true
@@ -143,7 +147,7 @@ func askThenModelPickerSwapAnswerRun(t *testing.T) {
 	if n := len(bodies()); n != 0 {
 		t.Fatalf("the swap alone sent %d requests to the new provider", n)
 	}
-	a.check("picker closed, ask pending")
+	a.checkOn("picker closed, ask pending", s)
 
 	// Answer by number: the turn finishes on the tape, then the next
 	// turn is the new provider's.

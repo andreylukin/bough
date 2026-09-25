@@ -84,7 +84,7 @@ func TestContextViewTurnBlock(t *testing.T) {
 	if n := len(contextViewPiece.FindAllString(s, -1)); n != pieces {
 		t.Errorf("expanded block lists %d sized pieces, header said %d:\n%s", n, pieces, s)
 	}
-	a.check("context expanded")
+	a.checkOn("context expanded", s)
 }
 
 func TestContextViewSlashCommand(t *testing.T) {

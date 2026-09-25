@@ -76,11 +76,15 @@ func TestSearch(t *testing.T) {
 	t.Run("TestSearchTermReachableByScroll", func(t *testing.T) {
 		t.Parallel()
 		a := searchBoot(t)
+		// Paced like the way back down, rather than settling (120ms+)
+		// after each of the ~40 notches: one or two notches in flight
+		// cannot carry the match off a 30-row screen.
 		for range 200 {
-			if strings.Contains(a.settled(), searchTerm) {
+			if strings.Contains(a.text(), searchTerm) {
 				break
 			}
 			a.term.SendMouse(uv.MouseWheelEvent{X: 5, Y: 3, Button: uv.MouseWheelUp})
+			time.Sleep(20 * time.Millisecond)
 		}
 		if !strings.Contains(a.settled(), searchTerm) {
 			t.Fatalf("scrolling up never reached %q:\n%s", searchTerm, a.text())
@@ -116,6 +120,6 @@ func TestSearch(t *testing.T) {
 		if !strings.Contains(s, "answer number 30") {
 			t.Errorf("view left the bottom after ctrl+s / esc:\n%s", a.text())
 		}
-		a.check("after ctrl+s / esc")
+		a.checkOn("after ctrl+s / esc", s)
 	})
 }

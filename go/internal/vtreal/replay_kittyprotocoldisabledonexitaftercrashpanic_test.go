@@ -76,8 +76,8 @@ func kittyProtocolDisabledOnExitAfterCrashPanicTerminal(tb testing.TB, cols, row
 	})
 	t.Emu = emu
 	setTitle := func(s string) { t.mu.Lock(); t.title = s; t.mu.Unlock() }
-	go io.Copy(io.MultiWriter(newTitleFilter(emu, setTitle), raw), pty) //nolint:errcheck
-	go io.Copy(pty, emu)                                                //nolint:errcheck
+	go io.Copy(io.MultiWriter(newTitleFilter(stampWriter{emu, &t.lastOut}, setTitle), raw), pty) //nolint:errcheck
+	go io.Copy(pty, emu)                                                                         //nolint:errcheck
 	return t
 }
 
@@ -190,6 +190,7 @@ func kittyProtocolDisabledOnExitAfterCrashPanicAssert(t *testing.T, a *app, raw 
 }
 
 func TestKittyProtocolDisabledOnExitAfterCrashPanic(t *testing.T) {
+	t.Parallel()
 	t.Run("ctrl+c", func(t *testing.T) {
 		t.Parallel()
 		a, raw := kittyProtocolDisabledOnExitAfterCrashPanicStart(t, bin)

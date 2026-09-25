@@ -28,7 +28,7 @@ func bracketedPasteSplitWrite(a *app, chunks ...string) {
 		if i > 0 {
 			time.Sleep(50 * time.Millisecond)
 		}
-		if _, err := a.term.pty.Write([]byte(c)); err != nil {
+		if _, err := a.term.WriteInput([]byte(c)); err != nil {
 			a.t.Fatal(err)
 		}
 	}

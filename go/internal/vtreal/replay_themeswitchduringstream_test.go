@@ -8,6 +8,9 @@ package vtreal
 //
 // The tape paces its words (delay_ms) and the switch fires on seeing
 // the reply's MIDPOINT word, so the switch always lands mid-stream.
+// Despite its name the word comes 11th: the switch then has ~3.8 s of
+// stream left at 25ms a word, and the run no longer waits out 60 words
+// before it and 100 after at 40ms (6.4 s).
 
 import (
 	"fmt"
@@ -38,7 +41,7 @@ func themeSwitchDuringStreamTape(t *testing.T) string {
 
 func TestThemeSwitchDuringStream(t *testing.T) {
 	t.Parallel()
-	a := themeStart(t, 100, 60, cancelConfig(themeSwitchDuringStreamTape(t), 40)+`
+	a := themeStart(t, 100, 60, cancelConfig(themeSwitchDuringStreamTape(t), 25)+`
 - id: theme
   plugin: theme
   config: {name: forest}
@@ -64,6 +67,7 @@ func TestThemeSwitchDuringStream(t *testing.T) {
 	if strings.Contains(a.text(), "w160") {
 		t.Fatalf("the switch landed after the stream ended; the scenario is vacuous:\n%s", a.text())
 	}
+	hurry(t, a.home) // switched mid-stream: the rest may land at once
 
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished after the switch:\n%s", a.text())

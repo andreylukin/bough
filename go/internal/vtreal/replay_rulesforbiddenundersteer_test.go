@@ -98,7 +98,7 @@ func TestRulesForbiddenUnderSteerPromptGate(t *testing.T) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
 	screen := a.settled()
-	a.check("after steer at the gate")
+	a.checkOn("after steer at the gate", screen)
 
 	t.Run("TestRulesForbiddenUnderSteerNeverRuns", func(t *testing.T) {
 		rulesForbiddenUnderSteerAbsent(t, a, sentinel)
@@ -152,7 +152,7 @@ func TestRulesForbiddenUnderSteerForbidden(t *testing.T) {
 	// done lands in history before the turn is painted over the welcome.
 	a.waitUntil(func(s string) bool { return strings.Contains(s, "RFUS-MARKER") }, "the refusal justification")
 	screen := a.settled()
-	a.check("after forbidden")
+	a.checkOn("after forbidden", screen)
 	rulesForbiddenUnderSteerAbsent(t, a, sentinel)
 	if !strings.Contains(screen, "RFUS-MARKER") {
 		t.Errorf("no refusal justification on screen:\n%s", screen)

@@ -111,6 +111,6 @@ func TestUndoAfterCancelledEditTool(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(a.wt, "b.txt")); !os.IsNotExist(err) {
 			t.Errorf("b.txt exists after /undo: %v", err)
 		}
-		a.check("after /undo")
+		a.checkOn("after /undo", s)
 	})
 }

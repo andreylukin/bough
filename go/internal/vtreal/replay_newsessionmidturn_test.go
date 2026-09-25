@@ -101,7 +101,29 @@ func TestNewSessionMidTurn(t *testing.T) {
 		}
 		newSessionMidTurnSlash(a, "start the long one")
 
-		// Watch past the old stream's natural end.
+		// Watch past the old stream's end: until the old session records
+		// it (done or cancelled) and a second more for a straggling
+		// delta, or the 10 s the whole stream would take. A fixed 10 s
+		// watched a stream /new had already ended.
+		oldEnded := func() bool {
+			paths, _ := filepath.Glob(filepath.Join(a.home, ".bough", "history", "*.jsonl"))
+			for _, p := range paths {
+				es, err := history.Read(p)
+				if err != nil || len(es) == 0 {
+					continue
+				}
+				if k := es[len(es)-1].Kind; k != "done" && k != "cancelled" {
+					continue
+				}
+				for _, e := range es {
+					if e.Kind == "input" && e.Data["text"] == "start the long one" {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		var endedAt time.Time
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			s := a.text()
@@ -110,6 +132,12 @@ func TestNewSessionMidTurn(t *testing.T) {
 			}
 			if cancelSpinner.MatchString(s) || strings.Contains(s, "working") {
 				t.Fatalf("new session shows the old turn running:\n%s", s)
+			}
+			if endedAt.IsZero() && oldEnded() {
+				endedAt = time.Now()
+			}
+			if !endedAt.IsZero() && time.Since(endedAt) > time.Second {
+				break
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
@@ -219,7 +247,7 @@ func TestNewSessionMidTurn(t *testing.T) {
 				t.Errorf("old turn's usage landed on the new session's bar (%q):\n%s", stale, s)
 			}
 		}
-		a.check("cost new session")
+		a.checkOn("cost new session", s)
 		newSessionMidTurnQuit(a)
 		for p, es := range newSessionMidTurnFiles(t, home) {
 			ks := newSessionMidTurnKinds(es)

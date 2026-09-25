@@ -77,7 +77,7 @@ func TestBangShell(t *testing.T) {
 		if !strings.Contains(s, "Shell · echo hi-bang-$((6*7)) · exit 0") {
 			t.Fatalf("bang result block label missing:\n%s", s)
 		}
-		a.check("after !echo")
+		a.checkOn("after !echo", s)
 		if kinds := strings.Join(bangShellKinds(a), ","); !strings.Contains(kinds, "command,system") {
 			t.Fatalf("history kinds %s, want command then system:\n%s", kinds, s)
 		}
@@ -92,7 +92,7 @@ func TestBangShell(t *testing.T) {
 		if !strings.Contains(s, "before-fail") || !strings.Contains(s, "! exit status 3") {
 			t.Fatalf("failing ! must show its output and a loud exit line:\n%s", s)
 		}
-		a.check("after failing !")
+		a.checkOn("after failing !", s)
 		bangShellNoTurn(a)
 	})
 

@@ -182,7 +182,7 @@ func TestVerySlowTerminalPickerAndOverlay(t *testing.T) {
 	t.Run("SessionsPicker", func(t *testing.T) {
 		t.Parallel()
 		fa := veryslowterminalOpenPicker(t, false)
-		raw := fa.veryslowterminalSettled()
+		raw := fa.settled()
 		if !strings.Contains(raw, "▸ ") || strings.Count(raw, "fx") < 20 {
 			t.Fatalf("picker does not list the fixture sessions:\n%s", raw)
 		}
@@ -229,12 +229,18 @@ func TestVerySlowTerminalPickerAndOverlay(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := veryslowterminalStart(t, 100, 30, subagentsConfig(tape), slow)
+			// The 400ms window is for the throttled reader's drain gaps;
+			// the fast run settles as usual (it cost ~4 s here).
+			settle := a.settled
+			if slow {
+				settle = a.veryslowterminalSettled
+			}
 			a.waitFor("subagent 2")
 			for range 8 {
 				a.key(uv.KeyTab, 0)
-				a.veryslowterminalSettled()
+				settle()
 				a.key('o', uv.ModCtrl)
-				s := a.veryslowterminalSettled()
+				s := settle()
 				if strings.Contains(s, "esc to close") && strings.Contains(s, "ParseFile") {
 					return a
 				}
@@ -243,13 +249,13 @@ func TestVerySlowTerminalPickerAndOverlay(t *testing.T) {
 				} else {
 					a.key('o', uv.ModCtrl) // the history inspector: its own key closes it
 				}
-				a.veryslowterminalSettled()
+				settle()
 			}
 			t.Fatalf("slow=%v: never opened subagent 1's transcript:\n%s", slow, a.text())
 			return nil
 		}
 		fa := open(false)
-		fast := veryslowterminalNorm(fa.veryslowterminalSettled())
+		fast := veryslowterminalNorm(fa.settled())
 		sa := open(true)
 		sa.veryslowterminalConverge(fast, 60*time.Second)
 		veryslowterminalRSSCheck(t, fa, sa)

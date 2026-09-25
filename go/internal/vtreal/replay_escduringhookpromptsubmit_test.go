@@ -115,8 +115,7 @@ return;`, "echo up > "+fifo, "sleep 0.05; test -e "+release+" && echo OPEN"))
 	if !a.waitDone(n+1, 30*time.Second) {
 		t.Fatalf("second turn never finished:\n%s", a.text())
 	}
-	a.check("after second")
-	s := a.settled()
+	s := a.check("after second")
 	t.Run("SecondPromptOnce", func(t *testing.T) {
 		if c := strings.Count(s, "ONLY_REPLY_ON_TAPE"); c != 1 {
 			t.Errorf("tape reply on screen %d times, want 1:\n%s", c, s)

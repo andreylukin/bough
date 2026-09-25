@@ -22,13 +22,14 @@ import (
 )
 
 const (
-	bgjobOutputFloodWhilePickerOpenBursts = 50
+	bgjobOutputFloodWhilePickerOpenBursts = 25
 	bgjobOutputFloodWhilePickerOpenPer    = 1000
 	bgjobOutputFloodWhilePickerOpenBudget = 500 * time.Millisecond
 )
 
-// bgjobOutputFloodWhilePickerOpenCmd floods a bounded 50k lines over
-// roughly ten seconds, so the pickers are driven mid-flood.
+// bgjobOutputFloodWhilePickerOpenCmd floods a bounded 25k lines over
+// roughly five seconds, so the pickers are driven mid-flood: the picker
+// phase takes 1-2 s, and a flood that ends first fails loudly below.
 func bgjobOutputFloodWhilePickerOpenCmd() string {
 	return fmt.Sprintf("i=0; while [ $i -lt %d ]; do yes FLOODLINE | head -n %d; sleep 0.2; i=$((i+1)); done; echo FLOOD-END",
 		bgjobOutputFloodWhilePickerOpenBursts, bgjobOutputFloodWhilePickerOpenPer)
@@ -148,7 +149,19 @@ func TestBgjobOutputFloodWhilePickerOpen(t *testing.T) {
 				return
 			case <-time.After(20 * time.Millisecond):
 			}
+			// Judge only frames between writes. Opening the picker is
+			// one big frame that reaches the emulator in several PTY
+			// reads; a sample between two of them showed the picker's
+			// top over the old composer and strip, a frame bough never
+			// drew, and failed about one full run in three.
+			before := a.term.LastOutput()
+			if time.Since(before) < 30*time.Millisecond {
+				continue
+			}
 			s := a.text()
+			if !a.term.LastOutput().Equal(before) {
+				continue
+			}
 			if overdraw == "" && strings.Contains(s, "pick a model") && bgjobOutputFloodWhilePickerOpenStrip(s) {
 				overdraw = s
 			}

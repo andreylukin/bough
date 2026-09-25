@@ -204,7 +204,7 @@ func TestHistoryFileConcurrentHeadlessAndRewind(t *testing.T) {
 			t.Errorf("rewind %d: transcript should end at ANSWER-%d:\n%s", i, keep, s)
 		}
 		historyFileConcurrentHeadlessAndRewindNoBusy(t, fmt.Sprintf("rewind %d: tui", i), s)
-		a.check(fmt.Sprintf("rewind %d", i))
+		a.checkOn(fmt.Sprintf("rewind %d", i), s)
 		if t.Failed() {
 			return
 		}

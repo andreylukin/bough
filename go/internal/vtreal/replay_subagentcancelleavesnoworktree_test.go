@@ -39,7 +39,10 @@ func subagentCancelLeavesNoWorktreeConfig(tape string) string {
 // job opens.
 func subagentCancelLeavesNoWorktreeTape(t *testing.T, tok string) string {
 	t.Helper()
-	parent := fmt.Sprintf("```js\nconsole.log(tools.bash(\"sleep 12; echo BGJOB-%s\", 60))\nconsole.log(tools.spawnAll([\"task one\", \"task two\", \"task three\"]))\n```", tok)
+	// The job must outlive the children starting (~1.5 s), the esc and
+	// the 2 s quiet check below, and nothing more: the last subtest
+	// waits for its wake. It slept 12 s; 8 keeps a 3 s margin.
+	parent := fmt.Sprintf("```js\nconsole.log(tools.bash(\"sleep 8; echo BGJOB-%s\", 60))\nconsole.log(tools.spawnAll([\"task one\", \"task two\", \"task three\"]))\n```", tok)
 	child := fmt.Sprintf("```js\nconsole.log(tools.bash(\"sleep %s; echo CHILD-DONE\"))\n```", tok)
 	entries := []struct {
 		kind, text string
@@ -112,7 +115,7 @@ func TestSubagentCancelLeavesNoWorktree(t *testing.T) {
 		t.Fatalf("esc did not end the turn:\n%s", a.text())
 	}
 
-	// Runs first, while the job (12s) has not yet woken a turn.
+	// Runs first, while the job (8s) has not yet woken a turn.
 	t.Run("history_quiet_and_no_processes", func(t *testing.T) {
 		before := len(jobsHistory(a))
 		time.Sleep(2 * time.Second)

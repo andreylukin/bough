@@ -109,7 +109,7 @@ func TestNewSessionPicker(t *testing.T) {
 		if !strings.Contains(s, "reply to beta prompt") || strings.Contains(s, "alpha prompt") {
 			t.Errorf("resumed transcript is not beta's:\n%s", s)
 		}
-		a.check("after resume")
+		a.checkOn("after resume", s)
 	})
 
 	t.Run("EscCloses", func(t *testing.T) {
@@ -123,7 +123,7 @@ func TestNewSessionPicker(t *testing.T) {
 		if strings.Contains(s, "resumed seed-alpha") {
 			t.Errorf("esc resumed a session:\n%s", s)
 		}
-		a.check("after esc")
+		a.checkOn("after esc", s)
 	})
 }
 

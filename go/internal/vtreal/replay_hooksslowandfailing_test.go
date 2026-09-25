@@ -61,7 +61,7 @@ func TestHooksSlowAndFailingEscDuringSleepingHook(t *testing.T) {
 	if strings.Contains(s, "SLEEPY_RECORDED_OUTPUT") || strings.Contains(s, "Slow turn over.") {
 		t.Errorf("the block ran after esc:\n%s", s)
 	}
-	a.check("after esc during hook")
+	a.checkOn("after esc during hook", s)
 }
 
 func TestHooksSlowAndFailingThrowingHookIsVisible(t *testing.T) {
@@ -76,8 +76,7 @@ func TestHooksSlowAndFailingThrowingHookIsVisible(t *testing.T) {
 	if !a.waitDone(1, 30*time.Second) {
 		t.Fatalf("turn never finished with throwing hooks:\n%s", a.text())
 	}
-	a.check("after throwing hooks")
-	s := a.settled()
+	s := a.check("after throwing hooks")
 	t.Run("TurnSurvives", func(t *testing.T) {
 		for _, want := range []string{"OK_RECORDED_OUTPUT", "Throw turn over."} {
 			if !strings.Contains(s, want) {
