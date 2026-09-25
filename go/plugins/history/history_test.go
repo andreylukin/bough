@@ -395,6 +395,25 @@ func TestListMissingDirEmpty(t *testing.T) {
 	}
 }
 
+// A history directory that exists but cannot be read is an error, not
+// an empty list: serve answered it as "no sessions", and a page that
+// must say its list read failed showed an empty server instead
+// (tests/model/specs/route_resolution_first_load.fizz, ListFail).
+func TestListUnreadableDirFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.jsonl"), []byte(`{"seq":1,"kind":"input","data":{"text":"hi"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if infos, err := List(dir); err == nil {
+		t.Fatalf("List(unreadable) = %v, nil; want an error", infos)
+	}
+}
+
 // Session ids are UUIDv7s: unique, and still sorting oldest-first by
 // their leading timestamp so a name-ordered listing stays chronological.
 func TestNewIDIsSortableAndUnique(t *testing.T) {
