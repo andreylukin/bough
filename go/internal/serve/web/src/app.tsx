@@ -1928,6 +1928,7 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
         {why && <span className="tool-thrown" title={why}>{why}</span>}
         {failed && <FailMark />}
         {canceled && <span className="tool-unrecorded tool-stopped"><StopMark />Cancelled</span>}
+        {d.interrupted === true && <span className="tool-unrecorded tool-stopped"><StopMark />Interrupted</span>}
         {job !== undefined && <span className="num call-badge" title="It outlived its turn and ran on as a background job">Job {job}</span>}
         {d.late === true && <span className="num call-badge" title="The model moved on while this ran; the result reached it later">Late</span>}
         {running ? (
@@ -2594,6 +2595,38 @@ export function withRunningCalls(lines: Line[], running: Map<string, NativeRun>)
     data: { id: c.id, tool: c.tool, phase: "start", tail: c.tail, ...(c.worker ? { worker: c.worker } : {}) },
   }));
   return extra.length ? [...lines, ...extra] : lines;
+}
+
+/**
+ * The transcript with a stopped call row for each native ask or secret
+ * whose child died before the call returned. Such a call leaves only its
+ * "ask" entry (which renders nothing): no end is ever recorded, and its
+ * live running row is dropped once the session reads interrupted, so
+ * the question the agent asked vanished from the page. An ask still on
+ * screen, or one whose end may yet land (its turn is live), adds
+ * nothing; so does one inside a code block, which shows the stop itself.
+ */
+export function withUnendedAsks(lines: Line[], status: string, openAsk: string): Line[] {
+  const live = status === "running" || status === "needs-you";
+  const extra: Line[] = [];
+  lines.forEach((l, i) => {
+    const d = l.data ?? {};
+    if (l.kind !== "ask" || d.id === openAsk) return;
+    let ended = false, closed = !live;
+    for (const n of lines.slice(i + 1)) {
+      if (n.kind === "ask") break;
+      if (isNativeCall(n) && (n.data?.tool === "ask" || n.data?.tool === "secret")) { ended = true; break; }
+      if (n.kind === "input" || n.kind === "done" || n.kind === "cancelled") closed = true;
+    }
+    if (ended || !closed) return;
+    for (const p of lines.slice(0, i).reverse()) {
+      if (p.kind === "input" || p.kind === "result") break;
+      if (p.kind === "code") return;
+    }
+    extra.push({ seq: l.seq + 0.5, at: l.at, kind: "call", text: str(d.question) || l.text,
+      data: { id: `ask:${str(d.id)}`, tool: d.secret ? "secret" : "ask", interrupted: true } });
+  });
+  return extra.length ? [...lines, ...extra].sort((a, b) => a.seq - b.seq) : lines;
 }
 
 /** The call in flight: the tools plugin's live "call" start event (never recorded), until its end or the block's result lands. */
@@ -5767,7 +5800,8 @@ export default function App() {
    * there is not a second, lesser view of it.
    */
   // Running native calls sit after the recorded lines as rows of the live turn, until their own record lands.
-  const shownLines = useMemo(() => withRunningCalls(lines, nativeRunning), [lines, nativeRunning]);
+  const shownLines = useMemo(() => withRunningCalls(withUnendedAsks(lines, row?.status ?? "", row?.ask?.id ?? ""), nativeRunning),
+    [lines, nativeRunning, row?.status, row?.ask?.id]);
   const threadFor = (r: Row) => (
     <RunningCallCtx.Provider key={r.id} value={runningCall}>
     <Thread key={r.id} row={r} lines={shownLines} jump={jump?.id === r.id ? jump : null} loading={loadedFor !== r.id} loadError={loadFail ?? undefined} paused={paused}
