@@ -171,9 +171,9 @@ fails when anything outside `internal/unreal/...`, `internal/messagesapi`,
 `internal/agentllm`, `plugins/engine` or `plugins/llm` imports unreal-agent
 or `internal/unreal/...`. A reader of the engine reaches it through a
 service key with plain types (`engine`, `drain`), so a harness bump stays
-inside those packages and the tests of five more that the boundary test
+inside those packages and the tests of six more that the boundary test
 names (`e2e`, `plugins/contextmd`, `plugins/skills`, `plugins/hooks`,
-`plugins/rules`). The pin is a SHA, and
+`plugins/rules`, `tests/model/mbt`). The pin is a SHA, and
 `pin_test.go` fails when go.mod moves without `unreal.Pin`.
 
 **The engine's system prompt never changes mid-session.** It is written
