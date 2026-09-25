@@ -584,6 +584,51 @@ func TestSupervisorAskEndWithoutAnswerDisarms(t *testing.T) {
 	}
 }
 
+// Every line the child writes to stderr arrives as an "error" event,
+// and a config hot reload writes "bough: reloaded ...". An error is not
+// the end of a turn or of the ask blocking it, so the arm must survive:
+// dropped, the page kept showing the question and every answer was 409.
+// Found by tests/model/mbt/ask_across_reload_respawn_test.go (ReloadUi).
+func TestSupervisorErrorLineKeepsTheAsk(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.sup.mu.Lock()
+	f.sup.emitLocked("sess-err", "ask", "which?", map[string]any{"id": "ask-1"})
+	f.sup.emitLocked("sess-err", "error", "bough: reloaded /home/.bough/bough.yml", nil)
+	f.sup.mu.Unlock()
+	if a := f.sup.PendingAsk("sess-err"); a == nil || a.ID != "ask-1" {
+		t.Fatalf("after a stderr line the arm is %+v, want ask-1", a)
+	}
+}
+
+// An ask whose end history records disarms even when no event said so:
+// the end can happen while the child's ui row is between dispose and
+// remount (a config reload), and nothing prints it. The row (read off
+// history) stopped showing the question while the arm refused every
+// /prompt as answering it. An ask history has no end for stays armed.
+// Found by tests/model/mbt/ask_across_reload_respawn_test.go (ReloadUi,
+// Timeout).
+func TestSupervisorAskEndedInHistoryDisarms(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	now := time.Now()
+	f.seed(t, "sess-hist",
+		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
+		history.Entry{Seq: 2, At: now, Kind: "input", Data: map[string]any{"text": "go"}},
+		history.Entry{Seq: 3, At: now, Kind: "ask", Data: map[string]any{"id": "ask-1", "question": "which?"}})
+	f.sup.mu.Lock()
+	f.sup.emitLocked("sess-hist", "ask", "which?", map[string]any{"id": "ask-1"})
+	f.sup.mu.Unlock()
+	if a := f.sup.PendingAsk("sess-hist"); a == nil {
+		t.Fatal("an ask history leaves open is not armed")
+	}
+	appendEntry(filepath.Join(f.hist, "sess-hist.jsonl"), history.Entry{Seq: 4, At: now, Kind: "call",
+		Data: map[string]any{"tool": "ask", "id": "c1", "error": "ask: no answer after 10m0s"}})
+	if a := f.sup.PendingAsk("sess-hist"); a != nil {
+		t.Fatalf("an ask history has ended is still armed: %+v", a)
+	}
+}
+
 func TestSupervisorNonJSONStdoutIsSurfaced(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNoise+"=1")

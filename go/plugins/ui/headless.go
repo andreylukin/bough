@@ -491,6 +491,13 @@ func hlAnswerPending(line string) bool {
 	pa, ans := hlAsk, hlAnswer
 	hlAsk = nil
 	hlMu.Unlock()
+	if pa != nil && ans == nil {
+		// Mid-reload (the ui row is between dispose and remount): the
+		// line is this ask's answer, so wait for the remounted router
+		// like hlSubmit does. Falling through made it a prompt, and a
+		// secret an input entry.
+		ans = hlAwaitAnswerer()
+	}
 	if pa == nil || ans == nil {
 		return false
 	}
@@ -503,6 +510,21 @@ func hlAnswerPending(line string) bool {
 		hlLine(hlErr, "error", err.Error(), nil)
 	}
 	return true
+}
+
+// hlAwaitAnswerer waits out a mid-reload gap and returns the remounted
+// row's "ask-answers" service. A mounted row with none returns nil at
+// once: nothing will ever answer.
+func hlAwaitAnswerer() askAnswers {
+	for {
+		hlMu.Lock()
+		mounted, ans := hlInputs != nil, hlAnswer
+		hlMu.Unlock()
+		if mounted {
+			return ans
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // hlTurnErr is an error the running turn has not recovered from yet: set
