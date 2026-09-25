@@ -313,10 +313,22 @@ export function sidebarSelected(view: View, lost: string | null, selected: strin
   return view !== "sessions" || lost !== null ? null : selected ?? lastId;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing }: {
+/**
+ * The Sidebar's own state at mount, for a render that starts mid-interaction:
+ * the component-level model test (test/model-sidebar.test.tsx) renders every
+ * state of ui_sidebar.fizz statically, where no click, hover, drag or timer
+ * can reach these. App never passes it.
+ */
+export interface SidebarSeed {
+  searching?: boolean; slow?: boolean; archFolded?: boolean;
+  card?: { id: string; top: number; left: number } | null;
+  /** The id of the row being dragged, and the group key it is over. */
+  dragging?: string | null; dropAt?: string | null;
+}
+
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing, seed }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
-  /** The session whose transcript is on screen (App's `viewing`): its finish is being acked. The
-   *  marked row is also the one you left, which is not on screen once you went home. */
+  /** The session on screen, when it is not simply `selected`: back on Home the row you left stays marked as your place, but nobody is looking at it. */
   viewing?: string;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
@@ -351,6 +363,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   onOpenProject?: (slug: string) => void;
   /** Move a session into a project ("" takes it out): what dropping a row on a group does. */
   onMove?: (id: string, project: string) => void;
+  seed?: SidebarSeed;
 }) {
   // Status lives in the glyphs and the order; the sections are only
   // where a session ran, and whether it is still recent.
@@ -443,7 +456,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   }, []);
 
   // Search sits behind the toolbar; a filter in force keeps it open.
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(seed?.searching ?? false);
   const searchRef = useRef<HTMLInputElement>(null);
   const showSearch = searching || Boolean(query);
   useEffect(() => { if (searching) searchRef.current?.focus(); }, [searching]);
@@ -479,7 +492,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // summary says where it stands. One card for the whole list, fixed to
   // the viewport beside the row, because the list scrolls and would clip
   // anything hung off a row. It waits a beat so skimming does not flash it.
-  const [card, setCard] = useState<{ id: string; top: number; left: number } | null>(null);
+  const [card, setCard] = useState<{ id: string; top: number; left: number } | null>(seed?.card ?? null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const quiet = useRef(false);
   // Moving from row to row swaps the card at once, never showing the last row's content at the new spot.
@@ -530,7 +543,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     setWsFolded((cur) => { const next = flip(cur, key); writeSet("bough:ws-folded", next); return next; });
   };
 
-  const [archFolded, setArchFolded] = useState(false);
+  const [archFolded, setArchFolded] = useState(seed?.archFolded ?? false);
   // Showing archived from anywhere (the palette too) shows the section open.
   useEffect(() => { if (showArchived) setArchFolded(false); }, [showArchived]);
   // Archived included from a filter ("Include") lasts as long as that filter.
@@ -543,7 +556,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   }, [searchOn]);
 
   // A first load says so only once it is slow enough to notice.
-  const [slow, setSlow] = useState(false);
+  const [slow, setSlow] = useState(seed?.slow ?? false);
   useEffect(() => {
     if (loadedAt !== null) return;
     const t = setTimeout(() => setSlow(true), 200);
@@ -555,8 +568,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   const [scrolled, setScrolled] = useState(false);
 
   // The row being dragged onto a group, and the group it is over.
-  const [dragging, setDragging] = useState<Row | null>(null);
-  const [dropAt, setDropAt] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<Row | null>(() => rows.find((r) => r.id === seed?.dragging) ?? null);
+  const [dropAt, setDropAt] = useState<string | null>(seed?.dropAt ?? null);
 
   // A long log shows its last turns; the rest wait behind one line.
   const [allTurns, setAllTurns] = useState<Set<string>>(() => new Set());
@@ -5272,6 +5285,10 @@ export default function App() {
     finally { if (seq === readSeq.current) inFlight.current = false; if (!poll) await projectsRead; }
   }, [archived]);
 
+  // A retry is loading again, not still failed: the failure it answers
+  // stays off screen until this read fails too.
+  const retryList = useCallback(() => { setLoadErr(null); void refresh(); }, [refresh]);
+
   // While a session's event stream is open it carries that session's
   // changes, so the list poll slows down.
   const streaming = selected !== null;
@@ -6011,16 +6028,15 @@ export default function App() {
                view={view === "project" ? "projects" : view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
-               // Its Retry says it is loading again while the read is out:
-               // "Couldn’t load archived" stayed until it answered.
-               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => { setLoadErr(null); void refresh(); }}
+               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={retryList}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal} onOpenProject={goProject}
                onMove={(id, p) => act(() => api.assign(id, p), "move the session")}
-               // A first load that failed says it is loading again while the
-               // retry is out: "Sessions unavailable" stayed on screen until
-               // it answered, as if the click had done nothing.
-               loadedAt={loadedAt} loadErr={loadErr} onRetry={() => { if (loadedAt === null) setLoadErr(null); void refresh(); }} />
+               loadedAt={loadedAt}
+               // Until Archived has loaded, a failed read is its read: the
+               // section says so with its own Retry, and a second notice
+               // over the list said the same failure twice.
+               loadErr={archived && !rowsAll ? null : loadErr} onRetry={retryList} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">
