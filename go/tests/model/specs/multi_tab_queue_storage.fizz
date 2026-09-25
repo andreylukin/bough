@@ -1,0 +1,270 @@
+---
+# The bounds (MAX_MSGS, MAX_FAILS, one second tab, one close) end every
+# behaviour in quiet tabs with nothing left to do: that is rest, not a
+# deadlock.
+deadlock_detection: false
+---
+
+# Two tabs on one session's thread: the per-tab half of the composer's
+# storage (web/src/app.tsx Thread: queueKey and failedKey live in
+# sessionStorage, one per tab, and the browser's Duplicate Tab copies
+# them; the `sending` rows live in memory and are not copied; the flush
+# effect reads only its own tab). The shared half, the localStorage
+# draft, is multi_tab_composer_storage.fizz.
+#
+# This spec states the contract, not today's code. Today a duplicated
+# tab flushes the same queued message its original flushes; two tabs
+# each holding a queued message flush on the same idle edge and the
+# second reaches the child as a steer (hlSteerLine) instead of a turn;
+# closing the tab that queued drops its queue with no word; a failure
+# copied into a duplicate is offered, and sent, twice. Each assertion
+# below was shown to fail under a one-step mutation back towards that
+# code (the commit says which). The contract, in terms the page and
+# serve can implement:
+#   - whatever a tab puts on the wire (flush, retry) is claimed by its
+#     id in shared storage first; a tab whose copy was claimed drops it
+#     instead of sending it (claimed());
+#   - a flushed queued message is sent as "its own turn": serve holds it
+#     while a turn runs instead of writing it to the child as a steer;
+#   - a tab that closes hands its queue to shared storage (pagehide), and
+#     an open tab adopts it (AdoptB). The other acceptable contract, a
+#     queue the UI says is tab-local, is a UI decision this spec does not
+#     make.
+#
+# Tabs are list positions: 0 is tab A, 1 is tab B. Message ids are
+# 1..made; writing and queuing (or writing and failing to send) are one
+# step here, the draft itself being the other spec's.
+#
+# Fields (all on the Session role; see go/tests/model/README.md):
+#   open     per tab: "open" | "none" (B not opened yet) | "closed" (A)
+#   queue    per tab: queued message ids, oldest first (sessionStorage)
+#   fails    per tab: failed message ids offered for Retry
+#            (sessionStorage)
+#   sending  per tab: its own sent, unlanded ids ("Sending…"; memory)
+#   orphan   queue ids a closed tab handed to shared storage
+#   status   the row: idle | running
+#   wire     ids written to serve and not yet read by the child, in order
+#   ran      ids the child read as the input of a turn of their own
+#   steered  ids the child read as a steer into a running turn
+#   made     messages written so far; enq = ids ever queued
+#   nfail    failed sends so far (bound)
+#
+# Where this departs from the mapped model, and why:
+# - Enter (a plain send or steer) is left out: one tab's steer is
+#   steer_queue's; here the wire carries only flushes and retries.
+# - A failure is offered in the tab whose send failed and copied by a
+#   duplicate. Closing a tab loses its failure rows: they are text the
+#   person saw fail, not a promise to send (noted, not asserted).
+# - Stop is left out (see multi_tab_composer_storage.fizz).
+
+MAX_MSGS = 2
+MAX_FAILS = 1
+
+# Plain helpers: a fizz role func cannot be called inside an expression.
+
+# Some tab already put this id on the wire (the shared claim).
+def claimed(s, i):
+    return i in s.wire or i in s.ran or i in s.steered
+
+# Nothing tab t offers (a queued copy, a failure) was sent already.
+def settled(s, t):
+    for i in s.queue[t] + s.fails[t]:
+        if claimed(s, i):
+            return False
+    return True
+
+role Session:
+    # A turn is running, so a message can be queued from the start.
+    # Tab B is not open yet: it is opened fresh or as A's duplicate.
+    action Init:
+        self.open = ["open", "none"]
+        self.queue = [[], []]
+        self.fails = [[], []]
+        self.sending = [[], []]
+        self.orphan = []
+        self.status = "running"
+        self.wire = []
+        self.ran = []
+        self.steered = []
+        self.made = 0
+        self.enq = []
+        self.nfail = 0
+
+    # Put a message on the wire from tab t, unless another tab did.
+    atomic func put(t, i):
+        if not claimed(self, i):
+            self.wire = self.wire + [i]
+            self.sending[t] = self.sending[t] + [i]
+
+    # Cmd/Ctrl+Enter on a new message: only while a turn runs.
+    atomic func enqueue(t):
+        require self.open[t] == "open" and self.status == "running"
+        require self.made < MAX_MSGS
+        self.made = self.made + 1
+        self.queue[t] = self.queue[t] + [self.made]
+        self.enq = self.enq + [self.made]
+
+    # The flush effect: the head of this tab's queue, once the thread is
+    # idle and this tab has nothing unlanded.
+    atomic func flush(t):
+        require self.open[t] == "open" and self.status == "idle"
+        require len(self.sending[t]) == 0 and len(self.queue[t]) > 0
+        i = self.queue[t][0]
+        self.queue[t] = self.queue[t][1:]
+        self.put(t, i)
+
+    # Retry on a failure row.
+    atomic func retry(t):
+        require self.open[t] == "open" and len(self.fails[t]) > 0
+        i = self.fails[t][0]
+        self.fails[t] = self.fails[t][1:]
+        self.put(t, i)
+
+    # The transcript poll (and the claim's `storage` event): a copy of
+    # something another tab sent is dropped.
+    atomic func sync(t):
+        require self.open[t] == "open" and not settled(self, t)
+        self.queue[t] = [i for i in self.queue[t] if not claimed(self, i)]
+        self.fails[t] = [i for i in self.fails[t] if not claimed(self, i)]
+
+    # ---- the person ----
+
+    atomic action EnqueueA:
+        self.enqueue(0)
+
+    atomic action EnqueueB:
+        self.enqueue(1)
+
+    # Enter on a new message in A, and the request fails (network, serve
+    # refused it): the text is a failure row.
+    atomic action SendFailsA:
+        require self.open[0] == "open"
+        require self.made < MAX_MSGS and self.nfail < MAX_FAILS
+        self.made = self.made + 1
+        self.nfail = self.nfail + 1
+        self.fails[0] = self.fails[0] + [self.made]
+
+    atomic action RetryFailureA:
+        self.retry(0)
+
+    atomic action RetryFailureB:
+        self.retry(1)
+
+    # A new tab on the session: its sessionStorage starts empty.
+    atomic action OpenB:
+        require self.open[1] == "none"
+        self.open[1] = "open"
+
+    # The browser's Duplicate Tab: A's sessionStorage (queue, failures)
+    # is copied, the page's memory (sending) is not.
+    atomic action DuplicateTab:
+        require self.open[0] == "open" and self.open[1] == "none"
+        self.open[1] = "open"
+        self.queue[1] = self.queue[0]
+        self.fails[1] = self.fails[0]
+
+    # Closing A while B is open: its queue goes to shared storage.
+    atomic action CloseTabA:
+        require self.open[0] == "open" and self.open[1] == "open"
+        self.orphan = self.orphan + self.queue[0]
+        self.open[0] = "closed"
+        self.queue[0] = []
+        self.fails[0] = []
+        self.sending[0] = []
+
+    # ---- the pages ----
+
+    atomic fair action FlushA:
+        self.flush(0)
+
+    atomic fair action FlushB:
+        self.flush(1)
+
+    atomic fair action SyncA:
+        self.sync(0)
+
+    atomic fair action SyncB:
+        self.sync(1)
+
+    # B takes the queue a closed tab left.
+    atomic fair action AdoptB:
+        require self.open[1] == "open" and len(self.orphan) > 0
+        self.queue[1] = self.queue[1] + [i for i in self.orphan if not claimed(self, i)]
+        self.orphan = []
+
+    # ---- serve and the child ----
+
+    # The child reads the oldest line: a turn of its own when idle, a
+    # steer into a running turn. A flushed queued message is held while
+    # a turn runs, so it is always a turn of its own.
+    atomic fair action Land:
+        require len(self.wire) > 0
+        i = self.wire[0]
+        require self.status == "idle" or i not in self.enq
+        self.wire = self.wire[1:]
+        if self.status == "idle":
+            self.ran = self.ran + [i]
+            self.status = "running"
+        else:
+            self.steered = self.steered + [i]
+        self.sending[0] = [j for j in self.sending[0] if j != i]
+        self.sending[1] = [j for j in self.sending[1] if j != i]
+
+    atomic fair action TurnEnds:
+        require self.status == "running"
+        self.status = "idle"
+
+action Init:
+    session = Session()
+
+# A message is written to serve at most once, whichever tabs held a
+# copy (a duplicated queue, a failure offered in two tabs).
+always assertion DeliveredOnce:
+    seen = session.wire + session.ran + session.steered
+    for k in range(len(seen)):
+        if seen[k] in seen[k + 1:]:
+            return False
+    return True
+
+# A queued message is never a steer: across tabs, at most one queued
+# message starts the next turn and the other waits for its own.
+always assertion QueuedNeverSteers:
+    for i in session.steered:
+        if i in session.enq:
+            return False
+    return True
+
+# A queued message is always somewhere: in a tab's queue, handed over
+# by a closed tab, on the wire, or run.
+always assertion QueuedNeverVanishes:
+    for i in session.enq:
+        held = (i in session.queue[0] or i in session.queue[1]
+                or i in session.orphan or i in session.wire or i in session.ran)
+        if not held:
+            return False
+    return True
+
+# A tab shows "Sending…" only for its own line still on the wire.
+always assertion SendingIsOwn:
+    for i in session.sending[0]:
+        if i in session.sending[1] or i not in session.wire:
+            return False
+    for i in session.sending[1]:
+        if i not in session.wire:
+            return False
+    return True
+
+# Once the tabs go quiet no open tab offers, queued or as a failure,
+# something that was sent already.
+always eventually assertion TabsSettle:
+    for t in range(2):
+        if session.open[t] == "open" and not settled(session, t):
+            return False
+    return True
+
+# Every queued message runs, once, as its own turn.
+always eventually assertion QueuedRuns:
+    for i in session.enq:
+        if i not in session.ran:
+            return False
+    return True

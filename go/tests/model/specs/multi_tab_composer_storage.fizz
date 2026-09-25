@@ -1,0 +1,253 @@
+---
+# The bounds (MAX_MSGS, MAX_ASKS, one paste, one second tab) end every
+# behaviour in quiet tabs with nothing left to do: that is rest, not a
+# deadlock.
+deadlock_detection: false
+---
+
+# Two tabs on one session's thread: the draft they share through
+# localStorage (web/src/app.tsx Thread: draftKey, askKey and attsKey,
+# one per session, shared by every tab of the origin). Every composer
+# spec before this one (ui_composer, steer_queue, attachments_paste,
+# ask_answer) has one tab. The per-tab half, the sessionStorage queue
+# and failure rows, is multi_tab_queue_storage.fizz: modelled together
+# the two were past 160k states, apart they are small.
+#
+# This spec states the contract, not today's code. Today a tab reads the
+# three keys once, at mount, and nothing listens for the `storage`
+# event: a tab keeps showing a draft the other tab changed, sent or
+# cleared, sends it again, and its next keystroke writes it back (with
+# its own, stale, attachment slots). Each assertion below was shown to
+# fail under a one-step mutation back towards that code (the commit
+# says which). The contract, in terms the page can implement:
+#   - a tab follows the shared draft, its question and its attachments
+#     on the `storage` event (Sync), all three together;
+#   - a tab reads them again before it writes or sends, so a keystroke
+#     or Enter in a tab that has not caught up is not possible (the
+#     require on fresh(): in the page, a mismatch adopts storage
+#     instead of acting).
+#
+# Tabs are list positions: 0 is tab A, 1 is tab B. Message ids are
+# 1..made.
+#
+# Fields (all on the Session role; see go/tests/model/README.md):
+#   open     per tab: "open" | "none" (B not opened yet)
+#   draft    per tab: the message id its composer shows (0 = empty)
+#   dask     per tab: the question its draft answers (draftAsk; 0 = a
+#            message)
+#   att      per tab: its draft's image slot: none | pending | done
+#   s_draft, s_ask, s_att
+#            localStorage: bough:draft:, bough:draft-ask:,
+#            bough:draft-atts: of the session
+#   up       the pasted image's upload is still running
+#   pasted   an image was pasted (bound: one paste)
+#   status   the row: running | needs-you (an armed tools.ask). Whether a
+#            message starts a turn or steers one is steer_queue's; here
+#            a sent message is only "sent".
+#   ask      the armed question's id (0 = none); asks = questions so far
+#   sent     ids sent as messages; answers = ids sent as answers
+#   made     messages written so far; wrote[i-1] is the question message
+#            i was started for (0 = a message)
+#
+# Where this departs from the mapped model, and why:
+# - Queue, failures, Duplicate Tab, Close, Flush, Retry and the
+#   second-flush-steers race live in multi_tab_queue_storage.fizz.
+# - Reload is not an action: in the contract a reload reads storage,
+#   which is exactly Sync; in today's code it is where a resurrected
+#   draft shows up, which SentDraftNotResurrected already catches in
+#   storage itself.
+# - Stop is left out. A Stop in B cannot see A's unlanded rows, but
+#   serve holds an Interrupt until the child has read the prompt it
+#   raced (Supervisor.Interrupt waits while ch.unread), so A's prompt
+#   lands and its turn is cancelled: it is in the transcript, not lost.
+# - Typing is one step that starts a draft in an empty composer; more
+#   keystrokes on the same draft change no field here.
+
+MAX_MSGS = 2
+MAX_ASKS = 2
+
+# Plain helpers: a fizz role func cannot be called inside an expression.
+
+# Tab t's composer agrees with shared storage.
+def fresh(s, t):
+    return (s.draft[t] == s.s_draft and s.dask[t] == s.s_ask
+            and s.att[t] == s.s_att)
+
+role Session:
+    # A turn is running (the first prompt is not what this flow is
+    # about). Tab B is not open yet.
+    action Init:
+        self.open = ["open", "none"]
+        self.draft = [0, 0]
+        self.dask = [0, 0]
+        self.att = ["none", "none"]
+        self.s_draft = 0
+        self.s_ask = 0
+        self.s_att = "none"
+        self.up = False
+        self.pasted = False
+        self.status = "running"
+        self.ask = 0
+        self.asks = 0
+        self.sent = []
+        self.answers = []
+        self.made = 0
+        self.wrote = []
+
+    # Clear the composer in tab t and the shared draft with it.
+    atomic func clear(t):
+        self.draft[t] = 0
+        self.dask[t] = 0
+        self.att[t] = "none"
+        self.s_draft = 0
+        self.s_ask = 0
+        self.s_att = "none"
+
+    # Tab t shows what shared storage holds.
+    atomic func adopt(t):
+        self.draft[t] = self.s_draft
+        self.dask[t] = self.s_ask
+        self.att[t] = self.s_att
+
+    # The first keystroke in an empty composer starts a draft; typed
+    # while a question waits, it is an answer to that question.
+    atomic func type_in(t):
+        require self.open[t] == "open" and fresh(self, t)
+        require self.draft[t] == 0 and self.made < MAX_MSGS
+        self.made = self.made + 1
+        q = 0
+        if self.status == "needs-you":
+            q = self.ask
+        self.wrote = self.wrote + [q]
+        self.draft[t] = self.made
+        self.dask[t] = q
+        self.s_draft = self.made
+        self.s_ask = q
+
+    # Enter. An answer draft answers only the question it was started
+    # for (askChanged refuses it otherwise); a message draft is sent,
+    # never while a question waits. Never with an upload pending: the
+    # owner waits (uploading), another tab refuses the bare tag
+    # (lostTags).
+    atomic func send(t):
+        require self.open[t] == "open" and fresh(self, t)
+        require self.draft[t] != 0 and self.att[t] != "pending"
+        i = self.draft[t]
+        if self.dask[t] != 0:
+            require self.status == "needs-you" and self.ask == self.dask[t]
+            self.answers = self.answers + [i]
+            self.status = "running"
+            self.ask = 0
+        else:
+            require self.status != "needs-you"
+            self.sent = self.sent + [i]
+        self.clear(t)
+
+    # The `storage` event.
+    atomic func sync(t):
+        require self.open[t] == "open" and not fresh(self, t)
+        self.adopt(t)
+
+    # ---- the person ----
+
+    atomic action TypeA:
+        self.type_in(0)
+
+    atomic action TypeB:
+        self.type_in(1)
+
+    atomic action SendA:
+        self.send(0)
+
+    atomic action SendB:
+        self.send(1)
+
+    # Paste an image into A's draft: its tag lands now, its path when
+    # the upload finishes.
+    atomic action PasteImageA:
+        require self.open[0] == "open" and not self.pasted
+        require fresh(self, 0) and self.draft[0] != 0
+        self.pasted = True
+        self.up = True
+        self.att[0] = "pending"
+        self.s_att = "pending"
+
+    # A second tab on the session: it mounts from shared storage.
+    atomic action OpenB:
+        require self.open[1] == "none"
+        self.open[1] = "open"
+        self.adopt(1)
+
+    # ---- the pages ----
+
+    atomic fair action SyncA:
+        self.sync(0)
+
+    atomic fair action SyncB:
+        self.sync(1)
+
+    # follow(): the path is written into the slot the tag left empty, in
+    # storage and in A's memory.
+    atomic fair action UploadDoneA:
+        require self.up
+        self.up = False
+        if self.s_att == "pending":
+            self.s_att = "done"
+        if self.att[0] == "pending":
+            self.att[0] = "done"
+
+    # ---- the turn ----
+
+    # The turn asks the person something (tools.ask).
+    atomic action Ask:
+        require self.status == "running" and self.asks < MAX_ASKS
+        self.asks = self.asks + 1
+        self.ask = self.asks
+        self.status = "needs-you"
+
+    # The question is answered from another client (or times out).
+    atomic action AnswerElsewhere:
+        require self.status == "needs-you"
+        self.status = "running"
+        self.ask = 0
+
+action Init:
+    session = Session()
+
+# A draft is sent at most once, whichever tabs showed it.
+always assertion SentOnce:
+    seen = session.sent + session.answers
+    for k in range(len(seen)):
+        if seen[k] in seen[k + 1:]:
+            return False
+    return True
+
+# A draft that was sent is never back in shared storage, so a reload or
+# another tab never shows it sendable again.
+always assertion SentDraftNotResurrected:
+    return not (session.s_draft in session.sent or session.s_draft in session.answers)
+
+# Storage says an upload is pending only while it runs.
+always assertion PendingOnlyWhileUploading:
+    return session.s_att != "pending" or session.up
+
+# A finished upload stays recorded for as long as its draft is stored:
+# the other tab's keystroke never takes it back.
+transition assertion FinishedUploadKept(before, after):
+    if before.session.s_att == "done" and after.session.s_draft == before.session.s_draft:
+        return after.session.s_att == "done"
+    return True
+
+# An answer goes only to the question its draft was started for.
+transition assertion AnswerToItsQuestion(before, after):
+    if len(after.session.answers) > len(before.session.answers):
+        i = after.session.answers[-1]
+        return after.session.wrote[i - 1] == before.session.ask
+    return True
+
+# Once the tabs go quiet every open one shows what storage holds.
+always eventually assertion TabsAgree:
+    for t in range(2):
+        if session.open[t] == "open" and not fresh(session, t):
+            return False
+    return True
