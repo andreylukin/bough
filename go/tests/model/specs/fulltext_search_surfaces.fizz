@@ -1,0 +1,500 @@
+---
+deadlock_detection: false
+---
+
+# Full-text search where the web UI offers it outside ⌘K's own list: the
+# sidebar filter (which reads transcripts as well as titles) and the
+# palette's Wiki group, and where a hit takes you. Recipe:
+# go/tests/model/README.md. ui_sidebar.fizz models the filter as
+# title-only and ui_palette.fizz has no wiki and no failing wiki; this
+# flow is the part between them.
+#
+# Code this is checked against (go/internal/serve):
+#   web/src/app.tsx      getSearchMatch (the local hit: title, branch,
+#                        repo, path, id); App's useFullText(query, true),
+#                        `said` and `visible` (a row is listed for a local
+#                        hit or a transcript hit); Sidebar's row reasons
+#                        ("said: …"), "No sessions match", the "N more
+#                        found in the conversation · ⌘K" link
+#                        (saidElsewhere), the empty-row rule (an empty,
+#                        dead session lists only for a query), Archived's
+#                        "Include" (archFromFilter), onSelect's jump to
+#                        the line that said it; closePalette, goWiki.
+#   web/src/palette.tsx  useFullText (180 ms debounce, abort, the forQ
+#                        guard), useWikiHits (180 ms debounce, no guard),
+#                        the Mentioned in and Wiki groups, "Text search
+#                        failed · Retry", pick/afterClose.
+#   serve/search.go      GET /api/search (searchLimit 25)
+#   serve/wiki.go        GET /api/wiki/search (limit 8)
+#
+# The fixture behind the abstract values: sessions
+#   A  a title (set by rename) holding "title"; its transcript does not.
+#   B  a transcript line (seq n) holding "said"; no title, branch, repo,
+#      path or id holds it.
+#   E  empty and dead (never prompted, not open), in a folder whose path
+#      holds "title": a path hit, listed only while a query asks for it.
+#   Z  archived; a transcript line holding "arch".
+# and one wiki page W, one of whose claims mentions "said" and nothing
+# else typed here. Queries: "short" is one character nothing holds (the
+# transcripts are not read under two), "none" is a phrase nothing holds.
+#
+# The mapped states are field values:
+#   off                          field False
+#   typed_short                  query "short"
+#   debouncing, searching        search "loading" (one state: see below)
+#   done_title_hit               query "title", search "done"
+#   done_said_hit                "B" (or "Z") in said and in rows
+#   done_elsewhere               elsewhere 1
+#   done_nomatch                 note "nomatch"
+#   search_failed_shown_as_nomatch   what the product does today (below);
+#                                owed: note "failed"
+#   stale_answer                 said/found/wikiRows for another query
+#                                (owed never; see Hits*Current)
+#   opened_at_line               open B or Z, at "line"
+#   palette_wiki_hits_previous_query  wikiRows ["W"] with pq != "said"
+#   palette_wiki_failed_empty    wiki "error" with wikiSays ""
+#   palette_hit_picked           page "W", or open from the palette
+#
+# Corrections to the mapped model, from the code:
+# - Debouncing and searching are one state. useFullText sets "loading" as
+#   the key lands, before the 180 ms timer, and nothing on the page tells
+#   the timer from the request; DebounceFires is not an action.
+# - A stale answer never lands in the session search: a newer query
+#   aborts the older read and the forQ guard drops an answer for another
+#   query, so typing clears `said`/`found` at once. The stale case is the
+#   Wiki group's alone (useWikiHits keeps its hits until the new answer).
+# - Poll is not an action: the list poll re-renders the rows but neither
+#   search re-runs on it (their deps are the query and Retry), so nothing
+#   here changes.
+# - The palette's wiki hit carries no cite: WikiHit is {path, title,
+#   topic, excerpt, counts} and the pick calls goWiki({at: "page", path}).
+#   "Opens its page and cite" is not what the server can answer; the
+#   model asserts the page (gap below).
+#
+# WHAT THIS SPEC OWES THAT THE PRODUCT DOES NOT DO TODAY. Each line is a
+# mutation that turns the spec into today's product and makes fizz fail
+# on the named assertion (see the report); stage 2/3 walks will be red
+# here until the product is fixed:
+# 1. Sidebar, failed search: App discards useFullText's state, so a
+#    failure reads "No sessions match" with no Retry. Owed: "Text search
+#    failed · Retry" (note "failed"). -> FailureIsSaid
+# 2. Sidebar, in flight: with nothing matched locally the list says "No
+#    sessions match" while the transcripts are still being read. Owed:
+#    "Searching…" (note "searching"). -> NoMatchOnlySettled
+# 3. Palette, Wiki group: useWikiHits keeps the previous query's pages
+#    for 180 ms plus the round trip after every keystroke, and Enter or a
+#    click then opens a page that does not match. Owed: hits belong to the
+#    query on screen (the useDirs/forQ guard). -> WikiHitsCurrent
+# 4. Palette, failed wiki search: the group silently empties while the
+#    session search says "Text search failed". Owed: the failure said
+#    (wikiSays "failed"). -> FailureIsSaid
+# 5. Palette, a Mentioned in row for a session the list holds (B): its
+#    run is onOpenSession(r.id) with no seq, so it opens at the end, not
+#    at the line; only a hit the list does not hold (Z) jumps. Owed: the
+#    line. -> SaidOpensAtLine
+#
+# Product gaps not modelled (notes, not claims):
+# - searchLimit 25: the sidebar asks with no limit, so a phrase said in
+#   more than 25 sessions silently lists 25 and says nothing of the rest.
+# - A said-only hit on a session the palette's `listable` drops (a
+#   background agent whose parent is listed) is filtered out of `texts`
+#   in the palette but counted in the sidebar.
+# - Wiki pick has no cite (above).
+#
+# Pruned, because every generated path is one browser test:
+# - A session is opened only from a filtered list (the flow is about
+#   search), and while one is open, or the wiki page is, only Back is
+#   walked: the sidebar under it behaves as from the list.
+# - The palette opens from a quiet sidebar only: ⌘K with the filter
+#   empty, or the "more found" link (query "arch", answered). While it is
+#   up the sidebar's own search is settled and nothing else moves.
+# - In the palette only "said", "none" and Clear are typed ("arch" comes
+#   from the link): together they are every wiki answer (a page, none,
+#   stale, failed) and both Mentioned in kinds (listed B, unlisted Z).
+# - The palette's Start, commands and arrows are ui_palette's.
+# - Archived's own load (loading/failed) is ui_sidebar's: Include lists
+#   Z at once. Include is offered only under a query, so it always ends
+#   with the query (archFromFilter).
+#
+# Fairness: the server answering (SearchOk, PSearchOk, WikiAnswer) is
+# weakly fair; failures and the person are not. Weak suffices: typing
+# again keeps the answer enabled (loading stays loading), and a failure
+# leaves "loading" behind, which is all the liveness claims ask for, so
+# failing forever is no violation. The claims are one per read (below):
+# a single "all three settled" claim is false, since a person typing
+# between the palette's two answers forever never has both at once.
+
+# What each query's transcript search answers (ids, in list order).
+def transcriptHits(q):
+    if q == "said":
+        return ["B"]
+    if q == "arch":
+        return ["Z"]
+    return []
+
+# The local hit (getSearchMatch): A's title and E's path hold "title".
+def localHits(q):
+    if q == "title":
+        return ["A", "E"]
+    return []
+
+# The sessions the page's `rows` holds: Z only once Archived is shown.
+def listedIds(s):
+    if s.archived:
+        return ["A", "B", "E", "Z"]
+    return ["A", "B", "E"]
+
+# Nothing in front of the sidebar: no session, wiki page or palette.
+def quiet(s):
+    return s.open == "" and s.page == "" and not s.palette
+
+role Search:
+    action Init:
+        # --- the sidebar filter ---
+        # The filter field is shown (Filter button or "/").
+        self.field = False
+        # "empty" | "short" | "title" | "said" | "arch" | "none"
+        self.query = "empty"
+        # useFullText as the sidebar gets it: idle (no query, or under two
+        # characters) | loading | done | error.
+        self.search = "idle"
+        # The sessions whose transcript answered the query on screen.
+        self.said = []
+        # Archived shown (from the filter's Include).
+        self.archived = False
+        # --- the thread / wiki page ---
+        # The open session ("" none) and where it opened: "top" (as any
+        # open does) or "line" (scrolled to the line that said it, marked).
+        self.open = ""
+        self.at = ""
+        # The wiki page open from the palette ("" none).
+        self.page = ""
+        # --- the palette ---
+        self.palette = False
+        # "empty" | "said" | "none" | "arch"
+        self.pq = "empty"
+        # The palette's session search and the rows it answered.
+        self.psearch = "idle"
+        self.found = []
+        # The palette's wiki search and the pages its Wiki group lists.
+        self.wiki = "idle"
+        self.wikiRows = []
+        # --- derived (recompute) ---
+        # The sidebar's rows: listed sessions, the Archived section's too.
+        self.rows = []
+        # What the list says besides rows: "" | "searching" | "failed" |
+        # "nomatch".
+        self.note = ""
+        # The "N more found in the conversation" link's N.
+        self.elsewhere = 0
+        # What the Wiki group says when it lists nothing: "" | "failed".
+        self.wikiSays = ""
+        self.recompute()
+
+    atomic func recompute():
+        listed = listedIds(self)
+        rows = []
+        if self.query == "empty":
+            # E is empty and dead: hidden with no query.
+            rows = [i for i in listed if i != "E"]
+        else:
+            rows = [i for i in listed if i in localHits(self.query) or i in self.said]
+        self.rows = rows
+        self.elsewhere = len([i for i in self.said if i not in listed])
+        note = ""
+        if self.query != "empty":
+            if self.search == "error":
+                note = "failed"
+            elif len(rows) == 0 and self.search == "loading":
+                note = "searching"
+            elif len(rows) == 0:
+                note = "nomatch"
+        self.note = note
+        self.wikiSays = "failed" if self.palette and self.wiki == "error" else ""
+
+    # A new query: a transcript read for two characters or more, and the
+    # previous answer gone at once (the forQ guard).
+    atomic func setQuery(q):
+        self.query = q
+        self.said = []
+        self.search = "idle" if q in ["empty", "short"] else "loading"
+        if q == "empty":
+            # Include lasts as long as the filter.
+            self.archived = False
+
+    # --- the sidebar filter ---------------------------------------------
+
+    # The toolbar's Filter button, or "/".
+    atomic action OpenFilter:
+        require quiet(self) and not self.field
+        self.field = True
+        self.recompute()
+
+    atomic action TypeShort:
+        require quiet(self) and self.field and self.query != "short"
+        self.setQuery("short")
+        self.recompute()
+
+    atomic action TypeTitle:
+        require quiet(self) and self.field and self.query != "title"
+        self.setQuery("title")
+        self.recompute()
+
+    atomic action TypeSaid:
+        require quiet(self) and self.field and self.query != "said"
+        self.setQuery("said")
+        self.recompute()
+
+    atomic action TypeArch:
+        require quiet(self) and self.field and self.query != "arch"
+        self.setQuery("arch")
+        self.recompute()
+
+    atomic action TypeNone:
+        require quiet(self) and self.field and self.query != "none"
+        self.setQuery("none")
+        self.recompute()
+
+    # Select all, delete: the field stays.
+    atomic action Clear:
+        require quiet(self) and self.field and self.query != "empty"
+        self.setQuery("empty")
+        self.recompute()
+
+    # Escape in the field: query cleared, field hidden.
+    atomic action Escape:
+        require quiet(self) and self.field
+        self.setQuery("empty")
+        self.field = False
+        self.recompute()
+
+    atomic fair action SearchOk:
+        require self.search == "loading"
+        self.search = "done"
+        self.said = transcriptHits(self.query)
+        self.recompute()
+
+    atomic action SearchFails:
+        require self.search == "loading"
+        self.search = "error"
+        self.said = []
+        self.recompute()
+
+    # The owed "Text search failed · Retry".
+    atomic action Retry:
+        require quiet(self) and self.note == "failed"
+        self.search = "loading"
+        self.recompute()
+
+    # Archived's "Include" under a query, and its fold back.
+    atomic action ToggleArchived:
+        require quiet(self) and self.query != "empty"
+        self.archived = not self.archived
+        self.recompute()
+
+    # A row listed for a local hit: opens as any open does.
+    atomic action SelectTitleRow:
+        require quiet(self) and self.query != "empty"
+        require len([i for i in self.rows if i in localHits(self.query)]) > 0
+        self.open = [i for i in self.rows if i in localHits(self.query)][0]
+        self.at = "top"
+        self.recompute()
+
+    # A row listed only for what it said: opens at that line (setJump).
+    atomic action SelectSaidRow:
+        require quiet(self) and self.query != "empty"
+        require len([i for i in self.rows if i not in localHits(self.query)]) > 0
+        self.open = [i for i in self.rows if i not in localHits(self.query)][0]
+        self.at = "line"
+        self.recompute()
+
+    # "1 more found in the conversation · ⌘K": the palette, seeded with
+    # the query.
+    atomic action OpenElsewhere:
+        require quiet(self) and self.query != "empty" and self.elsewhere > 0
+        self.palette = True
+        self.pq = self.query
+        self.psearch = "loading"
+        self.found = []
+        self.wiki = "loading"
+        self.wikiRows = []
+        self.recompute()
+
+    # Browser Back from the session or the wiki page to the list; the
+    # filter is as it was.
+    atomic action Back:
+        require self.open != "" or self.page != ""
+        self.open = ""
+        self.at = ""
+        self.page = ""
+        self.recompute()
+
+    # --- the palette ------------------------------------------------------
+
+    # ⌘K from a quiet sidebar with no filter.
+    atomic action OpenPalette:
+        require quiet(self) and self.query == "empty"
+        self.palette = True
+        self.pq = "empty"
+        self.psearch = "idle"
+        self.found = []
+        self.wiki = "idle"
+        self.wikiRows = []
+        self.recompute()
+
+    # A new palette query: both reads start, both answers for the old
+    # query gone (owed for the wiki: gap 3).
+    atomic func setPq(q):
+        self.pq = q
+        self.found = []
+        self.wikiRows = []
+        if q == "empty":
+            self.psearch = "idle"
+            self.wiki = "idle"
+        else:
+            self.psearch = "loading"
+            self.wiki = "loading"
+
+    atomic action PTypeSaid:
+        require self.palette and self.pq != "said"
+        self.setPq("said")
+        self.recompute()
+
+    atomic action PTypeNone:
+        require self.palette and self.pq != "none"
+        self.setPq("none")
+        self.recompute()
+
+    atomic action PClear:
+        require self.palette and self.pq != "empty"
+        self.setPq("empty")
+        self.recompute()
+
+    atomic fair action PSearchOk:
+        require self.palette and self.psearch == "loading"
+        self.psearch = "done"
+        self.found = transcriptHits(self.pq)
+        self.recompute()
+
+    atomic action PSearchFails:
+        require self.palette and self.psearch == "loading"
+        self.psearch = "error"
+        self.found = []
+        self.recompute()
+
+    # "Text search failed · Retry" in the palette.
+    atomic action PRetry:
+        require self.palette and self.psearch == "error"
+        self.psearch = "loading"
+        self.recompute()
+
+    atomic fair action WikiAnswer:
+        require self.palette and self.wiki == "loading"
+        self.wiki = "done"
+        self.wikiRows = ["W"] if self.pq == "said" else []
+        self.recompute()
+
+    atomic action WikiFail:
+        require self.palette and self.wiki == "loading"
+        self.wiki = "error"
+        self.wikiRows = []
+        self.recompute()
+
+    atomic func closePalette():
+        self.palette = False
+        self.pq = "empty"
+        self.psearch = "idle"
+        self.found = []
+        self.wiki = "idle"
+        self.wikiRows = []
+
+    # A Mentioned in row: the session, at the line that said it (owed for
+    # a listed session: gap 5).
+    atomic action PickSession:
+        require self.palette and len(self.found) > 0
+        self.open = self.found[0]
+        self.at = "line"
+        self.closePalette()
+        self.recompute()
+
+    # A Wiki row (Enter when it leads, or a click): its page.
+    atomic action PickWikiHit:
+        require self.palette and "W" in self.wikiRows
+        self.page = self.wikiRows[0]
+        self.closePalette()
+        self.recompute()
+
+    atomic action PEscape:
+        require self.palette
+        self.closePalette()
+        self.recompute()
+
+action Init:
+    s = Search()
+
+# A failed search is said, never shown as "No sessions match" or as an
+# empty Wiki group.
+always assertion FailureIsSaid:
+    if s.search == "error" and s.note != "failed":
+        return False
+    return not (s.palette and s.wiki == "error" and s.wikiSays != "failed")
+
+# "No sessions match" only once the transcripts have answered (or were
+# never asked: under two characters).
+always assertion NoMatchOnlySettled:
+    return s.note != "nomatch" or s.search in ["idle", "done"]
+
+# Transcript hits belong to the query on screen, in both lists.
+always assertion HitsCurrent:
+    if s.search != "done" and len(s.said) > 0:
+        return False
+    if len([i for i in s.said if i not in transcriptHits(s.query)]) > 0:
+        return False
+    if s.psearch != "done" and len(s.found) > 0:
+        return False
+    return len([i for i in s.found if i not in transcriptHits(s.pq)]) == 0
+
+# The Wiki group lists only pages that answer the query on screen, so
+# Enter never opens a page for a query no longer typed.
+always assertion WikiHitsCurrent:
+    return len(s.wikiRows) == 0 or (s.wiki == "done" and s.pq == "said")
+
+# A session listed only for what it said opens at its line; a local hit
+# opens as any open does. B and Z hold no query's local hit, A and E no
+# transcript hit, so the session says which it was.
+always assertion SaidOpensAtLine:
+    if s.open in ["B", "Z"]:
+        return s.at == "line"
+    if s.open in ["A", "E"]:
+        return s.at == "top"
+    return s.open == "" and s.at == ""
+
+# The "more found" link counts only the hits the list cannot show, and
+# every hit the list can show is listed: Z once Archived is included.
+always assertion ElsewhereCounts:
+    listed = listedIds(s)
+    shown = [i for i in s.said if i in s.rows]
+    if s.elsewhere + len(shown) != len(s.said):
+        return False
+    return not (s.archived and "Z" in s.said and "Z" not in s.rows)
+
+# With a filter, the empty dead session its query hits is listed.
+always assertion FilterListsHidden:
+    return s.query != "title" or "E" in s.rows
+
+# Picking a wiki hit leaves the palette on its page.
+always assertion WikiPickOpensPage:
+    return s.page == "" or (s.page == "W" and not s.palette and s.open == "")
+
+# Every query gets an answer or an error: each read settles. One claim
+# per read, not one for all three at once: typing between the palette's
+# session answer and its wiki answer, forever, never has both settled in
+# the same state, and a person may do that; each read still answers.
+always eventually assertion SidebarSettles:
+    return s.search != "loading"
+
+always eventually assertion PaletteSearchSettles:
+    return s.psearch != "loading"
+
+always eventually assertion WikiSettles:
+    return s.wiki != "loading"
