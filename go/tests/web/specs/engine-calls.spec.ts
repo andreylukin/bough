@@ -152,11 +152,25 @@ test.describe('live engine session', () => {
       const r = await fetch('/api/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cwd, prompt: 'tick four times' }) });
       return (await r.json()).session.id;
     }, serve.cwd);
+    // Open the page once the prompt is recorded, as CI's slower start
+    // always did: opened before it, the page misses the input (the child
+    // sends no change signal for it) and the turn renders without the
+    // folded stretch this test has to go through.
+    await expect.poll(() => page.evaluate(async (sid) => {
+      const r = await fetch(`/api/sessions/${sid}`);
+      return ((await r.json()).entries ?? []).some((e: { kind: string }) => e.kind === 'input');
+    }, id), { timeout: 10_000 }).toBe(true);
     await page.goto(`${serve.url}/#/s/${id}`);
 
     const row = page.locator('details.call-native').filter({ hasText: 'LIVE_TICK' }).first();
     // Running: the present tense, a spinner, and the output so far.
     await expect(row.locator('summary .block-label')).toHaveText('Running', { timeout: 20_000 });
+    // A live turn folds its work into one "Working" stretch whose header
+    // spins; the running call is one click in.
+    const head = page.locator('details.work-seg-live > summary');
+    await expect(head.locator('.block-label')).toHaveText('Working');
+    await expect(head.locator('.spin-mark')).toBeVisible();
+    await head.click();
     await expect(row.locator('.spin-mark')).toBeVisible();
     await expect(row.locator('.call-tail')).toContainText('LIVE_TICK_', { timeout: 10_000 });
     // Finished: past tense, no spinner, and the whole output one click in.
