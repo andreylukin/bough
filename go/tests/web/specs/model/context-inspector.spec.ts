@@ -169,6 +169,16 @@ modelTests<Ctx>({
       page, serve, id: await serve.newSession(), held: [], skillOff: false,
       homes: [...new Set([serve.home, fs.realpathSync(serve.home)])],
     };
+    // Stop the session's child (archive kills it, unarchive leaves it
+    // stopped), as the Go adapter does: a running child keeps the files
+    // it started with, so filing it would not change what it reads
+    // (context_page_truth); with none running the page lists what the
+    // next start reads, which is what this spec's files are. Through
+    // the API: there is no stop button for an idle session.
+    for (const verb of ['archive', 'unarchive']) {
+      const r = await serve.api.post(`/api/sessions/${c.id}/${verb}`);
+      if (!r.ok()) throw new Error(`${verb}: ${r.status()} ${await r.text()}`);
+    }
     await page.route((u) => u.pathname === `/api/sessions/${c.id}/context`, (r) => { c.held.push(r); });
     await page.goto(`${serve.url}/#/s/${c.id}`);
     await page.locator('#composer').waitFor();
