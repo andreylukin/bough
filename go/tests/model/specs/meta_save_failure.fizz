@@ -1,0 +1,320 @@
+# meta.json cannot be saved (go/tests/model/README.md), under every verb
+# that writes it, and what the control room makes of the answer.
+#
+# Serve keeps one meta.json for every session (Supervisor.meta, written
+# whole by saveMetaLocked: temp file + rename). Each verb below changes
+# its in-memory copy and saves; the list (GET /api/sessions) is built
+# from the in-memory copy, a restart from the file. The verbs:
+#
+#   Archive / Unarchive  POST /archive, /unarchive  SetArchived
+#   AssignProject        POST /project              AssignProject -> setProject
+#   MarkSeen, MarkAll,   POST /ack                  Acknowledge
+#     AutoAck
+#   DeleteProject        DELETE /api/projects/{slug} DeleteProject
+#
+# This spec is the INTENDED behaviour, the one SetTitle already has
+# (supervisor.go SetTitle): a failed save answers an error and leaves
+# memory as it was, so the list never shows a change a restart would
+# take back. The product does not do that today for any verb but
+# SetTitle; each gap is one of the temporary mutations named beside the
+# action (see the stage-1 notes), and the MBT run of stage 2 is expected
+# to go red on it until the product is fixed. The ordering the fixes
+# need, spelled out where it is not just "roll back":
+#   - SetArchived: save first; on error roll back and do NOT kill.
+#     The archive handler returns before EndChild, so stopChildren does
+#     not change a failed archive (children are archive_unarchive's).
+#   - DeleteProject: EndProject, then save the unassigning, then remove
+#     the directories; a failed save removes nothing. (Today: RemoveAll,
+#     then save.) Ending the project's sessions first stays: it removes
+#     nothing, and the next Send restarts them.
+#   - A failed auto-ack is reported like any other verb (the toast, with
+#     Retry) and not re-posted while that toast is up. (Today: .catch
+#     swallows it and the effect re-POSTs on every list read.)
+#
+# One local session, one project "p" it may be filed under, and the page
+# open on the session's thread. Fields:
+#
+#   diskFull   saves fail (ENOSPC, or meta.json's dir made read-only)
+#   archived / project
+#              the session's meta in serve's memory: what the list shows
+#   archivedDisk / projectDisk
+#              the same in meta.json: what a restart loads
+#   live       the session's child is up (serve's lease)
+#   projectExists
+#              ~/.bough/projects/p/ is on disk (and its caches)
+#   mark / markDisk
+#              the row's mark as serve derives it from the transcript and
+#              meta.Ack, from memory / from the file: "" none, "unseen" a
+#              clean finish not yet acked, "trouble" a failed turn
+#   pageMark   the mark on the page's copy of the row (list reads only)
+#   toast      the page's "Couldn't …" toast, naming the verb and its
+#              target so Retry re-runs exactly that ("" none)
+#   silentFails
+#              auto-ack POSTs that failed with nothing on screen since the
+#              last one that did not, capped at 2
+#
+# Abstractions:
+# - One meta.json means a full disk fails every save alike: Mark every
+#   failure seen over several rows cannot half-succeed from this cause
+#   (a 404 for a row deleted meanwhile could, which is not this flow).
+#   With one session MarkAll is MarkSeen with its own toast label.
+# - A turn is one step (Finish / Fail), written by the live child to its
+#   own transcript: history is not meta.json, so a full disk here fails
+#   only serve's saves. (The child's own writes on a really full disk
+#   are a different flow.)
+# - The model and effort pickers (SetModel, SetEffort) write meta.json
+#   too; they are meta_save_failure_picks.fizz, split off to keep each
+#   graph under ~1500 states. Nothing here depends on them.
+# - No CreateProject: DeleteProject is one-way here.
+
+role Session:
+    action Init:
+        self.diskFull = False
+        self.archived = False
+        self.archivedDisk = False
+        self.project = ""
+        self.projectDisk = ""
+        self.live = False
+        self.projectExists = True
+        self.mark = ""
+        self.markDisk = ""
+        self.pageMark = ""
+        self.toast = ""
+        self.silentFails = 0
+
+    # --- the disk -----------------------------------------------------
+
+    atomic action DiskFills:
+        require not self.diskFull
+        self.diskFull = True
+
+    # Someone frees space. Fair: a full disk is not left full forever,
+    # which is what lets Retry converge.
+    atomic fair action DiskFrees:
+        require self.diskFull
+        self.diskFull = False
+
+    # --- the child ----------------------------------------------------
+
+    # A prompt from the composer and the turn it starts, ended and
+    # recorded: Send spawns the child when none is up (ensure), and a
+    # clean finish marks the row unseen, a failed one troubled. Refused
+    # (409) while archived, and the composer is disabled then. Two
+    # actions, not a oneof (fizzbee-mbt checks a step against the fork's
+    # intermediate node).
+    #
+    # The prompt is not a step of its own: no line reaches a child
+    # without being recorded (an empty one is a turn, a "/" command a
+    # "command" entry that brings an acked failure's trouble back), so
+    # "the child is up and the mark unchanged" is not a state the server
+    # can be put in.
+    atomic action Finish:
+        require not self.archived
+        self.live = True
+        self.mark = "unseen"
+        self.markDisk = "unseen"
+
+    atomic action Fail:
+        require not self.archived
+        self.live = True
+        self.mark = "trouble"
+        self.markDisk = "trouble"
+
+    # --- the verbs ----------------------------------------------------
+    # Each ends like app.tsx act(): success clears the toast, failure
+    # sets it, and either way the page re-reads the list.
+
+    atomic func settle(ok, label):
+        if ok:
+            self.toast = ""
+        else:
+            self.toast = label
+        self.pageMark = self.mark
+
+    atomic func archive():
+        if not self.diskFull:
+            self.archived = True
+            self.archivedDisk = True
+            self.live = False
+        # MUTATION(product today): self.archived = True always, and no
+        # kill when the save fails.
+        self.settle(not self.diskFull, "archive")
+
+    atomic func unarchive():
+        if not self.diskFull:
+            self.archived = False
+            self.archivedDisk = False
+        self.settle(not self.diskFull, "unarchive")
+
+    atomic func assign(to):
+        if not self.diskFull:
+            self.project = to
+            self.projectDisk = to
+        # MUTATION(product today): self.project = to always.
+        self.settle(not self.diskFull, "assign:" + to)
+
+    atomic func ack(label):
+        if not self.diskFull:
+            self.mark = ""
+            self.markDisk = ""
+        # MUTATION(product today): self.mark = "" always.
+        self.settle(not self.diskFull, label)
+
+    atomic func deleteProject():
+        # EndProject ends the sessions filed under it before anything
+        # else, whatever the save does next.
+        if self.project == "p":
+            self.live = False
+        if not self.diskFull:
+            self.projectExists = False
+            self.project = ""
+            self.projectDisk = ""
+        # MUTATION(product today): self.projectExists = False always.
+        self.settle(not self.diskFull, "delete")
+
+    # Settings > Archive…, confirmed (or either choice when agents run:
+    # the failed save returns before any EndChild).
+    atomic action Archive:
+        require not self.archived
+        self.archive()
+
+    atomic action Unarchive:
+        require self.archived
+        self.unarchive()
+
+    # The session's project menu; the picker lists existing projects.
+    atomic action AssignProject:
+        require self.project == ""
+        require self.projectExists
+        self.assign("p")
+
+    atomic action UnassignProject:
+        require self.project == "p"
+        self.assign("")
+
+    # "Mark seen" (thread header, sidebar row): offered on trouble.
+    atomic action MarkSeen:
+        require self.pageMark == "trouble"
+        self.ack("ack")
+
+    # The palette's "Mark every failure seen".
+    atomic action MarkAllSeen:
+        require self.pageMark == "trouble"
+        self.ack("ackall")
+
+    # The thread is on screen and the page's row says unseen: app.tsx
+    # posts the ack. Its failure is reported, and the page does not post
+    # again while that report is up. Strongly fair: list reads and turns
+    # disable it and enable it again.
+    atomic fair<strong> action AutoAck:
+        require self.pageMark == "unseen" and self.toast not in ("ack", "ackall")
+        if self.diskFull:
+            self.toast = "ack"
+            # MUTATION(product today): no toast; the .catch swallows it:
+            # self.toast unchanged and
+            # self.silentFails = min(self.silentFails + 1, 2)
+        else:
+            self.silentFails = 0
+            self.mark = ""
+            self.markDisk = ""
+            self.pageMark = ""
+
+    # The project page's Delete, after the slug is typed back.
+    atomic action DeleteProject:
+        require self.projectExists
+        self.deleteProject()
+
+    # The toast's Retry: the same verb, the same target.
+    atomic fair action ToastRetry:
+        require self.toast != ""
+        t = self.toast
+        if t == "archive":
+            self.archive()
+        elif t == "unarchive":
+            self.unarchive()
+        elif t == "assign:p":
+            self.assign("p")
+        elif t == "assign:":
+            self.assign("")
+        elif t == "delete":
+            self.deleteProject()
+        else:
+            self.ack(t)
+
+    # The list poll (4 s, 12 s with a session open). Strongly fair: turns
+    # and acks keep toggling whether it has anything to change.
+    atomic fair<strong> action ListPoll:
+        require self.pageMark != self.mark
+        self.pageMark = self.mark
+
+    # serve stops and starts: children are gone, and memory is what
+    # meta.json says.
+    atomic action ServeRestart:
+        self.live = False
+        self.archived = self.archivedDisk
+        self.project = self.projectDisk
+        self.mark = self.markDisk
+
+action Init:
+    session = Session()
+
+# What the list shows equals what a restart would load: no verb changes
+# memory without the save that makes it last.
+always assertion ListEqualsDisk:
+    s = session
+    return (s.archived == s.archivedDisk and s.project == s.projectDisk and
+            s.mark == s.markDisk)
+
+always assertion ArchivedHasNoLiveChild:
+    return not (session.archived and session.live)
+
+# A delete that answered an error has removed nothing.
+always assertion FailedDeleteRemovedNothing:
+    return session.toast != "delete" or session.projectExists
+
+# An auto-ack that fails is reported, never re-posted silently on the
+# next list read.
+always assertion NoSilentAckStorm:
+    return session.silentFails < 2
+
+# The page never says "Couldn't X" while the list shows X done.
+always assertion NoToastForWhatIsDone:
+    s = session
+    t = s.toast
+    if t == "archive":
+        return not s.archived
+    if t == "unarchive":
+        return s.archived
+    if t == "assign:p":
+        return s.project != "p"
+    if t == "assign:":
+        return s.project != ""
+    if t == "delete":
+        return s.projectExists
+    if t in ("ack", "ackall"):
+        return s.mark != ""
+    return True
+
+# An error answer leaves meta as it was: while the disk stays full, no
+# step changes what the list shows except a turn writing its own mark,
+# and nothing is removed.
+transition assertion FullDiskChangesNoMeta(before, after):
+    b = before.session
+    a = after.session
+    if not (b.diskFull and a.diskFull):
+        return True
+    return (a.archived == b.archived and a.project == b.project and
+            a.projectExists == b.projectExists and
+            (a.mark == b.mark or a.mark != ""))
+
+# A session answered "archived" eventually has no child.
+always eventually assertion ArchivedChildGone:
+    return not (session.archived and session.live)
+
+# The page learns every mark the server has.
+always eventually assertion PageCatchesUp:
+    return session.pageMark == session.mark
+
+# Once the disk is free, Retry clears every failure it reported.
+always eventually assertion FailuresConverge:
+    return session.toast == "" or session.diskFull
