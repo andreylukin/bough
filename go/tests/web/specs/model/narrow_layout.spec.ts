@@ -168,7 +168,11 @@ async function focusTyping(c: Ctx): Promise<void> {
   const { page } = c;
   if (await page.locator(OVERLAY.settings).isVisible()) {
     // The model picker's search field: the one text field Settings has.
-    await page.locator('.head-pop').getByRole('combobox', { name: /^Next turn model/ }).click();
+    // The combobox toggles: a second KeyboardUp (after KeyboardDown) finds
+    // the picker still open, and a click would close it.
+    if (!(await page.locator('.head-pop .sel-search').isVisible())) {
+      await page.locator('.head-pop').getByRole('combobox', { name: /^Next turn model/ }).click();
+    }
     await page.locator('.head-pop .sel-search').focus();
   } else if (await page.locator(OVERLAY.panel).isVisible()) {
     await page.locator('.prj-panel textarea').first().focus();
