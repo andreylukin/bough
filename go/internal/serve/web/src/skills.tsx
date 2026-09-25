@@ -49,27 +49,43 @@ export function SkillPicker({ session, onPick, disabled = false }: { session: st
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (active >= 0) pick(hits[active]); }
   };
 
+  return <SkillPickerView open={open} disabled={disabled} hits={hits} active={active} error={error} all={all} slow={slow} q={q}
+    trigger={trigger} field={field} listbox={listbox} onToggle={() => setOpen((v) => !v)} onClose={close}
+    onLeave={() => { setOpen(false); setQ(""); }} onQ={setQ} onKeys={keys} onHover={setAt} onPick={pick}
+    onRetry={() => { retry(); field.current?.focus(); }} />;
+}
+
+/** The Skills button and, open, its dialog as its state says: a status line (loading, failed, empty) or the skills. */
+export function SkillPickerView({ open, disabled, hits, active, error, all, slow, q, trigger, field, listbox, onToggle, onClose, onLeave, onQ, onKeys, onHover, onPick, onRetry }: {
+  open: boolean; disabled: boolean; hits: { name: string; summary: string }[]; active: number; error: boolean;
+  all: unknown[] | null;
+  /** Past the 200 ms a fast read takes: only then does loading say so. */
+  slow: boolean; q: string;
+  trigger?: React.Ref<HTMLButtonElement>; field?: React.Ref<HTMLInputElement>; listbox?: React.Ref<HTMLDivElement>;
+  onToggle: () => void; onClose: () => void; onLeave: () => void; onQ: (q: string) => void; onKeys: (e: React.KeyboardEvent) => void;
+  onHover: (i: number) => void; onPick: (s: { name: string }) => void; onRetry: () => void;
+}) {
   return (
     <div className="skills-anchor">
       <button ref={trigger} className="btn skills-btn" aria-expanded={open} aria-haspopup="dialog" disabled={disabled} aria-label="Skills"
-        title={disabled ? "Transcript didn’t load" : undefined} onClick={() => setOpen((v) => !v)}><span className="skills-glyph" aria-hidden="true">/</span><span className="skills-word">Skills</span></button>
+        title={disabled ? "Transcript didn’t load" : undefined} onClick={onToggle}><span className="skills-glyph" aria-hidden="true">/</span><span className="skills-word">Skills</span></button>
 
       {open && (
         <>
-          <div className="skills-scrim" onClick={close} />
+          <div className="skills-scrim" onClick={onClose} />
           {/* Tabbing out closes it where focus went; only Escape returns to the button. */}
           <div className="skills-pop" role="dialog" aria-label="Insert a skill"
-            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null) && e.relatedTarget) { setOpen(false); setQ(""); } }}>
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null) && e.relatedTarget) onLeave(); }}>
             <input ref={field} className="skills-filter" value={q} placeholder="Filter skills"
               aria-label="Filter skills" aria-controls="skill-list" role="combobox" aria-expanded="true"
               aria-activedescendant={active >= 0 ? "skill-" + active : undefined}
-              onChange={(e) => setQ(e.target.value)} onKeyDown={keys} />
+              onChange={(e) => onQ(e.target.value)} onKeyDown={onKeys} />
             {/* A listbox only once there are options: loading, failed or empty, it holds a status line, which a listbox may not. */}
             <div id="skill-list" ref={listbox} className="skills-list" role={hits.length ? "listbox" : undefined} aria-label={hits.length ? "Skills" : undefined}>
               {hits.map((s, i) => (
                 <button key={s.name} id={"skill-" + i} role="option" aria-selected={i === active} data-at={i === active ? 1 : 0}
                   tabIndex={-1} className={"skill" + (i === active ? " skill-on" : "")}
-                  onMouseEnter={() => setAt(i)} onClick={() => pick(s)}>
+                  onMouseEnter={() => onHover(i)} onClick={() => onPick(s)}>
                   <span className="mono skill-name">/{s.name}</span>
                   {s.summary && <span className="skill-sum">{s.summary}</span>}
                 </button>
@@ -77,7 +93,7 @@ export function SkillPicker({ session, onPick, disabled = false }: { session: st
               {/* Retry goes with the line it is on: focus returns to the filter, or it fell out of the dialog. */}
               {hits.length === 0 && (
                 <p className="skills-empty" role="status">
-                  {error ? <>Couldn’t load skills. <button className="link" onClick={() => { retry(); field.current?.focus(); }}>Retry</button></>
+                  {error ? <>Couldn’t load skills. <button className="link" onClick={onRetry}>Retry</button></>
                     : !all ? (slow ? <><Spinner /> Loading skills…</> : "")
                     : all.length === 0 ? "No skills installed. Create ~/.claude/skills/<name>/SKILL.md"
                     : `No skills match “${q.trim()}”.`}

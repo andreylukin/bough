@@ -211,13 +211,25 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
   const panel = Boolean(trigger && (hits.length || failed || loaded || slow));
   useEffect(() => { onOpen?.(panel); }, [panel, onOpen]);
   if (!trigger) return null;
+  return <MentionsView trigger={trigger} hits={hits} at={at} failed={failed} loaded={loaded} slow={slow}
+    noSkills={skills?.length === 0} box={box} onRetry={isFiles ? retryFiles : retrySkills} onClose={onClose} onPick={onPick} onHover={setAt} />;
+}
+
+/** What the picker shows for its state: a status line (loading, failed, empty) or the options, the composer keeping focus. */
+export function MentionsView({ trigger, hits, at, failed, loaded, slow, noSkills, box, onRetry, onClose, onPick, onHover }: {
+  trigger: Trigger; hits: Choice[]; at: number; failed: boolean; loaded: boolean;
+  /** Past the 200 ms a fast answer takes: only then does loading say so. */
+  slow: boolean; noSkills: boolean;
+  box?: React.Ref<HTMLDivElement>; onRetry: () => void; onClose: () => void; onPick: (t: Trigger, value: string) => void; onHover: (i: number) => void;
+}) {
+  const isFiles = trigger.kind === "@";
   if (hits.length === 0) {
     // Nothing to pick is still an answer: say which one, never go blank.
     const q = trigger.token ? ` match “${trigger.token}”` : "";
     const msg = failed ? <>Couldn’t load {isFiles ? "files" : "skills"}. <button className="link" onMouseDown={(e) => e.preventDefault()}
-        onClick={isFiles ? retryFiles : retrySkills}>Retry</button></>
+        onClick={onRetry}>Retry</button></>
       : !loaded ? (slow ? <><Spinner /> {isFiles ? "Finding files…" : "Loading skills…"}</> : null)
-      : !isFiles && skills?.length === 0 ? "No skills installed"
+      : !isFiles && noSkills ? "No skills installed"
       : `No ${isFiles ? "files" : "skills"}${q || " found"}`;
     return msg && (
       <div className="mention" ref={box} onKeyDown={(e) => {
@@ -240,7 +252,7 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
             <button key={c.value} id={"mention-" + i} role="option" tabIndex={-1} aria-selected={i === at} data-at={i === at ? 1 : 0}
                     className={"mention-item" + (i === at ? " mention-on" : "")}
                     onMouseDown={(e) => e.preventDefault() /* keep the composer focused */}
-                    onMouseEnter={() => setAt(i)} onClick={() => onPick(trigger, c.value)}>
+                    onMouseEnter={() => onHover(i)} onClick={() => onPick(trigger, c.value)}>
               {isFiles && <MentionGlyph dir={isDir} />}
               <span className={"mention-name" + (isFiles ? "" : " mono")}>{name}{isDir ? "/" : ""}</span>
               {dir && <span className="mono mention-dir">{dir}</span>}

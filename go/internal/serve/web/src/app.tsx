@@ -3925,7 +3925,21 @@ const noLines: Line[] = [];
 
 /** A composer upload in flight, by session: see Thread's follow. */
 type Upload = { slot: number; tag: string; done: Promise<string> };
-const uploads = new Map<string, Set<Upload>>();
+export const uploads = new Map<string, Set<Upload>>();
+
+/** The composer's key hints for its phase. A caret picker owns the keys while it is open, so they step aside. */
+export function ComposerHint({ pickerOpen, steering, live }: { pickerOpen: boolean; /** A turn runs and the draft is not an answer: Enter steers it. */ steering: boolean; /** A turn is running or on its way. */ live: boolean }) {
+  if (pickerOpen) return null;
+  return (
+    <span className="hint composer-hint">
+      {(steering
+        ? [["↵", "steer"], [[modKey() === "\u2318" ? "\u2318" : "Ctrl", "↵"], "queue"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["Esc", "stop"]]
+        : live ? [["↵", "send"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["Esc", "stop"], ["/", "commands"]]
+        : [["↵", "send"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["/", "commands"], ["@", "files"]]
+      ).map(([k, w]) => <span key={w as string} className="composer-key">{Array.isArray(k) ? <span className="keys-combo">{k.map((c) => <kbd key={c}>{c}</kbd>)}</span> : <kbd>{k}</kbd>} {w}</span>)}
+    </span>
+  );
+}
 
 export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
@@ -4484,7 +4498,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
       else localStorage.removeItem(attsKey);
     } catch { /* storage off */ }
   }, [draft, attsKey]);
-  const [uploading, setUploading] = useState(0);
+  // Counted from the first paint: a Thread mounted over an upload in flight
+  // (back from another session) must not offer Send until it answers.
+  const [uploading, setUploading] = useState(() => uploads.get(row.id)?.size ?? 0);
   // Main's Start thread button and what it last said (see StartThreadCtx).
   const startThread = useContext(StartThreadCtx);
   const [threadNote, setThreadNote] = useState("");
@@ -4498,8 +4514,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // An upload is followed by whichever Thread shows its session: the one
   // that started it, or the one mounted on the way back.
   const alive = useRef(true);
-  const follow = async (u: Upload) => {
-    setUploading((n) => n + 1);
+  const follow = async (u: Upload, counted = false) => {
+    if (!counted) setUploading((n) => n + 1);
     try {
       const path = await u.done;
       // Stored slot by slot, so an unmounted Thread's stale refs never
@@ -4517,7 +4533,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   };
   useEffect(() => {
     alive.current = true;
-    uploads.get(row.id)?.forEach((u) => void follow(u));
+    // Recounted here: one that answered between the first paint and now is no longer followed.
+    const now = uploads.get(row.id);
+    setUploading(now?.size ?? 0);
+    now?.forEach((u) => void follow(u, true));
     return () => { alive.current = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const insert = (s: string) => {
@@ -5062,15 +5081,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               )}
             </span>
           )}
-          {!pickerOpen && (
-            <span className="hint composer-hint">
-              {(running && !draftAsk
-                ? [["↵", "steer"], [[modKey() === "\u2318" ? "\u2318" : "Ctrl", "↵"], "queue"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["Esc", "stop"]]
-                : live ? [["↵", "send"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["Esc", "stop"], ["/", "commands"]]
-                : [["↵", "send"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["/", "commands"], ["@", "files"]]
-              ).map(([k, w]) => <span key={w as string} className="composer-key">{Array.isArray(k) ? <span className="keys-combo">{k.map((c) => <kbd key={c}>{c}</kbd>)}</span> : <kbd>{k}</kbd>} {w}</span>)}
-            </span>
-          )}
+          <ComposerHint pickerOpen={pickerOpen} steering={running && !draftAsk} live={live} />
         </div>
       </div>
       {workOpen && (
