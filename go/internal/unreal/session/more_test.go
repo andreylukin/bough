@@ -709,6 +709,24 @@ func TestModelLockedForTheTurn(t *testing.T) {
 	}
 }
 
+// A child whose provider call failed did no work: it ends as an error
+// naming the provider's failure ("subagent llm:", what workers refunds
+// the slot on), not as a done child with an empty report.
+func TestSubagentProviderFailureIsAnError(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, fake.Step{Err: fmt.Errorf("provider down")})
+	res, err := r.rt.Children().Run(context.Background(), ChildRequest{Task: "count the files", Worker: "1", MaxSteps: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "error" || !strings.HasPrefix(res.Reply, "subagent llm: ") || !strings.Contains(res.Reply, "provider down") {
+		t.Fatalf("result %+v\n%s", res, r.dump())
+	}
+	if r.last("sub:done").Data["status"] != "error" {
+		t.Fatalf("sub:done status %v\n%s", r.last("sub:done").Data["status"], r.dump())
+	}
+}
+
 // A child that runs out of steps says so on a sub:error: the card reads
 // its failure off that line.
 func TestSubagentBudgetSaysWhy(t *testing.T) {

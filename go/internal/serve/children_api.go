@@ -1,9 +1,12 @@
 package serve
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -15,7 +18,8 @@ import (
 // createChild is POST /api/sessions with spawnedBy: a session starting a
 // background agent. The row comes back at once, queued or not; a child
 // that has not written its history yet answers with what serve knows.
-func (a *API) createChild(w http.ResponseWriter, opt CreateOptions, maxPerSession, maxRunning int) {
+// ctx is the request's: the client that sent it may give up.
+func (a *API) createChild(ctx context.Context, w http.ResponseWriter, opt CreateOptions, maxPerSession, maxRunning int) {
 	if opt.Slug != "" {
 		if projectdef.ValidSlug(opt.Slug) != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: unknown project %q", opt.Slug))
@@ -25,6 +29,13 @@ func (a *API) createChild(w http.ResponseWriter, opt CreateOptions, maxPerSessio
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: unknown project %q", opt.Slug))
 			return
 		}
+	}
+	a.holdCreate(ctx, "create", opt.SpawnedBy)
+	// A client that gave up (its serveTimeout, or Esc cancelling the
+	// turn) has told the model the spawn failed: an agent made now would
+	// run, and report, under a parent that never got its id.
+	if ctx.Err() != nil {
+		return
 	}
 	id, queued, err := a.sup.CreateChild(opt, maxPerSession, maxRunning)
 	switch {
@@ -45,6 +56,13 @@ func (a *API) createChild(w http.ResponseWriter, opt CreateOptions, maxPerSessio
 		writeErr(w, statusFor(err), fmt.Errorf("serve: api: create background agent: %w", err))
 		return
 	}
+	a.holdCreate(ctx, "respond", id)
+	if ctx.Err() != nil {
+		// Given up while serve made it: nobody holds the id, so it is
+		// withdrawn with the request rather than left running.
+		a.sup.WithdrawChild(id)
+		return
+	}
 	row := a.queuedRow(id)
 	if !queued {
 		row.Queued = false
@@ -55,6 +73,35 @@ func (a *API) createChild(w http.ResponseWriter, opt CreateOptions, maxPerSessio
 		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"session": row, "queued": queued})
+}
+
+// holdCreate parks a background-agent create at stage "create" (before
+// serve makes the child) or "respond" (made, not answered) while
+// $BOUGH_TEST_CREATE_HOLD_DIR/<stage>.hold exists, announcing itself as
+// <stage>.held (holding what): serve's own windows last microseconds, and
+// the model tests give a request up inside them. It returns when the hold
+// is lifted or the client is gone.
+func (a *API) holdCreate(ctx context.Context, stage, what string) {
+	if a.getenv == nil {
+		return
+	}
+	dir := a.getenv("BOUGH_TEST_CREATE_HOLD_DIR")
+	if dir == "" {
+		return
+	}
+	hold := filepath.Join(dir, stage+".hold")
+	if _, err := os.Stat(hold); err != nil {
+		return
+	}
+	held := filepath.Join(dir, stage+".held")
+	_ = os.WriteFile(held, []byte(what), 0o644)
+	defer os.Remove(held)
+	for {
+		if _, err := os.Stat(hold); err != nil || ctx.Err() != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // queuedRow is the row of a child with no history file yet.

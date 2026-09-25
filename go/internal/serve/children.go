@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -861,6 +862,29 @@ func (s *Supervisor) startingIDs() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// WithdrawChild takes back a child whose create request was given up
+// before its answer reached the parent: the parent was told the spawn
+// failed and never got the id, so the child must neither run on nor
+// report. Its meta goes first, so the exit the kill causes reports
+// nothing, and so does the history file it may have started.
+func (s *Supervisor) WithdrawChild(id string) {
+	s.mu.Lock()
+	for i, q := range s.queue {
+		if q.id == id {
+			s.queue = append(s.queue[:i:i], s.queue[i+1:]...)
+			break
+		}
+	}
+	delete(s.meta, id)
+	delete(s.running, id)
+	delete(s.spawnArgs, id)
+	_ = s.saveMetaLocked()
+	s.mu.Unlock()
+	_ = s.Kill(id)
+	_ = os.Remove(filepath.Join(s.opt.HistDir, id+".jsonl"))
+	go s.drainQueue()
 }
 
 // EndChild is archive's stop: it drops a queued child and kills a live

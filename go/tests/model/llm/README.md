@@ -75,6 +75,12 @@ A turn with `"child": true` answers only a subagent's request (a native
 only the session's own: a test queues a child's replies without racing
 the parent's next request for them.
 
+A turn with `"match": "…"` answers only a request one of whose user
+messages contains that text; others skip it. Sessions share the control
+dir, so a parent and the background agents it starts tell their turns
+apart by a marker in their first prompt, and the children of one
+`spawnAll`, whose requests run at once, by a marker in their task.
+
 A process can also be held **before its history file exists**: while
 `start.hold` is in the control dir (`HoldStart`), every process that
 mounts the row parks there (the llm row mounts before history) and

@@ -139,9 +139,11 @@ func (w *Workers) nativeSpawn(ctx context.Context, c agenttools.Call) (agenttool
 		return agenttools.Result{Error: fmt.Sprintf("workers: spawn limit reached (%d per turn) — do the remaining work yourself in this turn", w.maxSpawns)}, nil
 	}
 	w.spawns++
+	w.live++
 	w.nextID++
 	id := w.nextID
 	w.mu.Unlock()
+	defer func() { w.mu.Lock(); w.live--; w.mu.Unlock() }()
 	worker := fmt.Sprintf("subagent %d", id)
 	// The child's rows carry the number, as the loop's do: the TUI and
 	// the web key a subagent's card by a numeric worker, and a label
@@ -158,6 +160,16 @@ func (w *Workers) nativeSpawn(ctx context.Context, c agenttools.Call) (agenttool
 	text := fmt.Sprintf("[%s · task: %s]\n%s", worker, oneLine(a.Task, 80), reply)
 	switch status {
 	case "done":
+	case "error":
+		// A child the provider killed never got to work: its slot goes
+		// back, as tools.spawn gives it back.
+		if strings.HasPrefix(reply, "subagent llm:") {
+			w.mu.Lock()
+			w.spawns--
+			w.mu.Unlock()
+			return agenttools.Result{Error: fmt.Sprintf("workers: %s: %s", worker, reply), Data: data}, nil
+		}
+		return agenttools.Result{Error: fmt.Sprintf("workers: %s ended %s", worker, status), Text: text, Data: data}, nil
 	case "budget":
 		text += fmt.Sprintf("\n[stopped at the step budget (%d); the report may be partial]", w.maxSteps)
 	default:

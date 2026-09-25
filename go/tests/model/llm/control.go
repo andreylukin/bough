@@ -41,6 +41,7 @@ type Turn struct {
 	// Answer, on an "api" turn, ends its first attempt at once.
 	Answer *Answer `json:"answer,omitempty"`
 	Child  bool    `json:"child,omitempty"`
+	Match  string  `json:"match,omitempty"`
 }
 
 // Answer ends one HTTP attempt of an "api" turn: a turn that goes
