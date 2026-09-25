@@ -158,15 +158,17 @@ test('the home indexes the threads; a thread opens with the column beside it and
 });
 
 test('the sidebar: a project\'s name opens its page, its chevron only folds', async ({ serve, page }) => {
-  await page.goto(serve.url + '/#/');
+  // On a named session, not #/: arriving at #/ opens the list's lead
+  // session a moment after the list paints, or not at all when the list
+  // answered late, so the URL a fold must leave alone was not yet known.
+  await page.goto(serve.url + `/#/s/${IDLE}`);
   const head = page.locator('.ws-head[data-project="orbit"]');
   await expect(head).toBeVisible();
-  // The page opens on whatever session the list leads with; folding must not leave it.
-  const before = await page.evaluate(() => window.location.hash);
+  await expect(page.locator('.thread-head h1')).toHaveText('Write the docs');
+  // Folding must not leave the session on screen.
   await head.locator('.ws-fold').click();
   await expect(head).toHaveAttribute('aria-expanded', 'false');
-  expect(await page.evaluate(() => window.location.hash)).toBe(before);
-  expect(before).not.toContain('/projects/');
+  expect(await page.evaluate(() => window.location.hash)).toBe(`#/s/${IDLE}`);
   await head.click();
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#/projects/orbit');
   await expect(page.locator('h1.prj-name')).toHaveText('Orbit');
