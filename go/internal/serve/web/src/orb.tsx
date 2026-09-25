@@ -275,7 +275,10 @@ export function FileEditor({ order, files, tab, onTab, onSave, editorRef, meta, 
       {meta?.(tab, text)}
       <textarea ref={editorRef} className="field mono orb-editor" aria-label={tab} spellCheck={false} value={text}
                 placeholder={filePlaceholder(tab)}
-                onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
+                // Typed back to the saved text is no draft: kept, it hid the
+                // next version of the file (a guest's write, another tab's
+                // Save) and its Save would have written the old one back.
+                onChange={(e) => { const v = e.target.value; setDrafts((d) => { const n = { ...d, [tab]: v }; if (v === saved) delete n[tab]; return n; }); }} />
       {saveErr && <p className="err orb-save-err" role="alert">{saveErr}</p>}
       <div className="orb-tabs">
         {actions}

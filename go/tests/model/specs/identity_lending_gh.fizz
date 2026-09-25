@@ -1,0 +1,129 @@
+# Identity lending, the gh token: a project whose definition lists "gh"
+# gets the host's `gh auth token` as GH_TOKEN on every exec in its
+# container (orb.identityEnv). The $HOME dirs half is
+# identity_lending.fizz; split off because one spec over both is past
+# 1500 states and the two share no state.
+#
+# What the code does, and so what the spec says:
+#   - execEnv reads identity from o.project, the definition loaded when
+#     the session started; unlike secrets (secretValues reloads
+#     project.yml every exec) it is never reloaded. s_gh is that snapshot.
+#   - githubToken caches the token in the session's process for five
+#     minutes; an empty result is not cached, so while the host is logged
+#     out every exec asks the keychain again (up to 5 s each; not state).
+#   - `gh auth logout` removes the host's token; the cache keeps handing
+#     it out until it expires (stale). It is not revoked server side, so
+#     a stale token still works for whoever holds it.
+#   - The container's own env never carries GH_TOKEN (baseEnv): it is
+#     per exec, so a restart of the container changes nothing here.
+#
+# Where the mapped model was corrected: GH_TOKEN follows the session's
+# snapshot, not the current definition, so remove-identity gh reaches
+# a session only when it restarts; and the stale window is the cache's
+# five minutes, not a retry loop (CacheExpires, fair).
+#
+# Design gaps this model exposes (reachable, not asserted away):
+#   - a session keeps lending GH_TOKEN after gh is removed (env set while
+#     not gh) for as long as it lives.
+#   - after a host logout the token keeps reaching guests for up to five
+#     minutes (env == "stale").
+#
+# Fields (role GhLend):
+#   gh     the definition lists gh
+#   host   the host is logged in to gh
+#   live   a session of the project runs
+#   s_gh   that session's definition (loaded at its start) lists gh
+#   tok    the session process's cached token: none | live | stale
+#          (stale = the host no longer has it)
+#   env    GH_TOKEN of the guest's latest exec: none | live | stale
+
+role GhLend:
+    action Init:
+        self.gh = False
+        self.host = True
+        self.live = False
+        self.s_gh = False
+        self.tok = "none"
+        self.env = "none"
+
+    # add-identity / remove-identity gh (editor, CLI, or relayed).
+    atomic action AddGh:
+        require not self.gh
+        self.gh = True
+
+    atomic action RemoveGh:
+        require self.gh
+        self.gh = False
+
+    atomic action HostLogout:
+        require self.host
+        self.host = False
+        if self.tok == "live":
+            self.tok = "stale"
+        if self.env == "live":
+            self.env = "stale"
+
+    # A new login is a new token: a cached old one stays stale.
+    atomic action HostLogin:
+        require not self.host
+        self.host = True
+
+    # A session starts or resumes: a new process, an empty cache, the
+    # definition as it is now.
+    atomic action StartSession:
+        require not self.live
+        self.live = True
+        self.s_gh = self.gh
+        self.tok = "none"
+        self.env = "none"
+
+    atomic action Exit:
+        require self.live
+        self.live = False
+        self.s_gh = False
+        self.tok = "none"
+        self.env = "none"
+
+    # A command in the guest: identityEnv from the start-time definition.
+    atomic action Exec:
+        require self.live
+        if self.s_gh:
+            if self.tok == "none":
+                self.tok = "live" if self.host else "none"
+            self.env = self.tok
+        else:
+            self.env = "none"
+
+    # Five minutes pass: the next exec asks `gh auth token` again.
+    atomic fair action CacheExpires:
+        require self.tok != "none"
+        self.tok = "none"
+
+action Init:
+    lend = GhLend()
+
+# GH_TOKEN reaches a guest only when its session's definition listed gh.
+always assertion TokenOnlyWhenSessionListedGh:
+    return (lend.env == "none" and lend.tok == "none") or lend.s_gh
+
+# A token handed out as current is one the host still holds.
+always assertion LiveTokenOnlyWhileLoggedIn:
+    return (lend.env != "live" and lend.tok != "live") or lend.host
+
+# No session, no token; a session's snapshot is of a definition that
+# listed gh at its start, and nothing without a session.
+always assertion NoTokenWithoutSession:
+    return lend.live or (lend.tok == "none" and lend.env == "none" and not lend.s_gh)
+
+# Bounded staleness: a token the host dropped leaves the cache.
+always eventually assertion StaleTokenLeavesCache:
+    return lend.tok != "stale"
+
+# Intended, and false today (see the gaps above):
+#   always assertion TokenOnlyWhileListed:
+#       return lend.env == "none" or lend.gh
+#   always assertion NoStaleToken:
+#       return lend.env != "stale"
+#   always eventually assertion RemovedGhEventuallyUnlent:
+#       return lend.gh or lend.env == "none"
+#     (an exec keeps getting the token while the session lives)

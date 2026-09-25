@@ -136,6 +136,33 @@ func TestDefinitionOnDiskIsAProject(t *testing.T) {
 	}
 }
 
+// The orb page re-reads its detail only when the listed summary moves.
+// An identity entry leaves the image hash alone, so a project.yml written
+// outside the editor (a guest through the mounted project dir) must move
+// the summary by itself, or the editor keeps showing the old file.
+func TestOrbSummaryMovesOnOutsideEdit(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	slug := mkProject(t, f, "Lend")
+	before, _ := projectBySlug(t, f, slug)["orb"].(map[string]any)
+	path := filepath.Join(projectdef.Root(f.home), slug, projectdef.FileYAML)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yml := strings.Replace(string(b), "identity: [gh]", "identity: [gh, .aws]", 1)
+	if yml == string(b) {
+		t.Fatalf("no identity line to extend in %q", b)
+	}
+	if err := os.WriteFile(path, []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := projectBySlug(t, f, slug)["orb"].(map[string]any)
+	if fmt.Sprint(after) == fmt.Sprint(before) {
+		t.Fatalf("summary unchanged by a project.yml edit: %v", after)
+	}
+}
+
 // Every project has an orb surface: the directory IS the definition, so
 // there is nothing to attach.
 func TestOrbDetail(t *testing.T) {

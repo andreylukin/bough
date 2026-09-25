@@ -91,7 +91,11 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
   // project.yml with the file tools, another tab's editor): the list poll
   // brings a new summary, and the detail read before it is stale.
   const summary = JSON.stringify(project.orb ?? null);
-  useEffect(load, [load, summary]);
+  // A session's container starts, stops and goes without the summary
+  // moving (the session's own process starts it): the list's rows carry
+  // each one's orb, and the Sessions table read before it is stale.
+  const orbs = JSON.stringify(rows.filter((r) => r.orb?.project === project.slug).map((r) => [r.id, r.orb?.status, !!r.orb?.up]));
+  useEffect(load, [load, summary, orbs]);
 
   const state = detail?.build.state;
   // Only another project starts the log over. Resetting on every state

@@ -10,6 +10,8 @@ package serve
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +44,12 @@ type OrbSummary struct {
 	Error string `json:"error,omitempty"` // definition parse error
 	// Repos names the repos the definition declares (worktree names).
 	Repos []string `json:"repos,omitempty"`
+	// Files changes whenever a definition file does. The orb page re-reads
+	// its detail (the editor's text with it) only when the summary moves,
+	// and the image tag leaves out identity, secrets and MEMORY.md: a
+	// project.yml a guest wrote through the mounted project dir left the
+	// editor showing the old file, whose next Save wrote it back.
+	Files string `json:"files,omitempty"`
 }
 
 // OrbState is a session's state.json as the wire sees it. Up says the
@@ -273,6 +281,12 @@ func (a *API) orbSummary(ctx context.Context, slug string) (OrbSummary, string) 
 	if a.building(slug) {
 		sum.Build = "building"
 	}
+	h := sha256.New()
+	for _, name := range projectdef.EditableFiles {
+		text, _ := projectdef.ReadFile(home, slug, name)
+		fmt.Fprintf(h, "%s\x00%d\x00%s", name, len(text), text)
+	}
+	sum.Files = hex.EncodeToString(h.Sum(nil))[:12]
 	p, err := projectdef.Load(home, slug)
 	if err != nil {
 		sum.Error = err.Error()
