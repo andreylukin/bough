@@ -1,0 +1,526 @@
+# Multi-step history in one tab (push vs replace, Back, Forward, the
+# phone's header Back) and where focus lands after each move and F6.
+# navigation_routes_palette models at most one Back, no Forward, and
+# leaves focus out; this is that half.
+#
+# One listed session S. hist is the tab's history entries (bough's own,
+# oldest first), idx the one on screen. A route is:
+#   s      #/s/S                     S's transcript, header, composer
+#   chg    #/s/S/changes?turn=N      Changes, opened by a link: the turn's
+#                                    "N files" button (location.hash =) or
+#                                    the chip's "Open full view" <a href>;
+#                                    both push and fire hashchange
+#   ctx    #/s/S/context             Context, opened by the header's
+#                                    Context chip (pushed here; the
+#                                    product replaces, see OpenContext)
+#   proj   #/projects                a page from the nav (Hooks, Me: same)
+#   home   #/                        the list: the phone's list pane, or
+#                                    the desktop overview ("Sessions" in
+#                                    the palette = goList, which pushes)
+# A desktop tab opens on #/s/S, a phone's on #/. A desktop is never
+# loaded on #/: the arrival pick replaces that with #/s/S or not
+# depending on a 400 ms race (navigation_routes_palette models it), so
+# Reload there is not modelled. History is bounded at three entries.
+#
+# phone: the viewport is <= 720 px, chosen once before anything else
+# (UsePhone). On a phone there is no sidebar beside the thread, no
+# HistoryArrows, no F6 and no palette; the thread has a header Back.
+#
+# focus is where document.activeElement is:
+#   body        nothing (the page's default after a load; what a removed
+#               or hidden element leaves)
+#   app         the .app root (focusAppOnRoute: the next Tab reaches the
+#               skip links). What a route change lands on (see land()).
+#   row         S's row in the sidebar tree (on a phone: in the list pane)
+#   other       another tree item (a section fold, the Archived toggle)
+#   nav         a nav link (the sidebar's, the phone's ViewNav)
+#   head        a control in the page header (.thread-head)
+#   transcript  the transcript region
+#   composer    #composer (typing)
+#   retry       the latest ErrorCard's Retry
+#   palfield    the palette's field (the palette is open)
+# stop is the tree's roving tab stop: F6 into the sidebar focuses it.
+# err: S's last turn failed, so its transcript ends in an ErrorCard.
+# opener: what held focus when the palette opened ("" while shut).
+# last: what the latest history move was (load, push, replace, back, fwd).
+# mode: "" | "leaving" (the person keeps pressing Back until the tab's
+#   first entry) | "cycling" (keeps pressing F6 until every region was
+#   visited); seen is the regions visited while cycling.
+# back_on / fwd_on: the sidebar's HistoryArrows are enabled (desktop).
+#
+# Where this spec is ahead of the product (2026-09-24, app.tsx; the MBT
+# and browser stages are expected to go red here until it is fixed):
+#   CloseSub         Esc (and the page's Back) on a Changes page opened by
+#                    a link is setSub(null) + replaceState: [.., s, chg]
+#                    becomes [.., s, s] and the next Back seems to do
+#                    nothing. Here it goes back when the entry behind is
+#                    #/s/S (settle()).
+#   OpenContext      the chip replaces #/s/S with #/s/S/context (setSub +
+#                    write-back); here it pushes, like the Changes link.
+#                    navigation_routes_palette's OpenContext replaces: the
+#                    two specs disagree until that is decided.
+#   OpenContext      the chip unmounts with the thread (the Context page
+#                    replaces it) and nothing moves focus: body. Esc back
+#                    from a sub page likewise leaves body unless focus was
+#                    on .app.
+#   PhoneHeaderBack  goList pushes #/ even when the entry behind is #/:
+#                    [home, s] -> [home, s, home], and Back from the list
+#                    reopens S, so pressing "Back" never leaves (Leave).
+#   BrowserBack/Fwd  on a phone landing on the list: the list's effect
+#                    focuses S's row, then focusAppOnRoute's rAF moves it
+#                    to .app; the header Back leaves it on the row.
+#                    Same route, different focus.
+#   PalPick*         pick() nulls the opener and the run pushes without a
+#                    hashchange, so nothing lands focus: body (or Retry, when
+#                    the target's ErrorCard mounts onto body).
+#   ClickRow (phone) the clicked row is hidden with the list pane: body.
+#   F6               focusRegion's selector does match the tree's stop
+#                    (the roving tabindex is written into the DOM), but the
+#                    stop is the last tree item focused, kept across routes
+#                    (focusedStop), not reset to the current row.
+# The mapped suspicion that F6 lands on the first toolbar button is wrong:
+# `[role=tree] [tabindex='0']` finds the stop whenever the tree has one.
+
+# --- pure helpers ---
+
+def cur(p):
+    return p.hist[p.idx]
+
+def prev(p):
+    if p.idx == 0:
+        return ""
+    return p.hist[p.idx - 1]
+
+def nxt(p):
+    if p.idx + 1 >= len(p.hist):
+        return ""
+    return p.hist[p.idx + 1]
+
+# Where a route change puts focus when nothing the person holds survives
+# it: the phone's list focuses S's row (the list's own effect: "the row
+# you left is where you are"); everywhere else the .app root.
+def land(r, phone):
+    if phone and r == "home":
+        return "row"
+    return "app"
+
+# F6's regions on screen, in order (desktop only).
+def regions(r):
+    if r == "s":
+        return ["side", "head", "transcript", "composer"]
+    if r == "home":
+        return ["side"]
+    return ["side", "head"]
+
+# Focus-only moves (F6, Alt+I, the palette, the tree's arrows) depend on
+# the route and on focus, never on the history behind them: they are
+# walked from the newest entry of a history of at most two, and not over
+# a failed turn, rather than from every history.
+def explore(p):
+    return p.idx == len(p.hist) - 1 and len(p.hist) <= 2 and not p.err
+
+def region_of(f):
+    if f in ("row", "other", "nav"):
+        return "side"
+    if f == "retry":
+        return "transcript"
+    if f in ("head", "transcript", "composer"):
+        return f
+    return ""
+
+# Whether focus f is on something the person can see.
+def on_screen(f, r, phone, pal, err):
+    if f == "body":
+        return False
+    if f == "palfield":
+        return pal
+    if f == "app":
+        return True
+    if f in ("row", "other"):
+        return not phone or r == "home"
+    if f == "nav":
+        return not phone or r in ("home", "proj")
+    if f == "head":
+        return r != "home"
+    if f in ("transcript", "composer"):
+        return r == "s"
+    if f == "retry":
+        return r == "s" and err
+    return False
+
+def with_seen(seen, g):
+    out = []
+    for x in ["side", "head", "transcript", "composer"]:
+        if x in seen or x == g:
+            out.append(x)
+    return out
+
+def covers(seen, r):
+    for g in regions(r):
+        if g not in seen:
+            return False
+    return True
+
+role Nav:
+    action Init:
+        self.phone = False
+        self.hist = ["s"]
+        self.idx = 0
+        self.focus = "body"
+        self.stop = "row"
+        self.err = False
+        self.pal = False
+        self.opener = ""
+        self.last = "load"
+        self.mode = ""
+        self.seen = []
+        self.back_on = False
+        self.fwd_on = False
+
+    # --- how history moves (every move ends in arrows()) ---
+
+    atomic func arrows():
+        self.back_on = not self.phone and self.idx > 0
+        self.fwd_on = not self.phone and self.idx + 1 < len(self.hist)
+
+    atomic func push(r):
+        self.hist = self.hist[:self.idx + 1] + [r]
+        self.idx = self.idx + 1
+        self.last = "push"
+        self.stop = "row"
+        self.arrows()
+
+    # Closing a sub-page: Back when the entry behind is its session (it
+    # always is: sub-pages are only pushed from it), else in place. A
+    # replace is never a step forward: an on-page Back that moved forward
+    # onto a later #/s/S would never let repeated Back leave.
+    atomic func settle(r):
+        if prev(self) == r:
+            self.idx = self.idx - 1
+            self.last = "back"
+        else:
+            self.hist = self.hist[:self.idx] + [r] + self.hist[self.idx + 1:]
+            self.last = "replace"
+        self.stop = "row"
+        self.arrows()
+
+    atomic func back():
+        self.idx = self.idx - 1
+        self.last = "back"
+        self.stop = "row"
+        self.arrows()
+
+    atomic func forward():
+        self.idx = self.idx + 1
+        self.last = "fwd"
+        self.stop = "row"
+        self.arrows()
+
+    # focusAppOnRoute after a popstate/hashchange: a field in use keeps
+    # focus if it is still there; anything else goes where the route lands.
+    atomic func land_after_pop(was):
+        if was == "composer" and cur(self) == "s":
+            self.focus = "composer"
+        else:
+            self.focus = land(cur(self), self.phone)
+
+    # The phone's header Back ("Back to sessions"): back when the entry
+    # behind is the list, else the list pushed.
+    atomic func header_back():
+        if prev(self) == "home":
+            self.back()
+        else:
+            self.push("home")
+        self.focus = land("home", True)
+
+    atomic func close_sub():
+        self.settle("s")
+        self.focus = land("s", self.phone)
+
+    atomic func f6(step):
+        rs = regions(cur(self))
+        g = region_of(self.focus)
+        i = -1
+        for k in range(len(rs)):
+            if rs[k] == g:
+                i = k
+        if i < 0:
+            n = rs[0]
+        else:
+            n = rs[(i + step + len(rs)) % len(rs)]
+        if n == "side":
+            self.focus = self.stop
+        else:
+            self.focus = n
+        return n
+
+    # --- the viewport, once, before anything happens: the tab is opened
+    # at phone width instead, on #/ (the list; no arrival pick there) ---
+
+    atomic action UsePhone:
+        require self.mode == "" and not self.phone and self.idx == 0 and self.hist == ["s"] and self.focus == "body" and not self.err and self.last == "load"
+        self.phone = True
+        self.hist = ["home"]
+        self.arrows()
+
+    # --- pushes ---
+
+    # A sidebar row (desktop) or a list row (phone): openSession pushes.
+    # The clicked row keeps focus while it is on screen.
+    atomic action ClickRow:
+        require self.mode == "" and not self.pal and cur(self) != "s" and self.idx < 2 and (not self.phone or cur(self) == "home")
+        self.push("s")
+        if self.phone:
+            self.focus = land("s", True)
+        else:
+            self.focus = "row"
+
+    # The turn's "N files" button or the Changes chip's "Open full view":
+    # a link, so a push and a hashchange.
+    atomic action OpenChangesLink:
+        require self.mode == "" and not self.pal and cur(self) == "s" and self.idx < 2
+        self.push("chg")
+        self.focus = land("chg", self.phone)
+
+    # A nav link (desktop sidebar, or the phone's ViewNav on the list):
+    # onView pushes NAV_HREF; the link keeps focus.
+    atomic action NavProjects:
+        require self.mode == "" and not self.pal and cur(self) != "proj" and self.idx < 2 and (not self.phone or cur(self) == "home")
+        self.push("proj")
+        self.focus = "nav"
+
+    atomic action PhoneHeaderBack:
+        require self.mode == "" and self.phone and cur(self) == "s" and (self.idx < 2 or prev(self) == "home")
+        self.header_back()
+
+    # --- a session's own sub-page, in place ---
+
+    # The header's Context chip. The product replaces (setSub, then the
+    # write-back's replaceState); here it pushes like the Changes link, so
+    # a sub-page is always the entry after its session and closing it is
+    # Back. With a replace, [s, chg] -Back-> s -Context-> [ctx, chg]
+    # -Forward, Esc-> [ctx, s] -Back, Esc-> [s, s]: no rule for Esc avoids
+    # both a duplicate and a close that steps forward.
+    atomic action OpenContext:
+        require self.mode == "" and not self.pal and not self.phone and cur(self) == "s" and self.idx < 2
+        self.push("ctx")
+        self.focus = land("ctx", False)
+
+    # Esc on a Changes or Context page (its header Back does the same).
+    atomic action CloseSub:
+        require self.mode == "" and not self.pal and cur(self) in ("chg", "ctx")
+        self.close_sub()
+
+    # --- the browser ---
+
+    atomic action BrowserBack:
+        require self.mode == "" and not self.pal and self.idx > 0
+        was = self.focus
+        self.back()
+        self.land_after_pop(was)
+
+    atomic action BrowserForward:
+        require self.mode == "" and not self.pal and self.idx + 1 < len(self.hist)
+        was = self.focus
+        self.forward()
+        self.land_after_pop(was)
+
+    # Reload reads the same entry again: focus starts on body, and an
+    # ErrorCard mounting onto body takes it. Not on a desktop #/ (the
+    # arrival race, above).
+    atomic action Reload:
+        require len(self.hist) <= 2 and self.mode == "" and not self.pal and (self.phone or cur(self) != "home")
+        self.last = "load"
+        self.stop = "row"
+        if cur(self) == "s" and self.err:
+            self.focus = "retry"
+        else:
+            self.focus = "body"
+
+    # --- the palette (desktop) ---
+
+    atomic action OpenPalette:
+        require explore(self) and self.mode == "" and not self.pal and not self.phone
+        self.pal = True
+        self.opener = self.focus
+        self.focus = "palfield"
+
+    # Esc: focus goes back to what opened it.
+    atomic action PalClose:
+        require self.pal
+        self.pal = False
+        self.focus = self.opener
+        self.opener = ""
+
+    # A session row: close, then openSession pushes (no hashchange).
+    atomic action PalPickSession:
+        require self.pal and cur(self) != "s" and self.idx < 2
+        self.pal = False
+        self.opener = ""
+        self.push("s")
+        self.focus = land("s", False)
+
+    # "Sessions" (goList) pushes #/.
+    atomic action PalGoSessions:
+        require self.pal and cur(self) != "home" and self.idx < 2
+        self.pal = False
+        self.opener = ""
+        self.push("home")
+        self.focus = land("home", False)
+
+    # --- focus only ---
+
+    atomic action F6:
+        require explore(self) and self.mode == "" and not self.pal and not self.phone
+        self.f6(1)
+
+    atomic action ShiftF6:
+        require explore(self) and self.mode == "" and not self.pal and not self.phone
+        self.f6(-1)
+
+    # Alt+I: the composer, from anywhere it is on screen.
+    atomic action AltI:
+        require explore(self) and self.mode == "" and not self.pal and not self.phone and cur(self) == "s" and self.focus != "composer"
+        self.focus = "composer"
+
+    # Arrow keys in the tree move its stop off S's row.
+    atomic action ArrowInTree:
+        require explore(self) and self.mode == "" and not self.pal and not self.phone and self.focus == "row"
+        self.focus = "other"
+        self.stop = "other"
+
+    # S's turn fails while its transcript is on screen: the ErrorCard
+    # mounts, and takes focus only when nothing holds it. Walked from the
+    # tab's first entry only (desktop); the history after it is the same.
+    atomic action ErrorCardMount:
+        require not self.phone and len(self.hist) == 1 and self.mode == "" and not self.pal and not self.err and cur(self) == "s"
+        self.err = True
+        if self.focus == "body":
+            self.focus = "retry"
+
+    # --- the person keeps pressing Back (the on-page Back where the page
+    # has one, else the browser's) until the tab's first entry ---
+
+    atomic action StartLeaving:
+        require self.mode == "" and not self.pal and self.idx > 0
+        self.mode = "leaving"
+
+    atomic fair action Leave:
+        require self.mode == "leaving"
+        was = self.focus
+        if self.phone and cur(self) == "s" and (self.idx < 2 or prev(self) == "home"):
+            self.header_back()
+        elif cur(self) in ("chg", "ctx"):
+            self.close_sub()
+        elif self.idx > 0:
+            self.back()
+            self.land_after_pop(was)
+        if self.idx == 0:
+            self.mode = ""
+
+    # --- the person keeps pressing F6 until every region was visited ---
+
+    atomic action StartCycling:
+        require explore(self) and self.mode == "" and not self.pal and not self.phone
+        self.mode = "cycling"
+        self.seen = []
+
+    atomic fair action Cycle:
+        require self.mode == "cycling"
+        g = self.f6(1)
+        self.seen = with_seen(self.seen, g)
+        if covers(self.seen, cur(self)):
+            self.mode = ""
+            self.seen = []
+
+action Init:
+    nav = Nav()
+
+# Back always moves: no two adjacent entries name the same route.
+always assertion NoAdjacentDuplicates:
+    for i in range(len(nav.hist) - 1):
+        if nav.hist[i] == nav.hist[i + 1]:
+            return False
+    return True
+
+# Back and Forward move one entry and rewrite none: Forward after Back
+# restores the sub-page and its ?turn= exactly.
+transition assertion PopsKeepHistory(before, after):
+    b = before.nav
+    a = after.nav
+    if a.last == "fwd" and (a.idx != b.idx or a.hist != b.hist):
+        return a.hist == b.hist and a.idx == b.idx + 1
+    if a.last == "back" and (a.idx != b.idx or a.hist != b.hist):
+        return a.hist == b.hist and a.idx == b.idx - 1
+    return True
+
+# The HistoryArrows are enabled exactly when the browser can go there.
+always assertion ArrowsMatchHistory:
+    return nav.back_on == (not nav.phone and nav.idx > 0) and nav.fwd_on == (not nav.phone and nav.idx + 1 < len(nav.hist))
+
+# On a phone, the header Back from a session lands where the browser's
+# Back would whenever the entry behind is the list: the same entry, no
+# new one.
+transition assertion PhoneBackIsBrowserBack(before, after):
+    b = before.nav
+    a = after.nav
+    if b.phone and cur(b) == "s" and cur(a) == "home" and prev(b) == "home":
+        return a.hist == b.hist and a.idx == b.idx - 1
+    return True
+
+# Focus is on something on screen, or nowhere only after a load.
+always assertion FocusOnScreen:
+    if nav.focus == "body":
+        return nav.last == "load"
+    return on_screen(nav.focus, cur(nav), nav.phone, nav.pal, nav.err)
+
+# After any route change focus lands where that route lands (the same
+# place whether the move was a push, a replace or a pop), unless the
+# person's own control or field is still there holding it. A load (the
+# phone's first one) is not a move.
+transition assertion RouteChangeLandsFocus(before, after):
+    b = before.nav
+    a = after.nav
+    if (a.idx == b.idx and a.hist == b.hist) or a.last == "load":
+        return True
+    if a.focus == land(cur(a), a.phone):
+        return True
+    return a.focus in ("row", "nav", "composer") and on_screen(a.focus, cur(a), a.phone, a.pal, a.err)
+
+# A route change or a failing turn never takes focus from the composer
+# while the composer is still on screen.
+transition assertion FieldKeepsFocus(before, after):
+    b = before.nav
+    a = after.nav
+    moved = a.idx != b.idx or a.hist != b.hist or a.err != b.err
+    if moved and b.focus == "composer" and cur(a) == "s" and not a.pal:
+        return a.focus == "composer"
+    return True
+
+# F6 into the sidebar lands on the tree's stop, and a route change puts
+# the stop back on the current row.
+transition assertion F6IntoSidebarLandsOnStop(before, after):
+    b = before.nav
+    a = after.nav
+    if a.idx == b.idx and a.hist == b.hist and region_of(b.focus) != "side" and region_of(a.focus) == "side" and not a.phone and b.focus != "palfield":
+        return a.focus == a.stop
+    return True
+
+transition assertion RouteResetsStop(before, after):
+    b = before.nav
+    a = after.nav
+    if a.idx != b.idx or a.hist != b.hist:
+        return a.stop == "row"
+    return True
+
+# The palette holds focus exactly while it is open.
+always assertion PaletteHoldsFocus:
+    return nav.pal == (nav.focus == "palfield") and (nav.opener == "") == (not nav.pal)
+
+# Repeated Back reaches the tab's first entry without looping.
+always eventually assertion BackReachesFirstEntry:
+    return nav.mode != "leaving"
+
+# Repeated F6 visits every region on screen.
+always eventually assertion F6VisitsEveryRegion:
+    return nav.mode != "cycling"
