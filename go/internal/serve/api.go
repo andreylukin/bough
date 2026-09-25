@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -134,6 +135,10 @@ type Row struct {
 	// Writable is the git checkout a local session may edit; "" when it
 	// started outside one (read-only) or is a project session.
 	Writable string `json:"writable,omitempty"`
+	// CwdMissing marks a local session whose folder is no longer a
+	// directory: New offers every folder sessions ran in, and a removed
+	// one read like any other until picking it failed.
+	CwdMissing bool `json:"cwdMissing,omitempty"`
 	// Orb is a project session's container state, nil for local.
 	Orb *RowOrb `json:"orb,omitempty"`
 	// SpawnedBy is the parent of a background agent; Queued marks one
@@ -408,6 +413,13 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Cwd == "" {
 		writeErr(w, http.StatusBadRequest, errors.New("serve: api: cwd is required"))
+		return
+	}
+	// A relative path would be resolved against serve's own cwd, which
+	// nobody chose (under launchd it is /): "past" typed into the page
+	// started a session in whatever folder serve was launched from.
+	if !filepath.IsAbs(body.Cwd) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: cwd %q is not an absolute path", body.Cwd))
 		return
 	}
 	// A child spawned into a missing directory dies with a bare exec
@@ -849,13 +861,19 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 		Background: in.Background,
 		Empty:      !d.hasInput,
 
-		Mode:     d.mode,
-		Writable: a.writableRoot(d.mode, in.Cwd),
-		Orb:      rowOrb,
+		Mode:       d.mode,
+		Writable:   a.writableRoot(d.mode, in.Cwd),
+		CwdMissing: d.mode != "project" && in.Cwd != "" && !isDir(in.Cwd),
+		Orb:        rowOrb,
 
 		SpawnedBy: firstDir(in.SpawnedBy, meta.SpawnedBy),
 		Agents:    a.agentCount(in.ID),
 	}
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
 // lastAt is when the session last did something. A turn's summary and

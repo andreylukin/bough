@@ -215,6 +215,25 @@ func TestAPIListTieBreaksOnID(t *testing.T) {
 	}
 }
 
+// A row whose folder was removed says so: the page's New offers every
+// folder sessions ran in, and one that is gone used to read like any
+// other and fail only once picked.
+func TestAPIListSaysCwdMissing(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	here, gone := t.TempDir(), filepath.Join(t.TempDir(), "gone")
+	f.seed(t, "here", history.Entry{Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": here}})
+	f.seed(t, "gone", history.Entry{Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": gone}})
+	_, body := f.do(t, "GET", "/api/sessions", "")
+	for _, r := range body["sessions"].([]any) {
+		row := r.(map[string]any)
+		want := row["id"] == "gone"
+		if got, _ := row["cwdMissing"].(bool); got != want {
+			t.Errorf("%s: cwdMissing = %v, want %v", row["id"], row["cwdMissing"], want)
+		}
+	}
+}
+
 func TestAPIGetSession(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
@@ -275,6 +294,9 @@ func TestAPIErrorPaths(t *testing.T) {
 		{"bad body", "POST", "/api/sessions/s1/rename", "{not json", http.StatusBadRequest},
 		{"missing cwd", "POST", "/api/sessions", `{"prompt":"hi"}`, http.StatusBadRequest},
 		{"cwd is not a dir", "POST", "/api/sessions", `{"cwd":"/definitely/not/here"}`, http.StatusBadRequest},
+		// testdata exists beside this test, but serve's own cwd is
+		// nobody's choice: a relative path is refused, not resolved.
+		{"cwd is relative", "POST", "/api/sessions", `{"cwd":"testdata"}`, http.StatusBadRequest},
 		{"wrong method", "GET", "/api/sessions/s1/prompt", "", http.StatusMethodNotAllowed},
 		{"interrupt with no child", "POST", "/api/sessions/s1/interrupt", "", http.StatusNotFound},
 	}
