@@ -41,3 +41,22 @@ func (a *API) SetRunningTTL(d time.Duration) {
 	defer a.runningMu.Unlock()
 	a.runningFor = d
 }
+
+// Crash is serve dying with no Close (SIGKILL, a panic), for the model
+// of a restart (serve_close_children_orbs): every child dies with the
+// process group and the supervisor does nothing more, as a dead process
+// would. Close's first step, marking the supervisor closed, is what
+// keeps it from acting on the exits; nothing else of Close runs.
+func (s *Supervisor) Crash() {
+	s.mu.Lock()
+	s.closed = true
+	s.queue = nil
+	kids := make([]*child, 0, len(s.kids))
+	for _, ch := range s.kids {
+		kids = append(kids, ch)
+	}
+	s.mu.Unlock()
+	for _, ch := range kids {
+		s.killChild(ch)
+	}
+}

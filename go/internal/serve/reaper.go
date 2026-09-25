@@ -73,7 +73,18 @@ func (a *API) reapIdleOrbs(ctx context.Context, idle time.Duration, now time.Tim
 		// exit 1) leaves the VM running under a "failed" state: three of
 		// those ran for a week at 8 GB each. Idle is idle whatever the
 		// state says; only one already stopped is nothing to do.
-		if st.Status != orb.StatusRunning && st.Status != orb.StatusFailed {
+		// A start whose owner died (killed in resume.sh, or by a crash
+		// while a resume rebuilt) leaves the container up under starting
+		// or building, and nothing will write this file again: an
+		// orphan, reaped like the rest (serve_close_children_orbs.fizz,
+		// OrphansStopped). A live owner's start is its own business.
+		switch st.Status {
+		case orb.StatusRunning, orb.StatusFailed:
+		case orb.StatusStarting, orb.StatusBuilding:
+			if a.ownerAlive(st.Session, st) || !a.containerUp(st.Session) {
+				continue
+			}
+		default:
 			continue
 		}
 		last := st.UpdatedAt

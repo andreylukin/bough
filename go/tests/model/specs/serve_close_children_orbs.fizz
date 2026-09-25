@@ -1,0 +1,311 @@
+# serve going down (bough update / launchd kickstart: Close; a crash: no
+# Close) while one parent's background agents run and queue and one of
+# them owns a project orb, and serve coming back (NewSupervisor: loadMeta,
+# requeue, drain). What a restart may never do to them: run past the
+# parent's cap, start a queued agent twice or out of order, lose or
+# double a report, or leave a container or a "building" row behind.
+#
+# serve_restart_resume covers one queued agent requeueing with no orb;
+# orb_lifecycle covers Kill but not Close. This is the part between.
+#
+# One parent P spawned three agents with max_running 1 (the running cap
+# is the last one a spawn requested, supervisor.go maxRunning): A holds
+# the slot and runs in a project orb, B then C are queued behind it
+# (meta.Task persisted). Only A has an orb: B and C are there for the cap
+# and the queue order. Every agent runs one serve-started turn; only A
+# is resumed afterwards (a person's message, which takes a slot without
+# checking the cap: background_agents.fizz).
+#
+# Agent fields (a, b, c): what serve and the parent can read off it.
+#   q    queued: meta.Task, no process, no history
+#   r    a turn is open and its process lives
+#   i    (A only) the turn closed and was reported; the process lives
+#        idle and still owns the orb (a headless child waits on stdin)
+#   xo   the process died with the turn open (history reads interrupted)
+#        and the parent has not been told: a report is owed
+#   t    the parent has been told of the turn and no turn runs: it
+#        finished (done; B's or C's process may still wait idle on
+#        stdin), or it was cut and reported (interrupted), or A finished
+#        and was killed idle. The row's
+#        status tells these apart; no claim here does, and keeping them
+#        apart doubled the graph.
+# A normal finish reports from its closing event and lands in about a
+# poll: folded into Finish, as in background_agents.fizz. A turn a
+# restart cut is reported by the next boot (Boot).
+#
+# Orb fields (A's orb; its owner is A's process, alive iff a in r, i):
+#   file  state.json status: building | starting | running | stopped
+#         ("starting" with the container up is resume.sh running)
+#   ctr   the container: missing | stopped | running
+#   img   the container runs the project's current image (cur) or one a
+#         later rebuild replaced (old); meaningless while missing
+#
+# serve: up | closing | down. closing is inside sup.Close after the
+# kills, before the process exits (serveForeground returns right after
+# Close). Nothing answers HTTP there (srv.Shutdown ran first).
+#
+# THE SPEC SAYS WHAT A RESTART PROMISES. Main (5471918e) differed in five
+# places, each found by the Go MBT stage (mbt/serve_close_children_orbs_
+# test.go) and fixed on the branch that added it:
+#   1. Boot drain: maxRunning was in memory only, so NewSupervisor's
+#      drainQueue ran with defaultMaxRunning (16) and started B and C
+#      together. meta.json now keeps the cap (ServeStartsWithinCap).
+#   2. Reports cut by the exit: Close started `go report` on each killed
+#      child's exit event and returned without waiting; the process then
+#      exited, and a parent Close was killing could be written a report
+#      on its stdin as it died. Nothing at boot compared a child's last
+#      turn with meta.Reported, so a cut report was lost for good. Now
+#      no report is sent while closing, and the next boot reports every
+#      turn a child owes (ReportsLand): Boot turns every xo into t. A
+#      boot reports before it answers anything, so no state has serve up
+#      with a report owed.
+#   3. Close never called stopKilledOrb (Kill does): every restart left
+#      the project VMs of killed children running (CloseStopsOrbs).
+#   4. orbState derived stopped for a dead owner only from running and
+#      starting: an orphan "building" showed building forever
+#      (NoLiveRowWithoutOwner).
+#   5. The reaper considered only running and failed state.json, so a
+#      container left up under "starting" (killed in resume.sh) was never
+#      stopped. Reap takes any orphan container (OrphansStopped).
+#
+# Checked and NOT a finding: requeueLocked sorts by id, and ids are
+# history.NewID (time-ordered, minted at create); a child is queued only
+# at create, so id order is enqueue order: FIFO holds (QueueIsFifo).
+# Folded or left out: the idle clock (Reap stands for "idle long
+# enough"), the running-container snapshot, Stop orb / Remove orb and
+# the reaper stopping a live owner's idle orb (orb_lifecycle.fizz), a
+# spawn after the restart (under this spec the cap was never lost, so it
+# changes nothing), and a resume of A before its cut turn is reported
+# (ResumeA waits for it: the new turn's report is keyed past the cut
+# one's, so a resume first would swallow it; a finding to map
+# separately). Since a boot reports first, that resume cannot happen
+# through serve.
+
+MAX_RUNNING = 1
+
+role Room:
+    action Init:
+        self.serve = "up"
+        self.a = "r"
+        # A's slot came from a person's message (Send), not from serve.
+        self.a_msg = False
+        self.b = "q"
+        self.c = "q"
+        # A report sent twice (must never happen).
+        self.dups = False
+        # A's orb is still coming up when the restart can hit.
+        self.file = "building"
+        self.ctr = "missing"
+        self.img = "cur"
+
+    # --- the orb, written by its owner (A's process) ---
+
+    # EnsureImage is done: an existing container is reused only on the
+    # tag state.json proves (orb.go Start), else removed and created
+    # again; then the container runs and resume.sh starts.
+    atomic action OrbUp:
+        require self.a in ("r", "i") and self.file == "building"
+        if self.ctr != "missing" and self.img == "old":
+            self.ctr = "missing"
+        self.ctr = "running"
+        self.img = "cur"
+        self.file = "starting"
+
+    atomic action OrbReady:
+        require self.a in ("r", "i") and self.file == "starting"
+        self.file = "running"
+
+    # The project's image is rebuilt (definition edited, Rebuild): the
+    # container, if any, now runs an image that is not current. Only
+    # while A is gone: the claim is about what its resume reuses, and a
+    # rebuild under a live owner changes nothing it will do.
+    atomic action NewImage:
+        require self.ctr != "missing" and self.img == "cur" and self.a not in ("r", "i")
+        self.img = "old"
+
+    # --- the agents' turns ---
+
+    # A's turn needs its orb; it closes, is reported, and the freed
+    # slot drains the queue.
+    atomic action FinishA:
+        require self.serve == "up" and self.a == "r" and self.file == "running"
+        self.a = "i"
+        self.drain()
+
+    atomic action FinishB:
+        require self.serve == "up" and self.b == "r"
+        self.b = "t"
+        self.drain()
+
+    atomic action FinishC:
+        require self.serve == "up" and self.c == "r"
+        self.c = "t"
+        self.drain()
+
+    # A person messages A after its turn was cut (or ended and its
+    # process went): ensure starts `-r <id>`, history closes the dangling
+    # turn as cancelled, the new input opens one, and the child prepares
+    # its orb again. Send takes a slot without checking the cap.
+    atomic action ResumeA:
+        require self.serve == "up" and self.a == "t"
+        self.a = "r"
+        self.a_msg = True
+        self.file = "building"
+
+    # --- serve going down ---
+
+    # SIGINT/SIGTERM: srv.Shutdown, then sup.Close: closed and the
+    # in-memory queue dropped first (meta.json keeps B's and C's tasks),
+    # every child killed and reaped, and each killed child's running
+    # container stopped (stopKilledOrb, as Kill). Each kill mid-turn owes
+    # a report, which the next boot sends.
+    atomic action Close:
+        require self.serve == "up"
+        self.serve = "closing"
+        if self.a in ("r", "i") and self.ctr == "running":
+            self.file = "stopped"
+            self.ctr = "stopped"
+        self.cut()
+
+    # Close returned and serveForeground exits.
+    atomic fair action Exit:
+        require self.serve == "closing"
+        self.serve = "down"
+
+    # A crash (or SIGKILL): no Close. The children die with the job's
+    # process group; their orbs are left exactly as they were.
+    atomic action Crash:
+        require self.serve == "up"
+        self.serve = "down"
+        self.cut()
+
+    # launchd KeepAlive starts serve again: loadMeta (the cap with it),
+    # requeueLocked (B before C: id order), every owed report sent to its
+    # parent, and the drain, with nothing running.
+    atomic fair action Boot:
+        require self.serve == "down"
+        self.serve = "up"
+        if self.a == "xo":
+            self.a = "t"
+        if self.b == "xo":
+            self.b = "t"
+        if self.c == "xo":
+            self.c = "t"
+        self.drain()
+
+    # --- what serve owes after the fact ---
+
+    # The reaper: a container whose owner is gone is stopped (and
+    # state.json marked stopped), whatever state.json says.
+    atomic fair<strong> action Reap:
+        require self.serve == "up" and self.ctr == "running" and self.a not in ("r", "i")
+        self.ctr = "stopped"
+        self.file = "stopped"
+
+    # Kills mid-turn: the turn stays open in history, a report is owed.
+    atomic func cut():
+        if self.a == "r":
+            self.a = "xo"
+        elif self.a == "i":
+            self.a = "t"
+        if self.b == "r":
+            self.b = "xo"
+        if self.c == "r":
+            self.c = "xo"
+
+    # drainQueue: oldest first while the running map has room. The
+    # running map is every agent with a live turn (A's message slot too).
+    atomic func drain():
+        if running(self) < MAX_RUNNING:
+            if self.b == "q":
+                self.b = "r"
+            elif self.c == "q":
+                self.c = "r"
+
+def running(r):
+    n = 0
+    if r.a == "r":
+        n += 1
+    if r.b == "r":
+        n += 1
+    if r.c == "r":
+        n += 1
+    return n
+
+def owner_alive(r):
+    return r.a in ("r", "i")
+
+# serve's orbState: the status A's row shows. A dead owner's state.json
+# claims nothing live.
+def orb_view(r):
+    if r.file in ("building", "starting", "running") and not owner_alive(r):
+        return "stopped"
+    return r.file
+
+action Init:
+    room = Room()
+
+# Serve's own starts (spawn, queue drain) never exceed the parent's cap,
+# across any number of restarts. A's message slot is not serve's start.
+always assertion ServeStartsWithinCap:
+    n = 0
+    if room.a == "r" and not room.a_msg:
+        n += 1
+    if room.b == "r":
+        n += 1
+    if room.c == "r":
+        n += 1
+    return n <= MAX_RUNNING
+
+# A queued agent never starts before one queued ahead of it.
+always assertion QueueIsFifo:
+    return not (room.b == "q" and room.c != "q")
+
+# A queued agent starts at most once across restarts: meta.Task is
+# cleared and saved before launch, so once its turn ended or was cut
+# nothing queues or runs it again (only a message would, not modelled
+# for B and C). A requeue at boot drains at once, so "queued again" is
+# seen as running again.
+transition assertion StartsAtMostOnce(before, after):
+    done = ("t", "xo")
+    return (before.room.b not in done or after.room.b in done) and (before.room.c not in done or after.room.c in done)
+
+# No report is sent twice.
+always assertion ReportedAtMostOnce:
+    return not room.dups
+
+# Every child the shutdown killed is its parent's to hear about: a turn
+# cut by Close or a crash is owed (xo) or told (t), never silently done.
+transition assertion CutTurnsAreOwed(before, after):
+    went_down = before.room.serve == "up" and after.room.serve != "up"
+    if not went_down:
+        return True
+    b, a = before.room, after.room
+    return (b.a != "r" or a.a == "xo") and (b.b != "r" or a.b == "xo") and (b.c != "r" or a.c == "xo")
+
+# Close stops each killed child's container, as Kill does.
+transition assertion CloseStopsOrbs(before, after):
+    closing = before.room.serve == "up" and after.room.serve == "closing"
+    return not closing or not owner_alive(before.room) or after.room.ctr != "running"
+
+# No row claims building, starting or running for an orb whose owner
+# is gone (after a restart, every killed child's orb).
+always assertion NoLiveRowWithoutOwner:
+    return orb_view(room) not in ("building", "starting", "running") or owner_alive(room)
+
+# A resumed session reuses its container only on the current image.
+transition assertion ReuseOnlyCurrentImage(before, after):
+    started = before.room.file == "building" and after.room.file == "starting"
+    return not started or after.room.img == "cur"
+
+# The orb is running only in a container that runs.
+always assertion RunningOrbHasContainer:
+    return not (owner_alive(room) and room.file == "running") or room.ctr == "running"
+
+# Every killed child's report eventually reaches the parent.
+always eventually assertion ReportsLand:
+    return "xo" not in (room.a, room.b, room.c)
+
+# Every container left behind by a restart is eventually stopped.
+always eventually assertion OrphansStopped:
+    return not (room.ctr == "running" and not owner_alive(room))

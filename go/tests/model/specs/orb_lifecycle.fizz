@@ -233,10 +233,12 @@ role Orb:
         self.idle = False
         self.snap = False
 
-# serve's orbState: the status a row shows.
+# serve's orbState: the status a row shows. A start or a build is only
+# ever moved on by its owner, so with the owner gone it is stopped
+# (serve_close_children_orbs.fizz found a killed build shown forever).
 def status(o):
     f = o.file
-    if f not in ("running", "failed", "starting"):
+    if f not in ("running", "failed", "starting", "building"):
         return f
     if f == "failed":
         return f
@@ -268,8 +270,9 @@ def portal_live(o):
 # sessionBuildLog's state: build.json, which the child keeps "building"
 # for the length of its build. (serve's own Rebuild also reads building;
 # it is project-wide and ends in serve's goroutine, so it is left out.)
+# A build whose owner is gone reads interrupted: nobody is building.
 def build_log(o):
-    if o.file == "building":
+    if status(o) == "building":
         return "building"
     return "done"
 

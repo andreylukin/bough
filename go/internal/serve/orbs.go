@@ -179,6 +179,9 @@ func (a *API) orbState(session string) OrbState {
 		return st
 	case orb.StatusStarting:
 		st.Up = a.containerUp(session)
+	case orb.StatusBuilding:
+		// Only its owner ever moves a build on: one killed mid-build
+		// showed building forever (serve_close_children_orbs.fizz).
 	default:
 		return st
 	}
