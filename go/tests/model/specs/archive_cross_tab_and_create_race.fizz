@@ -1,0 +1,171 @@
+---
+# A walk ends when the create failed before its file appeared, or with
+# nothing left to do but toggle the flag: rest, not a deadlock. The
+# liveness checks still see those ends.
+deadlock_detection: false
+---
+# Archive, unarchive and send from two tabs against one local session,
+# from the moment POST /api/sessions spawns it (go/tests/model/README.md).
+# Tab A creates the session and learns its id from the 201; tab B learns
+# it from its list poll, which shows the row as soon as the history file
+# exists (history.List), before Create has claimed the child. Serve does
+# not care which tab a request comes from, so Archive, Unarchive and Send
+# are one action each, enabled once some tab can know the id (file). Two
+# requests at once are what a Kill in flight models: archive blocks in
+# Kill until the reap, and anything that lands meanwhile came from the
+# other tab (or the CLI).
+#
+# This spec is the contract, not today's code. Where the code
+# (internal/serve/supervisor.go) breaks it, each one-step mutation below
+# makes fizz fail:
+#
+#   - createWithID claims without reading the flag. SetArchived sets the
+#     flag and then Kill finds nothing in s.kids (the child is not yet
+#     claimed), so an Archive between file-appeared and claim is a no-op
+#     on the process, and claim then installs the child and writes the
+#     prompt: an archived session running a turn. Contract: Claim reads
+#     the flag and kills its own child (ArchivedHasNoLiveChild).
+#   - ensure sees no lease for the id while Create's child is unclaimed,
+#     so a Send from tab B spawns `-r <id>` beside it: two writers on
+#     one file; then claim fails ("session already leased"), Create
+#     kills its own child and 500s although a session runs. Contract:
+#     Send is refused while Create holds the id (OneChildPerSession).
+#   - Kill waits for the reap and drop only removes the lease then, so
+#     after tab B unarchives mid-kill, Send passes the flag check, ensure
+#     returns the dying child and writePrompt writes into its stdin: a
+#     200 for a prompt nobody reads. Contract: Send is refused (or waits
+#     for the reap) while the lease holder is dying (NoLostPrompt).
+#
+# Where the mapped model was wrong:
+#   - SetArchived no longer kills before saving the flag: it saves the
+#     flag first, then Kill (so ensure's own check refuses a respawn).
+#     The no-op Kill before claim is unchanged.
+#   - Tab A cannot send in the unclaimed window: it has no id until the
+#     201. The racing Send is tab B's, off its list poll.
+#   - Poll is not a step: tab B's poll only moves when B can act, and a
+#     walk's reads move the page clock past it anyway.
+#   - "live_running" is split into the prompt accepted (sent) and its
+#     input line recorded (running): the lost-prompt claim is about the
+#     first.
+
+role Session:
+    action Init:
+        # POST /api/sessions: none (not sent) | waiting | ok (201) | failed
+        self.create = "none"
+        # <id>.jsonl exists, so the row is listed and tab B knows the id
+        self.file = False
+        # Create's child: none | unclaimed (spawned, not in s.kids) |
+        # leased (claimed) | dying (killed, not yet reaped)
+        self.c = "none"
+        # the child ensure spawns with -r <id>: none | leased | dying
+        self.r = "none"
+        self.archived = False
+        # the session's prompt: none | sent (accepted, not yet read) |
+        # running (its input line is recorded)
+        self.turn = "none"
+        # a prompt was accepted into a child that will never read it
+        self.lost = False
+
+    # Tab A's New session with a first message.
+    atomic action CreateStart:
+        require self.create == "none"
+        self.create = "waiting"
+        self.c = "unclaimed"
+
+    # The child writes <id>.jsonl (BOUGH_SESSION_ID names it).
+    atomic fair action HistoryFileAppears:
+        require self.c == "unclaimed" and not self.file
+        self.file = True
+
+    # createTimeout, or the child exits, before the file: killed, 500.
+    atomic fair action Timeout:
+        require self.c == "unclaimed" and not self.file
+        self.c = "none"
+        self.create = "failed"
+
+    # Create sees the file and claims under s.mu. An archived id is not
+    # installed: Create kills its own child and fails the request.
+    atomic fair action Claim:
+        require self.c == "unclaimed" and self.file
+        if self.archived:
+            self.c = "none"
+            self.create = "failed"
+        else:
+            self.c = "leased"
+            self.create = "ok"
+            self.turn = "sent"
+
+    # POST /prompt: 409 while archived, while Create holds the id
+    # unclaimed, or while the lease holder is being killed. Otherwise the
+    # live child takes the line, or ensure spawns one.
+    atomic action Send:
+        require (self.file and not self.archived and self.turn == "none" and
+                 self.c not in ("unclaimed", "dying") and self.r != "dying")
+        if self.c != "leased" and self.r != "leased":
+            self.r = "leased"
+        self.turn = "sent"
+
+    # The child reads the line and records its input entry.
+    atomic fair action Record:
+        require self.turn == "sent" and (self.c == "leased" or self.r == "leased")
+        self.turn = "running"
+
+    atomic fair action Finish:
+        require self.turn == "running" and (self.c == "leased" or self.r == "leased")
+        self.turn = "none"
+
+    # POST /archive: SetArchived saves the flag, then Kill SIGKILLs the
+    # lease holder and blocks until the reap. The user archived a turn in
+    # progress on purpose: it ends with the process, it is not lost.
+    atomic action ArchiveB:
+        require self.file and not self.archived
+        self.archived = True
+        if self.c == "leased":
+            self.c = "dying"
+            self.turn = "none"
+        if self.r == "leased":
+            self.r = "dying"
+            self.turn = "none"
+
+    # POST /unarchive: clears the flag, spawns nothing. It may land while
+    # the other tab's archive still waits in Kill.
+    atomic action UnarchiveB:
+        require self.archived
+        self.archived = False
+
+    # The reap: drop frees the lease and the blocked archive returns.
+    atomic fair action KillReaped:
+        require self.c == "dying" or self.r == "dying"
+        if self.c == "dying":
+            self.c = "none"
+        if self.r == "dying":
+            self.r = "none"
+
+action Init:
+    session = Session()
+
+# A dying child is on its way out (Kill holds the archive until the
+# reap); a leased one is serving the session.
+always assertion ArchivedHasNoLiveChild:
+    return not (session.archived and (session.c == "leased" or session.r == "leased"))
+
+# A 200 from /prompt goes to a child that will read it.
+always assertion NoLostPrompt:
+    return not session.lost
+
+# One process per session id, Create's unclaimed child included: it
+# already writes the history file.
+always assertion OneChildPerSession:
+    return session.c == "none" or session.r == "none"
+
+# An archive ends with no process at all for the session.
+always eventually assertion ArchiveLeavesNoChild:
+    return not session.archived or (session.c == "none" and session.r == "none")
+
+# A create returns a claimed id or has killed its child.
+always eventually assertion CreateSettles:
+    return session.create != "waiting"
+
+# An accepted prompt is read (or ended by an archive), never left hanging.
+always eventually assertion PromptLands:
+    return session.turn != "sent"
