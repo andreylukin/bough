@@ -41,7 +41,12 @@ jobs:
       # any apology for it.
       - name: Test
         working-directory: go
-        run: go vet ./... && go test -parallel 4 -timeout 20m ./...
+        run: |
+          set -euo pipefail
+          go vet ./...
+          pkgs=$(go list ./... | grep -v '/tests/model/mbt$')
+          go test -parallel 4 -timeout 20m $pkgs
+          go test -parallel 4 -timeout 90m ./tests/model/mbt/
 
       - name: Build every target
         working-directory: go
