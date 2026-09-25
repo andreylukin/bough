@@ -108,6 +108,7 @@ func (a *API) messageProject(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text string `json:"text"`
+		ID   string `json:"id"` // request id: a retry is written at most once
 	}
 	if !decode(w, r, &body) {
 		return
@@ -135,7 +136,11 @@ func (a *API) messageProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: %s: a pending ask (%s) takes the next line; answer it first", main, ask.Text))
 		return
 	}
-	if err := a.sup.Send(main, body.Text); err != nil {
+	send := a.sup.Send
+	if body.ID != "" {
+		send = func(id, text string) error { return a.sup.SendOnce(id, body.ID, text) }
+	}
+	if err := send(main, body.Text); err != nil {
 		writeErr(w, statusFor(err), fmt.Errorf("serve: api: project %s: %w", p.Slug, err))
 		return
 	}

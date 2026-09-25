@@ -199,6 +199,7 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/sessions", a.createSession)
 	a.mux.HandleFunc("GET /api/sessions/{id}", a.getSession)
 	a.mux.HandleFunc("POST /api/sessions/{id}/prompt", a.prompt)
+	a.mux.HandleFunc("GET /api/sessions/{id}/prompts/{rid}", a.promptState)
 	a.mux.HandleFunc("POST /api/sessions/{id}/answer", a.answer)
 	a.mux.HandleFunc("POST /api/sessions/{id}/interrupt", a.interrupt)
 	a.mux.HandleFunc("POST /api/sessions/{id}/rename", a.rename)
@@ -376,6 +377,9 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		SpawnedBy     string `json:"spawnedBy"`
 		MaxPerSession int    `json:"maxPerSession"`
 		MaxRunning    int    `json:"maxRunning"`
+		// RequestID makes a retried create safe: the same id makes one
+		// session (CreateOnce). Local sessions only.
+		RequestID string `json:"requestId"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -425,7 +429,21 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	id, err := a.sup.Create(CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, ID: body.ID})
+	opt := CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, ID: body.ID}
+	if body.RequestID != "" {
+		id, made, err := a.sup.CreateOnce(opt, body.RequestID)
+		if err != nil {
+			writeErr(w, statusFor(err), fmt.Errorf("serve: api: create session: %w", err))
+			return
+		}
+		code := http.StatusCreated
+		if !made {
+			code = http.StatusOK
+		}
+		a.writeRow(w, code, id)
+		return
+	}
+	id, err := a.sup.Create(opt)
 	if err != nil {
 		writeErr(w, statusFor(err), fmt.Errorf("serve: api: create session: %w", err))
 		return
@@ -444,7 +462,43 @@ func (a *API) prompt(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: session %q has a pending ask: answer it first", id))
 		return
 	}
-	a.textVerb(w, r, a.sup.Send)
+	id := r.PathValue("id")
+	var body struct {
+		Text string `json:"text"`
+		// ID is the client's request id: a retry under the same one is
+		// written at most once (requests.go). Without one the line is
+		// written every time.
+		ID string `json:"id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if _, ok := a.info(id); !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
+		return
+	}
+	var err error
+	if body.ID == "" {
+		err = a.sup.Send(id, body.Text)
+	} else {
+		err = a.sup.SendOnce(id, body.ID, body.Text)
+	}
+	if err != nil {
+		writeErr(w, statusFor(err), fmt.Errorf("serve: api: session %q: %w", id, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// promptState answers what serve knows about a prompt's request id, so
+// a page whose answer never came can tell "Not sent" from "sent".
+func (a *API) promptState(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := a.info(id); !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": a.sup.PromptState(id, r.PathValue("rid"))})
 }
 
 // answer replies to the armed ask. A client that names the question it

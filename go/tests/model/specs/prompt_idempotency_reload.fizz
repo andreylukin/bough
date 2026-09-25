@@ -1,0 +1,445 @@
+---
+# The bounds (MAX_FAULTS, MAX_STOPS, one prompt, one queued message, one
+# launch) end every behaviour in a quiet thread with nothing left to do:
+# that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# Sends whose outcome is ambiguous, or whose client-side state is lost:
+# the answer to a POST lost after serve wrote the line, a page reload or
+# a session switch while a send or a Stop is in flight, a serve restart.
+# One thread's composer (web/src/app.tsx Thread: deliver, the flush
+# effect, restoreOnStop, the swallowedByStop timer), App's per-session
+# `pending` map, serve's prompt endpoint (api.go prompt -> Supervisor.Send)
+# and, as an alternative to the thread's own prompt, one create or
+# project message (api.ts create / createThread / messageProject).
+#
+# THIS SPEC IS THE DESIGN, NOT TODAY'S CODE. Each claim below is one the
+# code at the time of writing breaks; where, and how, is listed under
+# "Gaps" and is what the MBT and browser stages are expected to show red.
+# The mechanisms the spec assumes (none exist yet):
+#   R1 every prompt / create / project message carries a client request
+#      id; serve records it (in memory while the line is unread, in the
+#      input's history entry once it lands, in meta for a create) and a
+#      second request with the same id writes nothing and answers ok.
+#   R2 a send whose answer never came (fetch failed, the page reloaded,
+#      serve restarted) is "unknown", not "Not sent": the page asks serve
+#      about the id and only then shows Not sent (server never had it) or
+#      Waiting (server has it). A landed input drops any row for its id.
+#   R3 what the composer owes a session outlives the Thread and the page:
+#      pending rows (accepted flag included), failures, restoreOnStop and
+#      stoppedIds are per session in sessionStorage, not React state/refs.
+#
+# Fields (all on the Session role):
+#   serve    "up" | "down" (a restart is Restart then ServeBack)
+#   viewing  the page shows this session (a Thread is mounted for it)
+#   draft    "msg" (the prompt, typed; or put back after a Stop) | ""
+#   status   the row: "idle" | "running"
+#   m_req    the prompt's POST: "none" | "out" (serve has not handled it)
+#            | "back" (serve handled it; the answer is on its way)
+#   m_srv    the prompt at serve: "none" | "unread" (in the child's
+#            stdin) | "running" (recorded; its turn is open) | "done"
+#            (recorded; the turn ended with a reply, or it landed as a
+#            steer) | "cancelled" (recorded; stopped before any reply) |
+#            "lost" (written to a child that died before reading it)
+#   m_n      how many times the prompt was recorded as an input
+#   m_behind the prompt's line was written after the queued message's
+#            (a Retry while that one was unread): the child reads it
+#            second
+#   m_row    the page's own row for it: "none" | "sending" | "waiting"
+#            (accepted, unlanded) | "unknown" (answer lost, being
+#            checked) | "failed" (the "Not sent" row)
+#   m_seen   the transcript on the page shows the recorded input
+#   q        the one queued message: "none" | "queued" | "unread"
+#            (flushed, written, unlanded) | "turn" (landed as its own
+#            turn) | "steer" (landed inside another turn) | "swallowed"
+#            (a Stop's cancel ate the line) | "lost" (its child died) |
+#            "failed" (a Not sent row)
+#   q_n      how many times it was recorded
+#   restore  restoreOnStop is armed
+#   stop_m, stop_q
+#            stoppedIds: a Stop was pressed while this line was unread
+#   l        the create / project message: "none" | "out" | "back" |
+#            "failed" (an error with Retry) | "done"
+#   l_n      sessions (or main-thread messages) serve made for it
+#   faults, stops   bounds
+#
+# Where this departs from the mapped model, and why (verified against
+# the code at main 5471918e):
+# - `pending` (App state, app.tsx ~5564) survives a session switch; only
+#   a reload loses it. restoreOnStop (useRef, ~4346) and stoppedIds
+#   (useRef, ~4518) live in the Thread, which is keyed by session
+#   (<Thread key={r.id}>), so a SWITCH loses them as surely as a reload:
+#   the mapped model only had the reload losing the swallow timer.
+# - Failures (bough:failed:<id>) and the queue (bough:queue:<id>) are in
+#   sessionStorage and survive both. But a send's error arrives through
+#   the Thread that sent it: a request that fails while you are on
+#   another session calls the unmounted Thread's setFailures and is lost,
+#   while App's setSending still drops its row; the message vanishes.
+#   Here responses and losses apply the same viewing or not (R3).
+# - A serve restart kills the child, so an accepted line it had not read
+#   is gone and its row says Waiting ("accepted") forever: nothing on the
+#   page ever lands or fails it. Restart marks such rows unknown (R2).
+# - A lost POST is taken to have reached serve completely or not at all
+#   (m_req "out" lost = never written). A request that arrives after its
+#   client gave up is not modelled.
+# - Stop waits for sends in flight (Promise.allSettled(inflight)), so it
+#   is enabled only once the prompt's POST is not "out".
+# - A Not sent row whose outcome the page cannot know holds the queue
+#   (unknown blocks the flush, R2): otherwise the queued head is written
+#   behind a prompt the child has not read, and lands as a steer.
+# - Retry of a failed queued message is not modelled: its Not sent row is
+#   the end of that message here (the liveness claim only needs a row).
+# - A Stop that cancels the queued message's own turn does not restore
+#   it here (restore is modelled for the prompt only).
+# - A walk either sends the thread's prompt or makes one create / project
+#   message, never both (Send and the launch actions exclude each
+#   other): the two share no state, and carrying a finished launch
+#   through every thread state doubled the graph.
+#
+# Gaps in the code this spec is written against (findings; not fixed
+# here):
+# G1 api.ts prompt posts {text}; the id stays client-side (app.tsx
+#    deliver: "A retry is the same request, so it keeps its id"), so
+#    Retry after a lost answer writes the line again: m_n = 2.
+# G2 deliver's error path always adds a "Not sent" row, even when the
+#    input is already in the transcript; nothing ever reconciles it.
+# G3 a reload with a written, unlanded prompt loses `pending`; the flush
+#    guard (unlanded.length) passes and the queued head lands as a steer.
+# G4 Stop, then switch away and back before it settles: the remounted
+#    Thread's restoreOnStop is false; the prompt is never put back.
+# G5 a reload (or switch) during the 4 s swallowedByStop timer loses
+#    stoppedIds; the swallowed queued message is neither requeued nor
+#    reported.
+# G6 create / createThread / messageProject carry no id; a Retry (act's
+#    toast, ProjectComposer's Send) after a lost answer makes a second
+#    session or a second message to main.
+
+# One fault (a lost answer, a reload, a restart) per walk: every gap
+# above needs only one, and two took the graph past 3000 states.
+MAX_FAULTS = 1
+MAX_STOPS = 1
+
+role Session:
+    action Init:
+        self.serve = "up"
+        self.viewing = True
+        self.draft = "msg"
+        self.status = "idle"
+        self.m_req = "none"
+        self.m_srv = "none"
+        self.m_n = 0
+        self.m_row = "none"
+        self.m_seen = False
+        self.m_behind = False
+        self.q = "none"
+        self.q_n = 0
+        self.restore = False
+        self.stop_m = False
+        self.stop_q = False
+        self.l = "none"
+        self.l_n = 0
+        self.faults = 0
+        self.stops = 0
+
+    # A row of the page's own that is still waiting on the prompt.
+    func m_pending():
+        return self.m_row in ["sending", "waiting", "unknown"]
+
+    # ---- the person ----
+
+    # Enter on the typed prompt. The thread is idle (the prompt is what
+    # starts its turn); a walk that launched does not send (see header).
+    atomic action Send:
+        require self.viewing and self.draft == "msg"
+        require self.m_n == 0 and self.m_srv == "none"
+        require self.m_row == "none" and self.m_req == "none"
+        require self.l == "none"
+        self.draft = ""
+        self.m_row = "sending"
+        self.m_req = "out"
+
+    # Cmd/Ctrl+Enter while the thread is live: its turn runs, or the
+    # prompt is sent and unlanded (app.tsx live = running || unlanded).
+    atomic action Enqueue:
+        require self.viewing and self.q == "none"
+        require self.status == "running" or self.m_row in ["sending", "waiting"]
+        self.q = "queued"
+
+    # Retry on the prompt's Not sent row, or on one still being checked
+    # (the check needs serve, which may be down): the same request id,
+    # so a line serve already has is not written again (R1).
+    atomic action Retry:
+        require self.viewing and self.m_row in ["failed", "unknown"]
+        self.m_row = "sending"
+        self.m_req = "out"
+
+    atomic action Discard:
+        require self.viewing and self.m_row == "failed"
+        self.m_row = "none"
+
+    # Stop (Esc or the button). It waits for a send in flight, then
+    # interrupts. A line still unread is held for the child and its turn
+    # cancelled at once (stop_m / stop_q), or, for the queued message,
+    # the cancel may beat it (StopEatsQueued).
+    atomic action Stop:
+        require self.viewing and self.serve == "up" and self.stops < MAX_STOPS
+        require self.m_req != "out"
+        live = (self.status == "running" or self.m_row in ["sending", "waiting"]
+                or self.q == "unread")
+        require live
+        self.stops = self.stops + 1
+        self.restore = True
+        if self.m_srv == "unread":
+            self.stop_m = True
+        if self.q == "unread":
+            self.stop_q = True
+        if self.status == "running":
+            self.status = "idle"
+            if self.m_srv == "running":
+                self.m_srv = "cancelled"
+
+    # A session switch away and back. Nothing the composer owes this
+    # session may go with the Thread (R3).
+    atomic action SwitchAway:
+        require self.viewing
+        self.viewing = False
+
+    atomic action SwitchBack:
+        require not self.viewing
+        self.viewing = True
+
+    # A page reload: requests in flight lose their answers; everything
+    # else is kept (R3). An in-flight prompt becomes unknown (R2).
+    atomic action ReloadPage:
+        require self.viewing and self.faults < MAX_FAULTS
+        self.faults = self.faults + 1
+        if self.m_req != "none":
+            self.m_req = "none"
+            if self.m_row == "sending":
+                self.m_row = "unknown"
+        if self.l in ["out", "back"]:
+            self.l = "failed"
+
+    # New session (palette / new-session dialog) or Message the project
+    # (the project composer; a Start thread is the same POST). Only in a
+    # walk that does not send the thread's prompt; see header.
+    atomic action NewSession:
+        require self.viewing and self.l == "none"
+        require self.m_n == 0 and self.m_row == "none" and self.m_req == "none"
+        self.l = "out"
+
+    atomic action MessageProject:
+        require self.viewing and self.l == "none"
+        require self.m_n == 0 and self.m_row == "none" and self.m_req == "none"
+        self.l = "out"
+
+    # The error's Retry (act's toast, or Send again in the project
+    # composer): the same request id (R1).
+    atomic action RetryLaunch:
+        require self.viewing and self.l == "failed"
+        self.l = "out"
+
+    # ---- the network and serve ----
+
+    # The prompt's POST reaches serve, which writes the line unless it
+    # already has that id (R1).
+    atomic fair action ServerWrites:
+        require self.serve == "up" and self.m_req == "out"
+        if self.m_srv in ["none", "lost"]:
+            self.m_srv = "unread"
+            self.m_behind = self.q == "unread"
+        self.m_req = "back"
+
+    atomic fair action Answer:
+        require self.m_req == "back"
+        self.m_req = "none"
+        if self.m_row == "sending":
+            self.m_row = "waiting"
+
+    # The answer never arrives (a proxy, a dropped connection), before or
+    # after serve handled the request.
+    atomic action ResponseLost:
+        require self.m_req != "none" and self.faults < MAX_FAULTS
+        self.faults = self.faults + 1
+        self.m_req = "none"
+        if self.m_row == "sending":
+            self.m_row = "unknown"
+
+    # The page asks serve about the id (R2).
+    atomic fair action Reconcile:
+        require self.serve == "up" and self.m_row == "unknown" and self.m_req == "none"
+        if self.m_srv in ["none", "lost"]:
+            self.m_row = "failed"
+        else:
+            self.m_row = "waiting"
+
+    # serve restarts: every child dies with it, requests in flight fail,
+    # and rows waiting on a line that died are unknown again (R2).
+    atomic action Restart:
+        require self.serve == "up" and self.faults < MAX_FAULTS
+        self.faults = self.faults + 1
+        self.serve = "down"
+        self.m_req = "none"
+        if self.m_row in ["sending", "waiting"]:
+            self.m_row = "unknown"
+        if self.m_srv == "unread":
+            self.m_srv = "lost"
+            self.m_behind = False
+        if self.m_srv == "running":
+            self.m_srv = "done"
+        self.stop_m = False
+        if self.q == "unread":
+            self.q = "lost"
+            self.stop_q = False
+        self.status = "idle"
+        if self.l in ["out", "back"]:
+            self.l = "failed"
+
+    atomic fair action ServeBack:
+        require self.serve == "down"
+        self.serve = "up"
+
+    # The page learns on reconnect that a flushed line died with its
+    # child: a Not sent row (R2).
+    atomic fair action ReconcileQueued:
+        require self.serve == "up" and self.q == "lost"
+        self.q = "failed"
+
+    atomic fair action ServerMakes:
+        require self.serve == "up" and self.l == "out"
+        if self.l_n == 0:
+            self.l_n = 1
+        self.l = "back"
+
+    atomic fair action LaunchAnswer:
+        require self.l == "back"
+        self.l = "done"
+
+    atomic action LaunchLost:
+        require self.l in ["out", "back"] and self.faults < MAX_FAULTS
+        self.faults = self.faults + 1
+        self.l = "failed"
+
+    # ---- the child ----
+
+    # The child records the prompt. After a Stop held for it, its turn is
+    # cancelled at once; into a running turn it is a steer. One stdin:
+    # lines are read in the order serve wrote them.
+    atomic fair action ChildRecordsInput:
+        require self.serve == "up" and self.m_srv == "unread"
+        require not (self.m_behind and self.q == "unread")
+        self.m_n = self.m_n + 1
+        self.m_behind = False
+        if self.stop_m:
+            self.stop_m = False
+            self.m_srv = "cancelled"
+        elif self.status == "running":
+            self.m_srv = "done"
+        else:
+            self.m_srv = "running"
+            self.status = "running"
+
+    # The child records the flushed message, in write order.
+    atomic fair action ChildRecordsQueued:
+        require self.serve == "up" and self.q == "unread"
+        require not (self.m_srv == "unread" and not self.m_behind)
+        self.q_n = self.q_n + 1
+        if self.stop_q:
+            self.stop_q = False
+            self.q = "turn"
+        elif self.status == "running":
+            self.q = "steer"
+        else:
+            self.q = "turn"
+            self.status = "running"
+
+    # The Stop's cancel reaches the child before it read the flushed line
+    # (a prompt that reached a child the row had not yet shown running):
+    # the line is eaten and no input is ever recorded for it. A race, so
+    # not fair: the held path (ChildRecordsQueued) may win it.
+    # (A separate action rather than `any` inside Stop: fizz 0.5.3 kept
+    # only one branch of that fork.)
+    atomic action StopEatsQueued:
+        require self.stop_q and self.q == "unread"
+        self.q = "swallowed"
+
+    atomic fair action Finish:
+        require self.status == "running"
+        self.status = "idle"
+        if self.m_srv == "running":
+            self.m_srv = "done"
+
+    # ---- the page ----
+
+    # The transcript on screen catches up: the recorded input shows, and
+    # every row of the page's own for it goes (R2).
+    atomic fair action Catchup:
+        require self.viewing and self.serve == "up" and not self.m_seen
+        require self.m_srv in ["running", "done", "cancelled"]
+        self.m_seen = True
+        self.m_row = "none"
+
+    # The flush effect: idle, nothing of the prompt's pending or unknown.
+    atomic fair action Flush:
+        require self.viewing and self.serve == "up" and self.status == "idle"
+        require self.q == "queued" and self.m_req == "none"
+        pending = self.m_pending()
+        require not pending
+        self.q = "unread"
+
+    # stoppedPrompt: a prompt stopped before any reply goes back to an
+    # empty composer, once the page shows the cancelled turn.
+    atomic fair action Restore:
+        require self.viewing and self.restore and self.status == "idle"
+        require self.m_srv == "cancelled" and self.m_seen
+        self.restore = False
+        if self.draft == "":
+            self.draft = "msg"
+
+    # The swallowedByStop timer: the swallowed message back at the front
+    # of the queue.
+    atomic fair action Swallow:
+        require self.stop_q and self.q == "swallowed" and self.status == "idle"
+        self.stop_q = False
+        self.q = "queued"
+
+action Init:
+    session = Session()
+
+# Retry never delivers the prompt twice (R1).
+always assertion PromptRecordedOnce:
+    return session.m_n <= 1
+
+# A flushed queued message is recorded once, reloads and Stops included.
+always assertion QueuedRecordedOnce:
+    return session.q_n <= 1
+
+# A retried create or project message makes one, not two (R1).
+always assertion LaunchMadeOnce:
+    return session.l_n <= 1
+
+# "Not sent" only for a prompt serve never had: never beside its landed
+# input, never for a line a child is about to read (R2).
+always assertion NotSentMeansNotSent:
+    if session.m_row == "failed":
+        return session.m_srv in ["none", "lost"] and not session.m_seen
+    return True
+
+# The queue never flushes over an unlanded prompt, reload or not: the
+# queued message is always a turn of its own.
+always assertion QueuedNeverSteers:
+    return session.q != "steer"
+
+# Every sent prompt lands (and shows) or shows a failure row; no row says
+# Sending / Waiting forever, a serve restart included. Asked of the page
+# only while it shows the session.
+always eventually assertion PromptSettles:
+    return (not session.viewing) or not (
+        session.m_row in ["sending", "waiting", "unknown"]
+        or session.q in ["unread", "swallowed", "lost"])
+
+# A prompt stopped before any reply is back in the composer, session
+# switches and reloads between the Stop and its settling included.
+always eventually assertion StoppedPromptReturns:
+    return (not session.viewing) or session.m_srv != "cancelled" or session.draft == "msg"
