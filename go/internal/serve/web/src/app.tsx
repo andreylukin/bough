@@ -887,21 +887,27 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           const dup = (r: Row) => (seen.get(nameKey(r)) ?? 0) > 1;
           return (
             <div role="group">
-              {fresh.map((r) => session(r, dup(r)))}
-              {older.length > 0 && (
-                <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
-                        onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
-                  <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} ${more}` : `${older.length} ${more}`}
-                </button>
-              )}
-              {olderOpen && older.map((r) => session(r, dup(r)))}
-              {/* A long expansion folds from its foot too, so the way back is never a scroll away. */}
-              {olderOpen && older.length > 8 && (
-                <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
-                        onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
-                  <Icon d={ICONS.chevron} size={12} />{`Hide ${more}`}
-                </button>
-              )}
+              {/* One keyed list, not fresh and older as two: opening an
+                  older row makes it selected, which is never tucked, and
+                  moving between two lists remounted it, dropping the
+                  focus the click had just put on it. */}
+              {[
+                ...fresh.map((r) => session(r, dup(r))),
+                older.length > 0 && (
+                  <button key="older-head" type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
+                          onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
+                    <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} ${more}` : `${older.length} ${more}`}
+                  </button>
+                ),
+                ...(olderOpen ? older.map((r) => session(r, dup(r))) : []),
+                // A long expansion folds from its foot too, so the way back is never a scroll away.
+                olderOpen && older.length > 8 && (
+                  <button key="older-foot" type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
+                          onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
+                    <Icon d={ICONS.chevron} size={12} />{`Hide ${more}`}
+                  </button>
+                ),
+              ]}
             </div>
           );
         })()}
@@ -5212,9 +5218,14 @@ export default function App() {
   // changes, so the list poll slows down.
   const streaming = selected !== null;
   const mountedRefresh = useRef(false);
+  const lastRefresh = useRef(refresh);
   useEffect(() => {
     // The first read is the mount's; a later change (Archived) reads at once too.
-    if (!mountedRefresh.current || !streaming) void refresh();
+    // Only streaming flipping on skips it: opening Archived with a session
+    // open sat on "Loading archived…" until the 12 s poll.
+    const archivedChanged = lastRefresh.current !== refresh;
+    lastRefresh.current = refresh;
+    if (!mountedRefresh.current || !streaming || archivedChanged) void refresh();
     mountedRefresh.current = true;
     // A hidden tab does not poll; coming back reads at once.
     const t = setInterval(() => { if (!document.hidden) void refresh(true); }, streaming ? POLL_MS * 3 : POLL_MS);
