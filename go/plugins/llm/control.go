@@ -321,6 +321,20 @@ type controlTurn struct {
 	// Child marks a subagent's reply (see take).
 	Child bool   `json:"child"`
 	Match string `json:"match"`
+	// Items, on a release, are the response's reasoning and message
+	// items as given, before its Calls, and streamed nothing: the held
+	// turn's think and stream files already sent what the page shows,
+	// and the response must record exactly that.
+	Items []controlItem `json:"items"`
+}
+
+// controlItem is one output item a release answers with: "thinking" (a
+// reasoning item whose one summary part is Text when Summary is set,
+// and which has no summary otherwise) or "text" (an assistant message).
+type controlItem struct {
+	Kind    string `json:"kind"`
+	Text    string `json:"text"`
+	Summary bool   `json:"summary"`
 }
 
 // controlCall is a tool call a release answers with, so a test can put
@@ -463,7 +477,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, o ullm.Req
 	switch turn.Mode {
 	case "ok", "":
 		if len(turn.Calls) > 0 {
-			return a.calls(ctx, name, turn.Calls)
+			return a.calls(ctx, name, 1, turn.Calls)
 		}
 		return a.reply(ctx, turn.Text, 0)
 	case "error":
@@ -476,19 +490,33 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, o ullm.Req
 		return a.api(ctx, name, turn, r, o)
 	case "block":
 		release := filepath.Join(a.c.dir, name+".release")
-		stream := filepath.Join(a.c.dir, name+".stream")
 		seq := agentllm.SeqOf(ctx)
+		// A reset starts a new attempt of the same request, as a provider
+		// retry does: the engine drops what the old attempt showed.
+		attempt := 1
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
 		for {
-			// A fragment streamed while held: text on screen that no
-			// entry records yet. Removing the file is the test's signal
-			// that it went out.
-			if b, err := os.ReadFile(stream); err == nil {
-				if a.opts.Sink != nil {
-					a.opts.Sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaText, Text: string(b)})
+			// A fragment streamed while held: text (or thinking) on screen
+			// that no entry records yet, or a reset of what was. Removing
+			// the file is the test's signal that it went out.
+			for _, f := range []struct {
+				ext  string
+				kind agentllm.DeltaKind
+			}{{"stream", agentllm.DeltaText}, {"think", agentllm.DeltaThinking}, {"reset", agentllm.DeltaText}} {
+				p := filepath.Join(a.c.dir, name+"."+f.ext)
+				b, err := os.ReadFile(p)
+				if err != nil {
+					continue
 				}
-				if err := os.Remove(stream); err != nil {
+				text := string(b)
+				if f.ext == "reset" {
+					attempt, text = attempt+1, ""
+				}
+				if a.opts.Sink != nil {
+					a.opts.Sink(agentllm.Delta{Seq: seq, Attempt: attempt, Kind: f.kind, Text: text})
+				}
+				if err := os.Remove(p); err != nil {
 					return ullm.Response{}, err
 				}
 			}
@@ -508,6 +536,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, o ullm.Req
 				}
 				if then.Mode == "call" {
 					return a.callTurn(ctx, name, then)
+				}
+				if then.Items != nil {
+					return a.items(ctx, name, attempt, then.Items, then.Calls)
 				}
 				// "refuse" answers as a provider's refusal: a response,
 				// not an error, that the engine records as an error note
@@ -662,7 +693,7 @@ func (a *controlAdapter) bash(ctx context.Context, name, cmd string) (ullm.Respo
 
 // calls answers with tool calls only; the engine runs them and makes the
 // next request, which takes the next queued turn.
-func (a *controlAdapter) calls(ctx context.Context, name string, cs []controlCall) (ullm.Response, error) {
+func (a *controlAdapter) calls(ctx context.Context, name string, attempt int, cs []controlCall) (ullm.Response, error) {
 	seq := agentllm.SeqOf(ctx)
 	var out []ullm.Item
 	for i, c := range cs {
@@ -675,7 +706,7 @@ func (a *controlAdapter) calls(ctx context.Context, name string, cs []controlCal
 			args = "{}"
 		}
 		if a.opts.Sink != nil {
-			a.opts.Sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaToolStart, CallID: id, Name: c.Name})
+			a.opts.Sink(agentllm.Delta{Seq: seq, Attempt: attempt, Kind: agentllm.DeltaToolStart, CallID: id, Name: c.Name})
 		}
 		out = append(out, ullm.Item{Type: ullm.ItemToolCall, Data: ullm.ToolCall{CallID: id, Name: c.Name, Arguments: args}})
 	}
@@ -685,6 +716,33 @@ func (a *controlAdapter) calls(ctx context.Context, name string, cs []controlCal
 	n := a.c.n
 	a.c.mu.Unlock()
 	return ullm.Response{ID: fmt.Sprintf("control-%s-%d", a.c.tag, n), Stop: ullm.StopComplete, Output: out, Usage: u}, nil
+}
+
+// items answers with the given reasoning and message items and then
+// calls, streaming nothing: what the page shows of them was streamed
+// while the turn was held.
+func (a *controlAdapter) items(ctx context.Context, name string, attempt int, items []controlItem, cs []controlCall) (ullm.Response, error) {
+	r, err := a.calls(ctx, name, attempt, cs)
+	if err != nil {
+		return r, err
+	}
+	var out []ullm.Item
+	for _, it := range items {
+		switch it.Kind {
+		case "thinking":
+			var rs ullm.Reasoning
+			if it.Summary {
+				rs.Summary = []string{it.Text}
+			}
+			out = append(out, ullm.Item{Type: ullm.ItemReasoning, Data: rs})
+		case "text":
+			out = append(out, ullm.Item{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleAssistant, Text: it.Text}})
+		default:
+			return ullm.Response{}, fmt.Errorf("llm-control: %s: item kind %q (want thinking or text)", name, it.Kind)
+		}
+	}
+	r.Output = append(out, r.Output...)
+	return r, nil
 }
 
 func controlWords(s string) []string {

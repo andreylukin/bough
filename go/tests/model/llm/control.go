@@ -42,6 +42,7 @@ type Turn struct {
 	Answer *Answer `json:"answer,omitempty"`
 	Child  bool    `json:"child,omitempty"`
 	Match  string  `json:"match,omitempty"`
+	Items  []Item  `json:"items,omitempty"`
 }
 
 // Answer ends one HTTP attempt of an "api" turn: a turn that goes
@@ -54,6 +55,15 @@ type Answer struct {
 	Kind  string `json:"kind"`
 	Text  string `json:"text,omitempty"`
 	Calls []Call `json:"calls,omitempty"`
+}
+
+// Item is one output item of a release: Kind "thinking" is a reasoning
+// item (summarised as Text when Summary is set, with no summary
+// otherwise), "text" an assistant message.
+type Item struct {
+	Kind    string `json:"kind"`
+	Text    string `json:"text,omitempty"`
+	Summary bool   `json:"summary,omitempty"`
 }
 
 // Call is a tool call the model makes: a native tool by name, with its
@@ -185,7 +195,27 @@ func WaitHeld(t testing.TB, dir string, timeout time.Duration) int {
 // nothing has recorded yet. It returns once the row has sent it.
 func Stream(t testing.TB, dir, name, text string, timeout time.Duration) {
 	t.Helper()
-	tmp, dst := filepath.Join(dir, name+".stream-tmp"), filepath.Join(dir, name+".stream")
+	held(t, dir, name, "stream", text, timeout)
+}
+
+// Think is Stream for a thinking fragment.
+func Think(t testing.TB, dir, name, text string, timeout time.Duration) {
+	t.Helper()
+	held(t, dir, name, "think", text, timeout)
+}
+
+// Reset makes a held turn start a new attempt of its request, as a
+// provider retry does: the engine drops what the old attempt streamed.
+func Reset(t testing.TB, dir, name string, timeout time.Duration) {
+	t.Helper()
+	held(t, dir, name, "reset", "", timeout)
+}
+
+// held hands a held turn one <name>.<ext> file and waits for the row to
+// take it.
+func held(t testing.TB, dir, name, ext, text string, timeout time.Duration) {
+	t.Helper()
+	tmp, dst := filepath.Join(dir, name+"."+ext+"-tmp"), filepath.Join(dir, name+"."+ext)
 	if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +229,7 @@ func Stream(t testing.TB, dir, name, text string, timeout time.Duration) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("llm-control: turn %q did not stream %q after %s", name, text, timeout)
+	t.Fatalf("llm-control: turn %q did not take its %s %q after %s", name, ext, text, timeout)
 }
 
 // Say makes a held "block" turn stream text as one assistant delta

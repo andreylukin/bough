@@ -1,0 +1,396 @@
+---
+deadlock_detection: false
+---
+
+# stream_preview_supersede: the live reply preview of an open thread in
+# the web UI (go/tests/model/README.md) - the streamed thinking and text
+# the page draws before the entry that holds them is recorded, and how
+# each run of it leaves the screen again.
+#
+# Engine (go/internal/unreal): the projector turns a request's streamed
+# fragments into live thinking-delta / assistant-delta events and, when
+# the response lands, records one "thinking" entry per reasoning item
+# WITH a summary and one "assistant" entry per message (project.go
+# response). A retry or a newer request after shown text first sends a
+# live delta-reset (project.go Delta). A steer emits a live "steer" and
+# appends its input entry at once (actor.go steer); the request in
+# flight keeps streaming (steer_interrupts off). Stop cuts the request:
+# the gate keeps the attempt's TEXT as one assistant entry marked
+# partial and drops its thinking (gate.go:241), then "cancelled" and
+# "done" are recorded.
+#
+# Server (go/internal/serve): deltas are buffered 50ms and flushed before
+# any recorded event (deltas.go), so the page sees fragments and records
+# in the order the engine made them. delta-reset drops the buffered text
+# and goes out live. EVERY other kind - recorded entries and the
+# engine's live-only kinds alike (steer, a job's notice, the "provider
+# hiccup" system line) - takes a supervisor seq and reaches the page as a
+# change signal (supervisor.go emitLocked).
+#
+# Page (web/src/app.tsx, streamAfter and the `selected` effect): a
+# fragment extends the last run of its kind unless that run is sealed,
+# else starts a run. A delta-reset clears the preview and zeroes
+# `superseded`. Any other non-delta event sets superseded = runs (the
+# runs on screen now belong to what was just recorded) and arms the
+# 120ms catch-up. The catch-up captures drop = superseded when it starts,
+# GETs ?since=<cursor>, and when the response has entries appends them
+# and slices `drop` runs off the preview (superseded -= drop). A response
+# with no entries changes neither. A failed catch-up re-arms.
+#
+# Fields: the engine's side (cur, disk, n, turn, steered, queued) and the page's
+# (stream, sup, seen, timer, fetch, drop, header, cut). A fragment is an
+# int, 1..MAXFRAG in arrival order, so "text" is a list of them; a run is
+# record(kind, frags); an entry is record(kind, frags, partial). The
+# page's lines are disk[:seen]: every catch-up appends a prefix of disk
+# (the cursor is the last line's seq).
+#
+# Abstractions, each to keep the graph small:
+# - one turn, MAXFRAG fragments over all of it, at most one steer. Two
+#   fragments reach every race below: the clipped one needs a sealed run,
+#   a reset and one fragment after it.
+# - the 50ms buffer and the SSE stream are instant and lossless:
+#   live_transcript_sync covers dropped subscribers and reconnects, and
+#   the flush-before-record order makes the buffer invisible here.
+# - Steer stands for every live-only change signal: it seals the preview
+#   like a job notice or the hiccup line, and it is the one that also
+#   records an entry at once, which is what makes its catch-up slice.
+#   A live-only signal with nothing recorded returns early (no entries);
+#   one with a record racing it is Steer's case with the entry later.
+#   The steer comes while the first fragment's run streams, the page
+#   otherwise quiet: both of its races (the slice of the unrecorded run,
+#   and the reset after it) need exactly that, and a steer racing a
+#   catch-up already in flight seals like the record racing it
+#   (Respond), which the graph has. Anywhere else it multiplied the graph
+#   by five (2159 states) and reached no claim the rest does not.
+# - a response's records (thinking, assistant) and a close's (partial
+#   assistant, cancelled, done) reach the page back to back with no
+#   fragment between; each sets superseded to the same runs, so they are
+#   one change signal here.
+# - one catch-up in flight. In the product the timer can fire again while
+#   one is pending, and both slice by their own drop.
+# - the catch-up reads the transcript when it lands: the latest read it
+#   can make, and the one that can see more than its drop was taken for.
+#   A record between an earlier read and the landing seals the same runs
+#   before the slice as after it (sup - drop either way), so landing-time
+#   reads lose no page state.
+#
+# Fairness: the page's own steps (timer firing, the response landing) are
+# strongly fair; so are the engine's Respond and Finish, the claim being
+# about a turn that ends. Deltas, resets, the steer, Stop and a failed
+# catch-up are not.
+#
+# Corrections to the mapped model, from the code:
+# - "sealed_by_live_only_event" is not only steer/job/hiccup: `activity`,
+#   call-delta and a native call's start return before the seal, every
+#   other kind seals (a loop call's start too).
+# - a response of only unsummarized thinking records nothing and sends no
+#   change signal: its run stays on screen, unsealed, and the next
+#   request's first thinking fragment EXTENDS it (one run across two
+#   requests) until a later record's catch-up drops both. But only when a
+#   queued steer is what asks the model again (actor.go response): every
+#   other way a turn goes on past a response records something first. A
+#   response the turn goes on from made a tool call, and the call's
+#   recorded end (project.go call: a "call" entry) seals like any
+#   record. So Respond appends a "call" entry unless a steer is `queued`
+#   (found by the server walk, which cannot make the engine ask again
+#   without one or the other).
+# - a delta-reset clears sealed runs too (recorded, not yet fetched):
+#   their text blinks out until that catch-up lands. Allowed by the
+#   mapped claim ("except by a reset").
+# - `left` (not in the mapped suspects; found here): a catch-up can read
+#   entries recorded after its drop was captured. It appends them but
+#   slices only `drop` runs, so the runs they sealed stay in the preview:
+#   text shown twice, or unrecorded thinking left before lines it
+#   precedes. The catch-up their own signal armed reads nothing new and
+#   returns early without slicing, so they stay until a later entry
+#   lands - after a turn's last entry, for good (the next turn's preview
+#   starts with them).
+#
+# Where the product does not hold, a ghost says so and the claim it
+# breaks is exempted by it (see each assertion): sliced, unsummarized,
+# left, uncut. Remove an exemption and fizz fails.
+
+MAXFRAG = 2
+
+def seal(stream):
+    # Any non-delta change signal: every run on screen is sealed.
+    return len(stream)
+
+def stream_after(stream, sealed, kind, f):
+    # streamAfter: extend the last run of the same kind unless sealed.
+    n = len(stream)
+    if n > sealed and stream[n - 1].kind == kind:
+        last = stream[n - 1]
+        return stream[:n - 1] + [record(kind=kind, frags=last.frags + [f])]
+    return stream + [record(kind=kind, frags=[f])]
+
+def engine_after(cur, kind, f):
+    # The engine's own view of the attempt: runs of one kind merge.
+    n = len(cur)
+    if n > 0 and cur[n - 1].kind == kind:
+        last = cur[n - 1]
+        return cur[:n - 1] + [record(kind=kind, frags=last.frags + [f])]
+    return cur + [record(kind=kind, frags=[f])]
+
+def frags_of(xs):
+    out = []
+    for x in xs:
+        out = out + x.frags
+    return out
+
+def header_of(stream):
+    # The Working label: "Thinking" iff the last run is thinking.
+    if len(stream) == 0:
+        return ""
+    if stream[len(stream) - 1].kind == "thinking":
+        return "Thinking"
+    return "Working"
+
+def lines_of(p):
+    return frags_of(p.disk[:p.seen])
+
+role Preview:
+    action Init:
+        # --- engine / server ---
+        self.cur = []          # runs of the attempt in flight, unrecorded
+        self.disk = []         # recorded entries: record(kind, frags, partial)
+        self.n = 0             # fragments streamed so far
+        self.turn = "running"  # running | done
+        self.steered = False
+        self.queued = False    # the steer's input waits for the request's boundary
+        # --- page ---
+        self.stream = []       # the preview: runs on screen
+        self.sup = 0           # `superseded`: sealed runs
+        self.seen = 0          # lines = disk[:seen]
+        self.timer = False     # catch-up armed
+        self.fetch = False     # a catch-up in flight
+        self.drop = 0          # the runs it will slice, captured at its start
+        self.header = ""       # "Thinking" | "Working" | "" (no preview)
+        self.cut = False       # the page marks a cut reply (data.partial is never read)
+
+    # --- Provider / engine ---
+
+    atomic action ThinkingDelta:
+        require self.turn == "running" and self.n < MAXFRAG
+        self.n = self.n + 1
+        self.cur = engine_after(self.cur, "thinking", self.n)
+        self.stream = stream_after(self.stream, self.sup, "thinking", self.n)
+        self.header = header_of(self.stream)
+
+    atomic action TextDelta:
+        require self.turn == "running" and self.n < MAXFRAG
+        self.n = self.n + 1
+        self.cur = engine_after(self.cur, "assistant", self.n)
+        self.stream = stream_after(self.stream, self.sup, "assistant", self.n)
+        self.header = header_of(self.stream)
+
+    atomic fair<strong> action Respond:
+        # System.RecordThinking/RecordAssistant: the response lands. A
+        # reasoning item without a summary records nothing.
+        require self.turn == "running" and len(self.cur) > 0
+        thinks = len([r for r in self.cur if r.kind == "thinking"]) > 0
+        opts = [True]
+        if thinks:
+            opts = [True, False]
+        oneof summary in opts:
+            recs = []
+            for r in self.cur:
+                if r.kind == "assistant" or summary:
+                    recs.append(record(kind=r.kind, frags=r.frags, partial=False))
+                else:
+                    for f in r.frags:
+                        unsummarized.append(f)
+            # The turn goes on past the response through its tool call,
+            # whose end is recorded, unless the queued steer carries it
+            # on (see the corrections).
+            if not self.queued:
+                recs.append(record(kind="call", frags=[], partial=False))
+            self.queued = False
+            self.cur = []
+            self.disk = self.disk + recs
+            if len(recs) > 0:
+                self.sup = seal(self.stream)
+                self.timer = True
+
+    atomic action DeltaReset:
+        # A retry, or a newer request, after shown text.
+        require self.turn == "running" and len(self.cur) > 0
+        self.cur = []
+        self.stream = []
+        self.sup = 0
+        self.header = ""
+
+    atomic action Steer:
+        # Live "steer", and the input entry recorded at once. Only while
+        # the first run streams (see the abstractions).
+        require self.turn == "running" and not self.steered and len(self.cur) > 0 and self.n == 1
+        self.steered = True
+        self.queued = True
+        self.disk = self.disk + [record(kind="input", frags=[], partial=False)]
+        self.sup = seal(self.stream)
+        self.timer = True
+
+    atomic action Stop:
+        # User.Stop: the attempt's text is kept as a partial assistant
+        # entry, its thinking is dropped; cancelled + done close the turn.
+        # Only mid-stream: between requests it is Finish to the preview.
+        require self.turn == "running" and len(self.cur) > 0
+        text = []
+        for r in self.cur:
+            if r.kind == "assistant":
+                text = text + r.frags
+            else:
+                for f in r.frags:
+                    unsummarized.append(f)
+        recs = []
+        if len(text) > 0:
+            recs = [record(kind="assistant", frags=text, partial=True)]
+        self.cur = []
+        self.queued = False
+        self.disk = self.disk + recs + [record(kind="done", frags=[], partial=False)]
+        self.turn = "done"
+        self.sup = seal(self.stream)
+        self.timer = True
+
+    atomic fair<strong> action Finish:
+        require self.turn == "running" and len(self.cur) == 0
+        # A queued steer asks the model once more first; that answer
+        # records nothing.
+        self.queued = False
+        self.disk = self.disk + [record(kind="done", frags=[], partial=False)]
+        self.turn = "done"
+        self.sup = seal(self.stream)
+        self.timer = True
+
+    # --- the page's catch-up ---
+
+    atomic fair<strong> action CatchUpFire:
+        require self.timer and not self.fetch
+        self.timer = False
+        self.fetch = True
+        self.drop = self.sup
+
+    atomic fair<strong> action CatchUpOk:
+        require self.fetch
+        d = self.drop
+        self.fetch = False
+        self.drop = 0
+        if len(self.disk) > self.seen:
+            self.seen = len(self.disk)
+            lines = lines_of(self)
+            gone = frags_of(self.stream[:d])
+            self.stream = self.stream[d:]
+            self.sup = max(0, self.sup - d)
+            self.header = header_of(self.stream)
+            for e in self.disk:
+                if e.partial and not self.cut:
+                    uncut = True
+            # Ghosts: what this landing did that the claims below forbid.
+            for g in gone:
+                if g not in lines and g not in unsummarized and g not in sliced:
+                    sliced.append(g)
+            for g in frags_of(self.stream[:self.sup]):
+                if g not in left:
+                    left.append(g)
+
+    atomic action CatchUpFails:
+        require self.fetch
+        self.fetch = False
+        self.drop = 0
+        self.timer = True
+
+action Init:
+    preview = Preview()
+    # Ghosts (not product state, not compared by MBT). Product gaps, each the fragments (or the fact) a claim below exempts:
+    unsummarized = []  # thinking no entry will ever hold (no summary, or cut by Stop)
+    sliced = []        # unrecorded text a catch-up's stale drop sliced off
+    left = []          # sealed runs a catch-up that read past its drop kept
+    uncut = False      # a partial reply landed and renders complete
+
+# No streamed fragment is shown twice (lines + preview).
+# Except `left`: see the last correction above.
+always assertion NoFragmentTwice:
+    shown = lines_of(preview) + frags_of(preview.stream)
+    seen = []
+    for f in shown:
+        if f in seen and f not in left:
+            return False
+        seen.append(f)
+    return True
+
+# Streamed text not yet recorded is never dropped, except by a reset or
+# by its own record landing (text on disk is recorded: the claim is
+# about the rest).
+# Except `sliced`: suspect 1, a steer (or a job, a hiccup) seals the
+# unrecorded reply and the catch-up its signal armed slices it off; and
+# suspect 2, a reset during an in-flight catch-up zeroes superseded but
+# the response still slices by the drop taken before it, so the retried
+# reply's first run goes. Either comes back only when its record lands.
+# And `unsummarized`: suspect 3, thinking with no summary, or cut by
+# Stop, is never recorded, so its block leaves with the next record's
+# runs and never comes back.
+always assertion UnrecordedNeverDropped:
+    here = lines_of(preview) + frags_of(preview.stream)
+    recorded = frags_of(preview.disk)
+    live = frags_of(preview.cur)
+    for f in range(1, preview.n + 1):
+        if f in here or f in recorded:
+            continue
+        # Discarded by a delta-reset: no longer in the attempt in flight
+        # and not thinking left unrecorded (a reset is the one discard
+        # that needs no ghost).
+        if f not in live and f not in unsummarized:
+            continue
+        if f in sliced or f in unsummarized:
+            continue
+        return False
+    return True
+
+# After a response lands the preview holds only fragments after the
+# recorded lines (never text the lines already show or passed).
+# Except `left`: see the last correction above.
+always assertion PreviewFollowsLines:
+    lines = lines_of(preview)
+    if len(lines) == 0:
+        return True
+    top = max(lines)
+    for f in frags_of(preview.stream):
+        if f <= top and f not in left:
+            return False
+    return True
+
+# Thinking and text keep arrival order, in the lines and in the preview.
+always assertion ArrivalOrder:
+    for xs in [lines_of(preview), frags_of(preview.stream)]:
+        for i in range(1, len(xs)):
+            if xs[i] <= xs[i - 1]:
+                return False
+    return True
+
+# The header says Thinking iff the last run is thinking.
+always assertion HeaderMatchesLastRun:
+    if len(preview.stream) == 0:
+        return preview.header == ""
+    last = preview.stream[len(preview.stream) - 1]
+    return (preview.header == "Thinking") == (last.kind == "thinking")
+
+# A partial (cancelled) reply is marked as cut.
+# Except `uncut`: suspect 4, nothing on the page reads data.partial, and
+# the cancelled turn is closed by its "done", so a cut answer renders
+# complete.
+always assertion PartialMarkedCut:
+    if uncut:
+        return True
+    for e in preview.disk[:preview.seen]:
+        if e.partial and not preview.cut:
+            return False
+    return True
+
+# Every run is eventually replaced by its record or cleared.
+# Except runs `left` behind (see the last correction above): nothing
+# slices them once the turn's last entry has landed.
+always eventually assertion RunsEventuallyReplaced:
+    for f in frags_of(preview.stream):
+        if f not in left:
+            return False
+    return True
