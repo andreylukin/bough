@@ -97,9 +97,9 @@ func restartServe(home, bin string, out io.Writer) error {
 	if !ok && !managed {
 		return nil
 	}
-	addr, insecure := defaultServeAddr, false
+	addr, insecure, host := defaultServeAddr, false, ""
 	if ok {
-		addr, insecure = cur.addr, watch.CheckLoopback(cur.addr) != nil
+		addr, insecure, host = cur.addr, watch.CheckLoopback(cur.addr) != nil, cur.host
 		fmt.Fprintf(out, "bough: stopping control room (pid %d)…\n", cur.pid)
 		if err := interrupt(cur.pid); err != nil {
 			return fmt.Errorf("signal pid %d: %w", cur.pid, err)
@@ -120,7 +120,7 @@ func restartServe(home, bin string, out io.Writer) error {
 	// control room that was started by hand: from here on it comes
 	// back at login and after a crash, on this binary.
 	if launchdServes() {
-		if err := installServeAgent(home, bin, addr, insecure, ""); err != nil {
+		if err := installServeAgent(home, bin, addr, insecure, host); err != nil {
 			return err
 		}
 		w, err := waitServe(home, addr)
@@ -130,9 +130,9 @@ func restartServe(home, bin string, out io.Writer) error {
 		fmt.Fprintf(out, "bough: restarted control room on %s (pid %d, launchd agent %s)\n", addr, w.pid, serveAgentID)
 		return nil
 	}
-	// The pidfile does not record a --host; a proxied install runs
-	// under a supervisor (systemd) that restarts serve itself.
-	pid, logPath, err := launchServe(home, bin, addr, insecure, "")
+	// The pidfile records --host: without it every request a proxy
+	// forwards to the restarted serve was a 403.
+	pid, logPath, err := launchServe(home, bin, addr, insecure, host)
 	if err != nil {
 		return err
 	}
@@ -325,6 +325,7 @@ type webSession struct {
 	dir    string // the cwd it was started in — which bough.yml it found
 	config string
 	caps   string // what the running binary understands, comma separated
+	host   string // serve's --host; "" for web and a serve without one
 }
 
 // canNewSession reports whether the running session handles SIGUSR1 as

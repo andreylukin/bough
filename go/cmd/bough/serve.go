@@ -131,16 +131,20 @@ func runningServe(home string) (webSession, bool) {
 		os.Remove(pf)
 		return webSession{}, false
 	}
-	return webSession{pid: pid, addr: addr, dir: dir, config: config, caps: caps}, true
+	var host string
+	if f := strings.Split(strings.TrimRight(string(b), "\n"), "\t"); len(f) > 4 {
+		host = f[4]
+	}
+	return webSession{pid: pid, addr: addr, dir: dir, config: config, caps: caps, host: host}, true
 }
 
-// writeServePidfile records "<pid> <addr>\t<cwd>\t<config>\t<caps>".
+// writeServePidfile records "<pid> <addr>\t<cwd>\t<config>\t<caps>\t<host>".
 // A pidfile naming a live foreign pid is an error: that serve may have
 // closed its port and still be killing its children (a SIGINT, a `serve
 // stop` that gave up waiting), and two supervisors would mean two
 // writers per session file. The returned cleanup removes the file on
 // clean shutdown, if it still names this process.
-func writeServePidfile(home, addr string) (func(), error) {
+func writeServePidfile(home, addr, host string) (func(), error) {
 	pf := servePidfile(home)
 	if b, err := os.ReadFile(pf); err == nil {
 		if pid, _, _, _, _, perr := parsePidfile(string(b)); perr == nil && pid != os.Getpid() && alive(pid) {
@@ -152,8 +156,8 @@ func writeServePidfile(home, addr string) (func(), error) {
 		return nil, nil
 	}
 	dir, _ := os.Getwd()
-	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\t%s\n",
-		os.Getpid(), addr, dir, webConfig, ""), 0o644); err != nil {
+	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\t%s\t%s\n",
+		os.Getpid(), addr, dir, webConfig, "", host), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "bough serve: pidfile:", err)
 		return nil, nil
 	}
@@ -378,7 +382,7 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 		return fmt.Errorf("serve: listen %s: %w", addr, err)
 	}
 	defer ln.Close()
-	done, err := writeServePidfile(home, addr)
+	done, err := writeServePidfile(home, addr, host)
 	if err != nil {
 		return err
 	}
