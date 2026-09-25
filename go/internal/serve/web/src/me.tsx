@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Back, ago } from "./app";
 import { EmptyState, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
@@ -156,12 +156,21 @@ function Steer({ onSteer }: { onSteer: (text: string) => Promise<string> }) {
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
+  return <SteerView state={{ text, busy, said, err }} onText={(t) => { setText(t); setSaid(""); }} onSend={() => { void send(); }} />;
+}
+
+/** Everything Steer holds, so each of its states can be rendered on its own. */
+export interface SteerState { text: string; busy: boolean; said: string; err: string }
+
+/** Steer's markup as a function of its state; Steer owns the state and the request. */
+export function SteerView({ state, onText, onSend }: { state: SteerState; onText: (text: string) => void; onSend: () => void }) {
+  const { text, busy, said, err } = state;
   const to = text.trim() ? steerSection(text) : "";
   return (
-    <form className="me-steer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
+    <form className="me-steer" onSubmit={(e) => { e.preventDefault(); onSend(); }}>
       <input className="field me-steer-box" value={text} aria-label="Tell the brief what to watch or ignore" disabled={busy}
              placeholder="Tell the brief what to watch or ignore… (“watch Bradley’s provenance PR”, “ignore uni-route-availability”)"
-             onChange={(e) => { setText(e.target.value); setSaid(""); }} />
+             onChange={(e) => onText(e.target.value)} />
       <button type="submit" className="btn btn-sm" disabled={!text.trim() || busy}>{busy ? "Filing…" : to ? `Add to ${to}` : "Add"}</button>
       {said && <span className="me-steer-said" role="status">{said}</span>}
       {err && <span className="err me-steer-said" role="alert">{err}</span>}
@@ -169,7 +178,7 @@ function Steer({ onSteer }: { onSteer: (text: string) => Promise<string> }) {
   );
 }
 
-export function MePage({ data, error, notice, rows = [], projectNames = {}, refreshing, onRefresh, onRetry, onOpenSession, onOpenProject, onOpenPage, onBack, onTriage, onSteer }: {
+type MePageProps = {
   data: MeData | null; error?: string; rows?: Row[]; projectNames?: Record<string, string>;
   /** A request the page made that the server refused: said, not swallowed. */
   notice?: string;
@@ -179,6 +188,23 @@ export function MePage({ data, error, notice, rows = [], projectNames = {}, refr
   onTriage?: (action: TriageAction, s: MeSignal, rule?: string) => void;
   /** A sentence for the brief; resolves to the profile section it was filed under. */
   onSteer?: (text: string) => Promise<string>;
+};
+
+export function MePage({ onSteer, ...props }: MePageProps) {
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  return <MePageView {...props} menuFor={menuFor} onMenu={setMenuFor} steer={onSteer ? <Steer onSteer={onSteer} /> : undefined} />;
+}
+
+/**
+ * MePage's markup as a function of its props: the open Dismiss menu and
+ * the steering line come in from outside, so every state the page can be
+ * in renders on its own (test/model-me.test.tsx renders each of ui_me.fizz's).
+ */
+export function MePageView({ data, error, notice, rows = [], projectNames = {}, refreshing, onRefresh, onRetry, onOpenSession, onOpenProject, onOpenPage, onBack, onTriage, menuFor, onMenu, steer }: Omit<MePageProps, "onSteer"> & {
+  /** The row whose Dismiss menu is open, by signalKey. */
+  menuFor: string | null; onMenu: (key: string | null) => void;
+  /** The steering line, shown under a brief with a profile. */
+  steer?: ReactNode;
 }) {
   const [copied, copy] = useCopied();
   const groups = useMemo(() => groupSignals(data?.signals?.items ?? [], data?.triage), [data?.signals, data?.triage]);
@@ -190,7 +216,6 @@ export function MePage({ data, error, notice, rows = [], projectNames = {}, refr
   }, [data?.signals, data?.triage]);
   const projects = useMemo(() => projectLines(rows, projectNames), [rows, projectNames]);
   const [hot, setHot] = useState<number | null>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
   if (!data) {
     return <div className="thread me-loading">{error ? <EmptyState glyph="search" title="Couldn’t read the brief" primary={false} action={onRetry ? { label: "Retry", onClick: onRetry } : undefined}>{error}</EmptyState> : <Pending what="Brief" />}</div>;
   }
@@ -243,12 +268,12 @@ export function MePage({ data, error, notice, rows = [], projectNames = {}, refr
               })}
             </article>
           )}
-          {page && onSteer && data.hasProfile && <Steer onSteer={onSteer} />}
+          {page && data.hasProfile && steer}
           {groups.map((g) => (
             <section key={g.kind} className="me-group" data-kind={g.kind} aria-label={g.label}>
               <h2 className="eyebrow me-group-h">{g.label} <span className="num">{g.items.length}</span></h2>
               {g.items.map((s) => <Signal key={signalKey(s)} s={s} pinned={pinnedKeys.has(signalKey(s))}
-                                     menu={menuFor === signalKey(s)} setMenu={(open) => setMenuFor(open ? signalKey(s) : null)} onOpenSession={onOpenSession} onTriage={onTriage} />)}
+                                     menu={menuFor === signalKey(s)} setMenu={(open) => onMenu(open ? signalKey(s) : null)} onOpenSession={onOpenSession} onTriage={onTriage} />)}
             </section>
           ))}
           {dismissedCount > 0 && <p className="me-dim me-dismissed">{dismissedCount} dismissed {dismissedCount === 1 ? "row" : "rows"} hidden. Rules you taught are in your profile.</p>}
