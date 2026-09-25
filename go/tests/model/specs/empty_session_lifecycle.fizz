@@ -1,0 +1,256 @@
+# Empty sessions in the web page: one made without a prompt (palette
+# "New session in <folder>", "New session in a folder…", the Overview's
+# New session: all start(dir, "")), what holds its lease, and which of
+# the page's surfaces list it while it has no input. One page, one serve,
+# one session; the flow starts on an empty server with the welcome up.
+#
+# Fields of the one role, Empty:
+#
+#   made      the session was created (POST /api/sessions answered 201);
+#             not "exists", which is a FizzBee keyword
+#   live      serve holds its child and the lease (sup.Live, Row.live)
+#   seen      what the page's rows say about live: the list is re-read
+#             after every act of the page's own, but a serve restart is
+#             only seen at the next poll
+#   open      it is the session open in the page (#/s/<id>, `selected`)
+#   input     someone sent it a message (Row.empty is !hasInput)
+#   titled    meta.Title is set (a rename)
+#   archived  meta.Archived
+#   filter    the sidebar's filter holds text that matches this session
+#
+# and the surfaces, derived from those (the page's view, so `seen`, never
+# `live`), each a field so the adapters read them off the page:
+#
+#   sidebar   "none" (no session), "listed" or "hidden": whether its row is
+#             in the sidebar's tree (app.tsx Sidebar, the rows loop)
+#   recent    the palette's Recent lists it (palette.tsx recentSessions;
+#             the open session is never in its own Recent)
+#   welcome   the welcome is on screen (app.tsx showWelcome, in the thread
+#             pane, so only while nothing is open)
+#
+# The overview (ControlOverview's `live`) and arrivalPick are helpers, not
+# fields: the overview renders only needs-you and running counts, which an
+# idle empty session is never part of, and arrivalPick runs once per page
+# load, which this model has no step for.
+#
+# Where this corrects the mapped model (checked against the code):
+# - StartEmpty, OverviewNew and FolderStart are one action here: all three
+#   are start(dir, "") and end the same way (session_create models how
+#   each is reached). A create failing is session_create's too.
+# - "empty_dead_searched" is the sidebar filter (the rows loop keeps a
+#   hidden empty while `query` is set). The palette's own search is a
+#   different surface, left out.
+# - "welcome_suppressed" is not a state of its own: it is the welcome off
+#   while the sidebar says "No sessions yet.", which NoSessionsMeansWelcome
+#   says cannot happen.
+# - Opening a dead session by link spawns nothing: only Send ensures a
+#   child (supervisor.go Send -> ensure), so OpenByLink leaves live alone.
+# - The welcome's Skip (welcome "off") is left out: the flow is about the
+#   gate, and "off" only turns it off for good.
+#
+# What this spec said the page should do where the page did not, both
+# found by the server walk (mbt/empty_session_lifecycle_test.go) and fixed
+# with one rule for all the lists, hiddenEmpty in web/src/palette.tsx:
+# - showWelcome counted every unarchived row (`!rows.some(r => !r.archived)`),
+#   hidden empties included: after a serve restart the sidebar said "No
+#   sessions yet." and the welcome was not shown. Here the gate counts only
+#   what the sidebar would list with no filter and nothing open (listed0).
+# - A renamed empty session disappeared from the sidebar and Recent once its
+#   child was gone: both hid `r.empty && !r.live` whatever meta.Title said.
+#   Here a title lists it (NamedNeverHidden).
+#
+# What is modelled as main does it, and is a gap reported, not asserted
+# away: nothing reaps an idle empty child. Every empty New spawns a child
+# that holds its lease until a message, an archive or a serve restart;
+# NavigateAway leaves it running. A liveness claim "an empty live child
+# nobody has open is eventually reaped" fails on this spec (the lasso is
+# StartEmpty, NavigateAway, then OpenByLink/NavigateAway forever). With
+# one session the lease count is bounded by the model, not by serve.
+# Also: the comment above app.tsx newSession() says nothing is created
+# until the first prompt, but every Start command POSTs prompt "".
+
+# The sidebar with no filter and nothing open, which is also what the
+# welcome's gate, the palette's Recent and the overview should count.
+def listed0(s):
+    return s.made and not s.archived and (s.input or s.seen or s.titled)
+
+def sidebar(s):
+    if not s.made:
+        return "none"
+    if s.archived:
+        # Archived rows are fetched only while the Archived section is open.
+        return "hidden"
+    if listed0(s) or s.open or s.filter:
+        return "listed"
+    return "hidden"
+
+def recent(s):
+    return listed0(s) and not s.open
+
+def welcome(s):
+    return not s.open and not listed0(s)
+
+# ControlOverview's `live`: unarchived, and not empty-and-dead.
+def overview(s):
+    return listed0(s)
+
+# arrivalPick: never an empty session, never an archived one.
+def arrival(s):
+    return s.made and not s.archived and s.input
+
+role Empty:
+    action Init:
+        self.made = False
+        self.live = False
+        self.seen = False
+        self.open = False
+        self.input = False
+        self.titled = False
+        self.archived = False
+        self.filter = False
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # start(dir, ""): the child is spawned and claimed before the 201,
+    # the page refreshes its rows and opens #/s/<id>.
+    atomic action StartEmpty:
+        require not self.made
+        self.made = True
+        self.live = True
+        self.seen = True
+        self.open = True
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # Another row, the overview, or Back: the session is no longer open.
+    # Its child keeps running. With nothing open the page's stream closes,
+    # and the list poll's effect re-reads the list at once (app.tsx, the
+    # refresh effect on `streaming`), so the rows catch up here too.
+    atomic action NavigateAway:
+        require self.open
+        self.open = False
+        self.seen = self.live
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # A pasted #/s/<id> (or history's Forward): opens it whatever the list
+    # shows. Opening reads the transcript and spawns nothing.
+    atomic action OpenByLink:
+        require self.made and not self.open
+        self.open = True
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # serve restarts: every child dies, the lease with it. The page learns
+    # at its next poll.
+    atomic action ServeRestart:
+        require self.live
+        self.live = False
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # The list poll (4 s, 12 s with a session open): always comes.
+    atomic fair action Poll:
+        require self.seen != self.live
+        self.seen = self.live
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # Text in the sidebar's filter that matches this session's title or folder.
+    atomic action TypeFilter:
+        require self.made and not self.filter
+        self.filter = True
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    atomic action ClearFilter:
+        require self.filter
+        self.filter = False
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # Rename from the open session's header or the row's menu: only a
+    # session the person can see. Like every act of the page's own, it
+    # re-reads the list after (onRename: rename, then refresh).
+    atomic action Rename:
+        require not self.titled and not self.archived and (self.open or self.sidebar == "listed")
+        self.titled = True
+        self.seen = self.live
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # archiveRow: POST /archive (SetArchived kills the child), then the
+    # page marks the row and refreshes. The page stays on the session if
+    # it was open.
+    atomic action Archive:
+        require not self.archived and (self.open or self.sidebar == "listed")
+        self.archived = True
+        self.live = False
+        self.seen = False
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # From the Archived section. The child stays dead until a message.
+    atomic action Unarchive:
+        require self.archived
+        self.archived = False
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+    # The composer's Send on the open session: ensure respawns the child
+    # if it died, and the input line makes the session not empty.
+    atomic action SendFirstMessage:
+        require self.open and not self.input and not self.archived
+        self.input = True
+        self.live = True
+        self.seen = True
+        self.sidebar = sidebar(self)
+        self.recent = recent(self)
+        self.welcome = welcome(self)
+
+action Init:
+    e = Empty()
+
+# The surfaces that list sessions agree on this one when the sidebar has
+# no filter and it is not open: sidebar, palette Recent, overview, and the
+# welcome's gate (on exactly when none of them list it); arrivalPick never
+# opens what the sidebar hides.
+always assertion SurfacesAgree:
+    if e.open or e.filter:
+        return True
+    listed = e.sidebar == "listed"
+    return (listed == e.recent and listed == overview(e) and e.welcome == (not listed)
+            and (not arrival(e) or listed))
+
+# "No sessions yet." (sidebar lists nothing, no filter) with nothing open
+# means the welcome is on screen.
+always assertion NoSessionsMeansWelcome:
+    return e.open or e.filter or e.sidebar == "listed" or e.welcome
+
+# A session someone named is never hidden as empty.
+always assertion NamedNeverHidden:
+    return not (e.titled and e.made and not e.archived) or (e.sidebar == "listed" and (e.open or e.recent))
+
+# One session, so at most one lease: held only by an existing, unarchived
+# session (SetArchived kills the child).
+always assertion EmptyLeaseBounded:
+    return not e.live or (e.made and not e.archived)
+
+# Once it has a message it is listed everywhere, whatever its child does.
+always assertion FirstMessageLists:
+    return not (e.input and not e.archived) or (e.sidebar == "listed" and (e.open or e.recent) and not e.welcome)
+
+# The page's rows catch up with serve: a dead child stops showing as live.
+always eventually assertion PageCatchesUp:
+    return e.seen == e.live

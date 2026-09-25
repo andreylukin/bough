@@ -205,12 +205,21 @@ export function commandQuery(q: string): { only: boolean; text: string } {
   return t.startsWith(">") ? { only: true, text: t.slice(1).trim() } : { only: false, text: q };
 }
 
+/**
+ * A session opened and never sent a message, whose child is gone, holds
+ * nothing to go back to, so the lists leave it out. Unless someone named
+ * it: a rename is something to go back to, and hiding it once the child
+ * died made the session vanish. A project session whose orb failed to
+ * start stays too, or the failure and the prompt it lost are swallowed.
+ */
+export const hiddenEmpty = (r: Row): boolean => Boolean(r.empty) && !r.live && !r.title && r.orb?.status !== "failed";
+
 /** Sessions to switch to: the ones visited, last first (so Enter goes back), then the rest by activity. */
 export function recentSessions(rows: Row[], current: string | null, visited: string[], n: number): Row[] {
   const at = (id: string) => { const i = visited.indexOf(id); return i < 0 ? Infinity : i; };
-  // Empty sessions the sidebar shows (live, or a failed orb) are reachable here too.
+  // Empty sessions the sidebar shows are reachable here too.
   return listable(rows)
-    .filter((r) => !r.archived && !(r.empty && !r.live && r.orb?.status !== "failed") && r.id !== current)
+    .filter((r) => !r.archived && !hiddenEmpty(r) && r.id !== current)
     .sort((a, b) => at(a.id) - at(b.id) || Date.parse(b.lastAt) - Date.parse(a.lastAt))
     .slice(0, n);
 }

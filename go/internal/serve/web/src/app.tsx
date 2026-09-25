@@ -24,7 +24,7 @@ import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./ho
 import { MeView } from "./me";
 import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, nativeEdits, outputParts, useChanges } from "./changes";
-import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
+import { Palette, hiddenEmpty, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, EmptyState, ErrorNote, ErrorToast, InlineFail, Pending, RawDetails, Spinner, StartingStatus, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
@@ -97,6 +97,16 @@ const INACTIVE_MS = 72 * 3_600_000;
  * day. A week-old interrupted background thread used to win on signal
  * alone and greet you every morning; the overview is the better greeting.
  */
+/**
+ * The welcome's gate: nothing the sidebar would list with no filter and
+ * nothing open. Counting every unarchived row counted the empty ones the
+ * sidebar hides, so after a serve restart the sidebar said "No sessions
+ * yet." and the welcome stayed away.
+ */
+export function noSessionsListed(rows: Row[]): boolean {
+  return !rows.some((r) => !r.archived && (projectOf(r) || !hiddenEmpty(r)));
+}
+
 export function arrivalPick(rows: Row[], now: number): Row | undefined {
   return rows.filter((r) => !r.archived && !r.empty && !r.background && now - Date.parse(r.lastAt) < ARRIVAL_MS)
     .sort((a, b) => sessionSignal(a) - sessionSignal(b) || Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
@@ -111,9 +121,10 @@ const isOld = (r: Row, now: number) => sessionSignal(r) >= 2 && now - Date.parse
  * Folded under its group's foot: old, or a project thread nobody typed
  * into (the page's Empty group, which starts closed there too). Only a
  * project keeps its empty rows at all; elsewhere they are not listed.
+ * A named one is listed like any other: its name is why it is kept.
  */
 const isTucked = (r: Row, now: number, selected: string | null) =>
-  isOld(r, now) || (sessionSignal(r) >= 2 && Boolean(r.empty) && !r.live && r.id !== selected);
+  isOld(r, now) || (sessionSignal(r) >= 2 && Boolean(r.empty) && !r.live && !r.title && r.id !== selected);
 
 /** Where a session ran, as the sidebar names it: the repo, else the folder. */
 function workspaceOf(r: Row): string {
@@ -393,7 +404,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       // but hiding it would swallow the failure and the prompt it lost.
       // An archived one always lists: it was archived on purpose, and hiding it
       // left it reachable only by URL.
-      if (!member && r.empty && !r.live && !r.archived && r.orb?.status !== "failed" && r.id !== selected && !query) continue;
+      if (!member && hiddenEmpty(r) && !r.archived && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
       else if (r.background && !member) background.push(r);
       // Old sessions stay in their project's group, folded under "older".
@@ -3613,7 +3624,7 @@ export function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadE
   // An empty session whose orb failed to set up stays, as in the sidebar:
   // hiding it would say "nothing needs you" under a red row.
   const setupFailed = (r: Row) => r.orb?.status === "failed";
-  const live = rows.filter((r) => !r.archived && !(r.empty && !r.live && !setupFailed(r)));
+  const live = rows.filter((r) => !r.archived && !hiddenEmpty(r));
   const needs = live.filter((r) => sessionSignal(r) === 0 || setupFailed(r)).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
   const failed = needs.filter((r) => hasFailure(r) || setupFailed(r)).slice(0, 5);
   const questions = needs.filter(hasQuestion);
@@ -5914,7 +5925,7 @@ export default function App() {
   // "auto" shows the welcome while the server has no sessions; "on" is the
   // palette asking for it again; "off" is skipped or already used.
   const [welcome, setWelcome] = useState<"auto" | "on" | "off">(() => (welcomeDismissed() ? "off" : "auto"));
-  const showWelcome = welcome === "on" || (welcome === "auto" && loadedAt !== null && !rows.some((r) => !r.archived));
+  const showWelcome = welcome === "on" || (welcome === "auto" && loadedAt !== null && noSessionsListed(rows));
   // A phone opens on the list pane, which on an empty server is one line
   // of "No sessions yet."; the welcome lives in the thread pane.
   useEffect(() => { if (showWelcome) setPane("thread"); }, [showWelcome]);
