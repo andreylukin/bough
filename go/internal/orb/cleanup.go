@@ -146,6 +146,39 @@ func PlanRemove(ctx context.Context, rt container.Runtime, home, session string,
 	return plan, nil
 }
 
+// UnpushedBranches lists the bough/<session> branches in slug's remote
+// repo cache clones whose commits are neither in the repo's base nor on
+// the remote. Those clones are where the branches live (addWorktree), so
+// deleting the clones would lose them. The remote is fetched into
+// refs/remotes first: a bare clone has no remote-tracking refs, so a
+// push from a worktree leaves no trace in it. A fetch that fails (an
+// offline laptop) leaves the refs as they were, and a branch it cannot
+// prove pushed counts as unpushed.
+func UnpushedBranches(ctx context.Context, home, slug string) ([]string, error) {
+	clones, err := filepath.Glob(filepath.Join(orbsRoot(home), "cache", slug, "*.git"))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, gd := range clones {
+		gitOut(ctx, gd, "fetch", "--quiet", "origin", "+refs/heads/*:refs/remotes/origin/*")
+		refs, err := gitOut(ctx, gd, "for-each-ref", "--format=%(refname:short)", "refs/heads/bough/")
+		if err != nil {
+			return nil, err
+		}
+		for _, b := range strings.Fields(refs) {
+			if _, err := gitOut(ctx, gd, "merge-base", "--is-ancestor", b, "HEAD"); err == nil {
+				continue
+			}
+			if on, _ := gitOut(ctx, gd, "for-each-ref", "--contains", b, "--format=%(refname)", "refs/remotes"); on != "" {
+				continue
+			}
+			out = append(out, b+" in "+strings.TrimSuffix(filepath.Base(gd), ".git"))
+		}
+	}
+	return out, nil
+}
+
 // RemovePlanned removes the orb and then deletes the branches the plan
 // marked; branches go last because git refuses one a worktree holds.
 func RemovePlanned(ctx context.Context, rt container.Runtime, home string, plan RemovePlan) error {

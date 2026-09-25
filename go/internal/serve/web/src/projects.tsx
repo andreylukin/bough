@@ -399,7 +399,15 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         let left: string[];
         try { left = await onAssignMany(batch, slug); } catch { left = batch; }
         setMoving(false);
-        if (left.length) { setSelected(new Set(left)); setFailed({ project: slug, n: left.length }); throw new Error("the project exists, but some sessions did not move"); }
+        if (left.length) {
+          setSelected(new Set(left)); setFailed({ project: slug, n: left.length });
+          // A project session never moves (serve refuses it, even once its
+          // project is deleted): say so, or Retry reads as worth pressing.
+          const stuck = rs.filter((r) => left.includes(r.id) && r.mode === "project").length;
+          throw new Error(stuck
+            ? `the project exists, but ${stuck} project session${stuck === 1 ? "" : "s"} can’t move. ${PROJECT_SESSION}`
+            : "the project exists, but some sessions did not move");
+        }
       } });
     made.current = null;
   };

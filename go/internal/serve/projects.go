@@ -312,12 +312,20 @@ func (a *API) projectFromRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A session that vanished between listing and assigning is not a
-	// reason to fail the whole group; report how many actually moved.
-	moved := 0
-	for _, id := range ids {
-		if err := a.sup.AssignProject(id, p.Slug); err == nil {
-			moved++
-		}
+	// reason to fail the whole group, nor is a project session (one whose
+	// project was deleted is unassigned, and still refused): report what
+	// moved and name what did not, and why.
+	type refusal struct {
+		ID    string `json:"id"`
+		Error string `json:"error"`
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": p, "moved": moved})
+	moved, refused := 0, []refusal{}
+	for _, id := range ids {
+		if err := a.sup.AssignProject(id, p.Slug); err != nil {
+			refused = append(refused, refusal{id, err.Error()})
+			continue
+		}
+		moved++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project": p, "moved": moved, "refused": refused})
 }

@@ -1,0 +1,258 @@
+# Deleting a project that has a main thread and a project-mode thread,
+# then recreating the same slug. project_lifecycle.fizz deletes with one
+# LOCAL conversation only; this is the project-mode side: sessions whose
+# project is recorded in their history, their orbs, the remote repo's
+# cache clone their branches live in, and a slug used twice.
+#
+# Checked against internal/serve supervisor.go DeleteProject / EndProject
+# / AssignProject / Main, api.go row (row.Project), projects.go
+# projectDetail / inProject / projectFromRepo, orbs.go orbsOf,
+# repoguess.go repoGroups, projectdef/hash.go CacheGitDir, orb/worktree.go
+# addWorktree, and web/src app.tsx byWorkspace + project.tsx projectOf.
+#
+# THIS SPEC IS THE INTENDED BEHAVIOUR. The code today disagrees in five
+# places, each marked "Product today:" below; the MBT stage is expected
+# to go red on them and the fix belongs to the product, not to this file.
+#
+# One slug, "alpha". gen is which incarnation of it is on disk: 1 is the
+# project the sessions were started in, 2 the one created after the
+# delete (by hand, or by 'Create project from <repo>' named "Alpha" —
+# "Alpha" is the only name offered, so either create lands on the slug).
+# Gen 2 is never deleted again: that is project_lifecycle's delete.
+#
+#   disk      ~/.bough/projects/alpha: "ok" | "none".
+#   gen       1 | 2, see above.
+#   sessions  gen 1's main thread and one thread, started together:
+#             "none" | "started". Both are mode=project, so their history
+#             names "alpha" for good.
+#   thread    the thread's turn: "idle" | "running" (none while
+#             sessions is "none").
+#   meta      meta.json's Project for both sessions: "alpha" | "".
+#             by-repo's "unassigned" reads this.
+#   row       /api/sessions row.Project for both: "alpha" | "". The
+#             sidebar's grouping (projectOf) and the project page's
+#             inProject read this.
+#   orbs      what orbsOf attributes the two session orbs to: "none" (no
+#             orbs), "alpha", or "gone" (not listed under any project).
+#   cache     the remote repo's bare clone orbs/cache/alpha/<repo>.git,
+#             where the thread's bough/<session> branch lives: "none" |
+#             "clean" (everything on it pushed) | "unpushed".
+#   lost      unpushed commits destroyed with the cache clone.
+#   phase     DeleteProject in flight: "" | "ending" (EndProject) |
+#             "removing" (the RemoveAll of the four dirs) | "unassign"
+#             (the meta rewrite). One HTTP call; nothing else runs
+#             between its steps, which is why only they are enabled.
+#   sidebar   where the page's last /api/sessions poll grouped the two
+#             sessions: "none" (no sessions) | "alpha" | "loose".
+#   page      the last read of #/projects/alpha: "" (not read in this
+#             incarnation) | "404" | "empty" | "inherits" (lists gen 1's
+#             sessions or orbs as its own).
+#   byrepo    the last GET /api/projects/by-repo: "" | "empty" |
+#             "orphans" (both sessions listed as unassigned; assumes
+#             guessRepo finds the repo in their transcripts, which a
+#             thread that touched the repo's files gives it).
+#   listed / moved / refused   the last from-repo response: sessions it
+#             set out to move, moved, and named as refused.
+#   send      a message to the orphaned thread: "" | "sent" | "refused"
+#             | "orbfailed".
+
+role Project:
+    action Init:
+        self.disk = "ok"
+        self.gen = 1
+        self.sessions = "none"
+        self.thread = "idle"
+        self.meta = ""
+        self.row = ""
+        self.orbs = "none"
+        self.cache = "none"
+        self.lost = False
+        self.phase = ""
+        self.sidebar = "none"
+        self.page = ""
+        self.byrepo = ""
+        self.listed = 0
+        self.moved = 0
+        self.refused = 0
+        self.send = ""
+
+    # A message to the project (main, Main()) and 'New thread'
+    # (createProjectSession -> CreateChild); main's own lifecycle is
+    # project_main_threads. The thread's worktree is added from the
+    # cache clone on branch bough/<thread>.
+    atomic action StartMainAndThread:
+        require self.disk == "ok" and self.gen == 1 and self.sessions == "none" and self.phase == ""
+        self.sessions = "started"
+        self.meta = "alpha"
+        self.row = "alpha"
+        self.orbs = "alpha"
+        self.cache = "clean"
+
+    atomic action ThreadRun:
+        require self.sessions == "started" and self.gen == 1 and self.disk == "ok" and self.phase == ""
+        require self.thread == "idle"
+        self.thread = "running"
+
+    atomic fair action ThreadFinish:
+        require self.thread == "running" and self.phase == ""
+        self.thread = "idle"
+
+    # The thread's agent commits on bough/<thread> and does not push.
+    atomic action ThreadCommit:
+        require self.sessions == "started" and self.gen == 1 and self.disk == "ok" and self.phase == ""
+        require self.cache == "clean"
+        self.cache = "unpushed"
+
+    atomic action ThreadPush:
+        require self.sessions == "started" and self.gen == 1 and self.disk == "ok" and self.phase == ""
+        require self.cache == "unpushed"
+        self.cache = "clean"
+
+    # Delete… with the slug typed back.
+    atomic action DeleteProject:
+        require self.disk == "ok" and self.gen == 1 and self.phase == ""
+        require self.cache != "unpushed"
+        self.phase = "ending"
+
+    # Product today: there is no such refusal; DeleteProject RemoveAll's
+    # orbs/cache/alpha with the unpushed bough/<thread> branch in it.
+    # Intended: a 409 naming the branch; push (or discard) first.
+    atomic action DeleteRefusedUnpushed:
+        require self.disk == "ok" and self.gen == 1 and self.phase == ""
+        require self.cache == "unpushed"
+        pass
+
+    # EndProject: every thread, then main. A running turn is cut.
+    atomic fair action EndProject:
+        require self.phase == "ending"
+        self.thread = "idle"
+        self.phase = "removing"
+
+    # projects/alpha, orbs/images/alpha, orbs/cache/alpha, cache/alpha.
+    atomic fair action RemoveDirs:
+        require self.phase == "removing"
+        if self.cache == "unpushed":
+            self.lost = True
+        self.disk = "none"
+        self.cache = "none"
+        self.phase = "unassign"
+
+    # delete(s.mains, slug) and meta Project cleared.
+    # Product today: row.Project for a mode=project session is the slug
+    # its history recorded (api.go row), so the row keeps "alpha": a
+    # ghost sidebar group whose page 404s. orbsOf keeps listing both
+    # orbs under "alpha" (their state.json says so). Intended: neither
+    # is attributed to a project that is gone.
+    atomic fair action MetaUnassign:
+        require self.phase == "unassign"
+        self.meta = ""
+        if self.sessions == "started":
+            self.row = ""
+            self.orbs = "gone"
+        self.phase = ""
+        self.page = ""
+
+    # The sidebar's /api/sessions poll (app.tsx byWorkspace groups by
+    # row.project whether or not the project exists).
+    atomic fair action SidebarPoll:
+        require self.phase == ""
+        require self.sessions == "started"
+        require self.sidebar != ("alpha" if self.row == "alpha" else "loose")
+        self.sidebar = "alpha" if self.row == "alpha" else "loose"
+
+    # The project page's poll of GET /api/projects/alpha.
+    atomic action ProjectPagePoll:
+        require self.phase == ""
+        if self.disk == "none":
+            self.page = "404"
+        elif self.gen == 2 and (self.row == "alpha" or self.orbs == "alpha"):
+            self.page = "inherits"
+        else:
+            self.page = "empty"
+
+    # The person opens the old thread and sends.
+    atomic action PersonSendsToOldThread:
+        require self.sessions == "started" and self.phase == "" and self.send == ""
+        require self.disk == "none" or self.gen == 2
+        self.send = "sent"
+
+    # Product today: Send -> ensure respawns the child in mode=project for
+    # a slug with no definition; the orb fails at Prepare (and after the
+    # slug is recreated it would boot in the NEW project's orb). Intended:
+    # a refusal saying the project was deleted.
+    atomic fair action SendAnswered:
+        require self.send == "sent"
+        self.send = "refused"
+
+    atomic action ByRepoRead:
+        require self.phase == ""
+        if self.sessions == "started" and self.meta == "":
+            self.byrepo = "orphans"
+        else:
+            self.byrepo = "empty"
+
+    # 'Create project from <repo>' named "Alpha" over the listed group.
+    # Product today: AssignProject returns ErrProjectSession for both and
+    # projectFromRepo swallows it: moved 0 and no word why. Intended: the
+    # response names what it refused. It still creates the project.
+    atomic action ProjectFromRepo:
+        require self.phase == "" and self.disk == "none" and self.byrepo == "orphans"
+        self.disk = "ok"
+        self.gen = 2
+        self.listed = 2
+        self.moved = 0
+        self.refused = 2
+        self.byrepo = ""
+        self.page = ""
+
+    # New project… "Alpha" once the old one is gone.
+    atomic action CreateProject:
+        require self.phase == "" and self.disk == "none"
+        self.disk = "ok"
+        self.gen = 2
+        self.byrepo = ""
+        self.page = ""
+
+action Init:
+    project = Project()
+
+# After the delete, no row carries the deleted slug: not while it is
+# gone, and not once a new project has taken it.
+always assertion NoGhostRows:
+    p = project
+    return p.row == "" or p.sessions == "none" or (p.gen == 1 and (p.disk == "ok" or p.phase != ""))
+
+# The by-repo "unassigned" pile and the sidebar read the same membership:
+# what by-repo lists as unassigned (meta) is what the rows the sidebar
+# groups by call unassigned (row). The sidebar's own copy may lag a poll.
+always assertion ByRepoAgreesWithSidebar:
+    return project.byrepo != "orphans" or project.row == ""
+
+# A slug reused is a new project: no threads, no orbs from the old one.
+always assertion RecreatedStartsEmpty:
+    return project.page != "inherits"
+
+# From-repo accounts for every session it set out to move.
+always assertion FromRepoAccounts:
+    return project.moved + project.refused == project.listed
+
+# Delete never destroys committed-but-unpushed work.
+always assertion UnpushedNeverLost:
+    return not project.lost
+
+# The dirs go only after every turn is stopped: a running thread would
+# rebuild its orb from a definition that is about to stop existing.
+always assertion EndedBeforeRemoved:
+    return project.phase not in ("removing", "unassign") or project.thread == "idle"
+
+# An orphaned thread is refused, never left to fail in an orb.
+always assertion OrphanRefused:
+    return project.send != "orbfailed"
+
+# After a delete the sidebar eventually shows no group for the slug.
+always eventually assertion SidebarForgets:
+    return project.disk != "none" or project.sidebar != "alpha"
+
+# A message to an orphaned thread is eventually answered.
+always eventually assertion SendAnswered:
+    return project.send != "sent"

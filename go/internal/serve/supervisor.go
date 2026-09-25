@@ -90,6 +90,13 @@ type SessionMeta struct {
 	// error (it could not start) or stopped. It has no history to say
 	// so, and without this its row read running forever.
 	Ended Status `json:"ended,omitempty"`
+	// ProjectDeleted is the slug of a project session's project once
+	// that project was deleted. Its history names the slug for good, so
+	// without this its row stayed in a project that no longer exists (a
+	// ghost sidebar group whose page 404s), a new project of the same
+	// name inherited it and its orb, and a message to it respawned it
+	// into an orb with no definition, or the new project's.
+	ProjectDeleted string `json:"projectDeleted,omitempty"`
 }
 
 // Project is one project. The DIRECTORY is the project:
@@ -740,6 +747,10 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 	if s.meta[id].Archived {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("serve: supervisor: %s: %w", id, ErrArchived)
+	}
+	if p := s.meta[id].ProjectDeleted; p != "" {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("serve: supervisor: %s: project %s: %w", id, p, ErrProjectDeleted)
 	}
 	// Reserve the lease before releasing the mutex, so a concurrent
 	// ensure waits for this spawn rather than starting a second one.
@@ -1731,6 +1742,18 @@ func (s *Supervisor) DeleteProject(slug string) error {
 	if _, ok := s.Project(slug); !ok {
 		return fmt.Errorf("serve: supervisor: no project %q: %w", slug, ErrUnknownProject)
 	}
+	// Before anything stops: the remote repos' cache clones go below,
+	// and the bough/<session> branches a thread committed on live only
+	// there until they are pushed.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	unpushed, err := orb.UnpushedBranches(ctx, s.home, slug)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("serve: supervisor: delete project %s: %w", slug, err)
+	}
+	if len(unpushed) > 0 {
+		return fmt.Errorf("serve: supervisor: delete project %s: %s: %w", slug, strings.Join(unpushed, ", "), ErrUnpushed)
+	}
 	// Before the files: a thread still running would rebuild its orb
 	// from a definition that is about to stop existing.
 	if err := s.EndProject(slug); err != nil {
@@ -1762,25 +1785,44 @@ func (s *Supervisor) DeleteProject(slug string) error {
 // unassignProject takes every session out of slug and forgets its main
 // thread, and saves; a failed save undoes both.
 func (s *Supervisor) unassignProject(slug string) error {
+	// Which filed sessions are project sessions is read before the lock:
+	// only they are marked, a local session is merely unfiled.
+	s.mu.Lock()
+	var filed []string
+	for sid, m := range s.meta {
+		if m.Project == slug {
+			filed = append(filed, sid)
+		}
+	}
+	s.mu.Unlock()
+	inProject := map[string]bool{}
+	for _, sid := range filed {
+		if entries, err := s.Entries(sid); err == nil {
+			if mode, p := sessionMode(entries); mode == "project" && p == slug {
+				inProject[sid] = true
+			}
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	main, hadMain := s.mains[slug]
 	delete(s.mains, slug)
-	var moved []string
+	moved := map[string]SessionMeta{}
 	for sid, m := range s.meta {
 		if m.Project == slug {
+			moved[sid] = m
 			m.Project = ""
+			if inProject[sid] {
+				m.ProjectDeleted = slug
+			}
 			s.meta[sid] = m
-			moved = append(moved, sid)
 		}
 	}
 	if err := s.saveMetaLocked(); err != nil {
 		if hadMain {
 			s.mains[slug] = main
 		}
-		for _, sid := range moved {
-			m := s.meta[sid]
-			m.Project = slug
+		for sid, m := range moved {
 			s.meta[sid] = m
 		}
 		return err
@@ -1812,6 +1854,14 @@ func removeProjectDir(dir, slug string) error {
 
 // ErrUnknownProject is a slug with no directory.
 var ErrUnknownProject = errors.New("serve: supervisor: unknown project")
+
+// ErrUnpushed is a delete refused because it would take commits nobody
+// pushed with it.
+var ErrUnpushed = errors.New("unpushed commits would be lost with the repo cache; push them (or delete the branches) first")
+
+// ErrProjectDeleted is a message to a project session whose project is
+// gone: its orb has no definition to start from.
+var ErrProjectDeleted = errors.New("its project was deleted; start a new session")
 
 // ErrProjectSession is a project session someone tried to file
 // elsewhere: its project is where its orb, its worktrees and its
