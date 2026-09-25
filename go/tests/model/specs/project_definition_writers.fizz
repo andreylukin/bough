@@ -1,0 +1,170 @@
+---
+# A deleted project whose editor shows a link's target has nothing left
+# to do: that is where a walk rests, not a deadlock.
+deadlock_detection: false
+---
+# MEMORY.md with several writers and its readers: the person at the
+# project page's editor, an agent asked to remember something, a guest
+# shell through the read-write project mount, and Delete; read by the
+# editor and by every turn of a project session. project_lifecycle has
+# one saved bit and one writer; ui_project-page models only the editor's
+# own states. project.yml's writers are the sibling flow
+# project_definition_writers_yml (one flow over both files was 10738
+# states).
+#
+# Checked against:
+#   web/src/project.tsx ProjectView: the files (GET .../orb, loadFiles)
+#     are read once per mount and again only after a save or a Retry;
+#     the 4 s poll re-reads the detail, never the files. A failed poll
+#     keeps the detail, so a deleted project's page and editor stay up.
+#   web/src/orb.tsx FileEditor: the draft is the whole text; Save sends
+#     it with no base version; a failed save keeps the draft and shows
+#     the error; the textarea shows files[tab] when there is no draft.
+#   serve/orbs.go putOrbFile: projectOr404 (a deleted project is a 404,
+#     nothing is written), then projectdef.WriteFile.
+#   projectdef.go WriteFile (MEMORY.md is prose: no check; atomicWrite =
+#     temp + rename, which replaces a symlink instead of writing through
+#     it), ReadFile (os.ReadFile: follows a symlink).
+#   orb/orb.go mounts: the project dir is mounted read-WRITE at its host
+#     path, so a guest shell writes MEMORY.md directly and can replace
+#     it with a symlink to any host path.
+#   plugins/tools canWrite: tools.write resolves symlinks before its root
+#     check, so the host write tool REFUSES a MEMORY.md that links out of
+#     the project (this corrects the mapped model: only reads follow it).
+#   plugins/contextmd Parts: MEMORY.md is read fresh every turn
+#     (os.ReadFile, following links, a missing file skipped);
+#     plugins/engine parts() diffs the pieces against the frozen prompt
+#     and sends a drift as a <context-update> (prompt.Reminder), a
+#     removed piece as "no longer applies".
+#
+# State (one project "alpha", its page open with the MEMORY.md tab, one
+# project session that takes turns):
+#   dir     the project directory exists.
+#   mem     MEMORY.md on disk: "v0" (what the page first read), "agent"
+#           (v0 plus the fact an agent was asked to remember), "edit"
+#           (the person's edit of v0, WITHOUT the agent's fact), "both"
+#           (the person's edit of a text that had the fact), "link" (a
+#           guest replaced it with a symlink to a host file), "none"
+#           (deleted with the directory).
+#   fm      the editor's copy (files["MEMORY.md"]) as last read: a mem
+#           value, "host" for a link's target shown as MEMORY.md.
+#   draft   the tab holds an unsaved draft: the copy plus the person's
+#           edit, so what a save writes is a function of fm.
+#   ed_err  the save error under the editor (only a deleted project's).
+#   inj     the MEMORY.md the session's last turn sent the model: a mem
+#           value, "host" for a link's target, "none" once it is gone.
+#
+# Folded: an agent's write through tools.write on the host, a guest
+# heredoc, and `bough project write MEMORY.md` (relayed out of an orb or
+# not) put down the same unvalidated bytes: one AgentRemembers. Every
+# other path through the relay is a project.yml write (the _yml flow).
+#
+# Scope cuts: the person does not edit a tab showing a symlink's target
+# (saving a host file's text into the project is a different gap from
+# the read); nothing but the editor writes after Delete (an agent's
+# MkdirAll that brings the directory back is project_delete_races); the
+# panel stays up (ui_project-page closes it and drops the draft).
+
+def view(mem):
+    return "host" if mem == "link" else mem
+
+role Project:
+    action Init:
+        self.dir = True
+        self.mem = "v0"
+        self.fm = "v0"
+        self.draft = False
+        self.ed_err = False
+        self.inj = "v0"
+
+    atomic action PersonEdits:
+        require not self.draft and self.fm != "host"
+        self.draft = True
+
+    # PUT orb/files/MEMORY.md with the whole draft, no base version.
+    # Success re-reads the files; a 404 keeps the draft beside the error.
+    atomic action PersonSaves:
+        require self.draft
+        if self.dir:
+            self.mem = "both" if self.fm in ("agent", "both") else "edit"
+            self.fm = self.mem
+            self.draft = False
+        else:
+            self.ed_err = True
+
+    # Leaving the project and coming back remounts ProjectView: besides a
+    # save, the only re-read of the files.
+    atomic action ReopenPage:
+        require self.dir and not self.draft and self.fm != view(self.mem)
+        self.fm = view(self.mem)
+
+    # An agent asked to remember something writes MEMORY.md.
+    atomic action AgentRemembers:
+        require self.dir and self.mem in ("v0", "edit")
+        self.mem = "agent" if self.mem == "v0" else "both"
+
+    # A guest shell replaces MEMORY.md with a symlink to a host path.
+    atomic action GuestLinksMemory:
+        require self.dir and self.mem != "link"
+        self.mem = "link"
+
+    # DELETE /api/projects/alpha from another tab (or `bough project rm`).
+    atomic action DeleteProject:
+        require self.dir
+        self.dir = False
+        self.mem = "none"
+
+    # A turn of the project session: context-md re-reads MEMORY.md
+    # (following a link) and a drift reaches the model.
+    atomic action TurnStarts:
+        require self.inj != view(self.mem)
+        self.inj = view(self.mem)
+
+action Init:
+    project = Project()
+
+# --- What holds.
+
+# Nothing brings a deleted project back: a save to it is a 404.
+transition assertion NoResurrection(before, after):
+    return before.project.dir or not after.project.dir
+
+always assertion DeletedHasNoMemory:
+    return project.dir or project.mem == "none"
+
+# A save to a deleted project keeps the draft and says why.
+transition assertion DeletedSaveKeepsDraft(before, after):
+    b = before.project
+    a = after.project
+    return b.dir or not b.draft or (a.draft and (a.ed_err or a.inj != b.inj))
+
+# The host never writes through a symlinked MEMORY.md: a link ends only
+# by a save renaming over it, or the delete.
+transition assertion NoWriteThroughLink(before, after):
+    b = before.project
+    a = after.project
+    return b.mem != "link" or a.mem in ("link", "edit", "both", "none")
+
+# Every turn sends what is on disk as it starts.
+transition assertion TurnSendsDisk(before, after):
+    return before.project.inj == after.project.inj or after.project.inj == view(after.project.mem)
+
+# --- What SHOULD hold and does not. Each was appended to this spec and
+# fizz failed it; the counterexamples are in the commit that added the
+# flow. Kept as comments so the spec models the product as it is.
+#
+# A save never overwrites a version the editor never displayed:
+#   transition assertion NoLostUpdate(before, after):
+#       b = before.project
+#       a = after.project
+#       return not (b.draft and not a.draft and a.dir) or view(b.mem) == b.fm
+#
+# Reading MEMORY.md never follows a symlink out of the project:
+#   always assertion NoSymlinkRead:
+#       return project.fm != "host" and project.inj != "host"
+#
+# A clean editor eventually shows disk, so an agent's remembered fact
+# appears in it (the product has no re-read to make fair):
+#   always eventually assertion CleanEditorCatchesUp:
+#       p = project
+#       return not p.dir or p.draft or p.fm == view(p.mem)

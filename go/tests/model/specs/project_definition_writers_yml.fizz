@@ -1,0 +1,202 @@
+# project.yml with several writers and its readers: the person at the
+# project page's editor (a stale draft), Rename, the CLI (run by a person
+# or relayed out of an orb), the secret tool, and an agent's raw write
+# (host tools.write or a guest heredoc through the read-write mount);
+# read by the editor and by the page's detail poll (name, parse error).
+# MEMORY.md's writers are project_definition_writers; this is the other
+# half of that flow (one flow over both files was 10738 states).
+#
+# Checked against:
+#   web/src/project.tsx ProjectView: GET /api/projects/{slug} is polled
+#     every 4 s (the page's name and "project.yml didn't parse" callout);
+#     the files (loadFiles) are read once per mount and again only after
+#     a save or a Retry. FileEditor (orb.tsx): the draft is the whole
+#     text, saved with no base version.
+#   serve/orbs.go putOrbFile -> projectdef.WriteFile: Parse + CheckHost.
+#   projectdef.go SetName (via supervisor.go RenameProject): a textual
+#     splice of the name: line, Parse only, so comments stay and a file
+#     that fails CheckHost is renamed anyway. SetSecret (tools.secret,
+#     plugins/ask): Load, yaml.Marshal (comments go), Parse, no
+#     CheckHost on purpose. ListAll: Parse only; a broken file is listed
+#     under its slug with the error. CheckHost runs only in WriteFile.
+#   cmd/bough/project.go mutate (`bough project set|add-repo|rm-repo`):
+#     Load (refuses a broken file), yaml.Marshal (comments go),
+#     WriteFile (refuses a file that fails CheckHost). orb/relay.go
+#     relays `bough project` out of an orb to the host binary, so a
+#     relayed mutation is this same write.
+#   orb/orb.go mounts and plugins/tools writeFile: a guest heredoc and
+#     the host's tools.write both put project.yml down without
+#     WriteFile. orb.Preflight re-checks repo paths at the next start
+#     (cloneCheck) and Load re-parses; a bad memory size or a missing
+#     identity dir is not re-checked (not modelled here: see SHOULD).
+#
+# State (one project "alpha", its page open on the project.yml tab):
+#   y_name, y_added, y_comments, y_state
+#               project.yml on disk: its name: line ("Alpha" | "Beta");
+#               whether a CLI or SetSecret key is in it; whether the
+#               skeleton's comments survive; "ok", "unchecked" (parses,
+#               fails CheckHost), "broken" (does not parse).
+#   fy_*        the editor's copy (files["project.yml"]) as last read.
+#   draft       the tab holds an unsaved draft: the copy plus the
+#               person's (valid) edit, so a save writes fy_* as "ok".
+#   pg_name, pg_err
+#               the page's detail as the last poll read it: the listed
+#               name (the slug while the file does not parse) and the
+#               parse-error callout.
+#
+# Folded: CliMutate stands for every `bough project` mutation, relayed
+# or not; `bough project write project.yml` validates like the editor's
+# save and is not a writer of its own. The raw writes are
+# AgentWritesYamlUnchecked and AgentBreaksYaml.
+#
+# Scope cuts: the person's save is always valid (refusals are
+# project_lifecycle's SaveYamlInvalid, RenameBroken); Rename goes Alpha
+# -> Beta only (a revert brings Alpha back, which may be renamed again);
+# Delete and the stale editor after it are the MEMORY.md flow's; orb
+# start and its Preflight are not modelled.
+
+def disk_name(p):
+    return "alpha" if p.y_state == "broken" else p.y_name
+
+role Project:
+    action Init:
+        self.y_name = "Alpha"
+        self.y_added = False
+        self.y_comments = True
+        self.y_state = "ok"
+        self.fy_name = "Alpha"
+        self.fy_added = False
+        self.fy_comments = True
+        self.fy_state = "ok"
+        self.draft = False
+        self.pg_name = "Alpha"
+        self.pg_err = False
+
+    atomic action PersonEdits:
+        require not self.draft
+        self.draft = True
+
+    # PUT orb/files/project.yml: the whole draft, no base version; it
+    # passes Parse + CheckHost, then the files and the detail re-read.
+    atomic action PersonSaves:
+        require self.draft
+        self.y_name = self.fy_name
+        self.y_added = self.fy_added
+        self.y_comments = self.fy_comments
+        self.y_state = "ok"
+        self.fy_state = "ok"
+        self.draft = False
+        self.poll()
+
+    # Leaving the project and coming back remounts ProjectView: besides a
+    # save, the only re-read of the files.
+    atomic action ReopenPage:
+        require not self.draft and (self.fy_name != self.y_name or self.fy_added != self.y_added or self.fy_comments != self.y_comments or self.fy_state != self.y_state)
+        self.fy_name = self.y_name
+        self.fy_added = self.y_added
+        self.fy_comments = self.y_comments
+        self.fy_state = self.y_state
+        self.poll()
+
+    # Rename... -> SetName: a textual splice, Parse only; the page
+    # re-reads after it.
+    atomic action Rename:
+        require self.y_state != "broken" and self.y_name == "Alpha"
+        self.y_name = "Beta"
+        self.poll()
+
+    # `bough project set ...`: Load, Marshal (comments go), WriteFile.
+    atomic action CliMutate:
+        require self.y_state == "ok" and not self.y_added
+        self.y_added = True
+        self.y_comments = False
+
+    # tools.secret -> SetSecret: Load, Marshal, Parse, no CheckHost.
+    atomic action SetSecret:
+        require self.y_state != "broken" and not self.y_added
+        self.y_added = True
+        self.y_comments = False
+
+    # A raw write of project.yml that parses and fails CheckHost.
+    atomic action AgentWritesYamlUnchecked:
+        require self.y_state == "ok"
+        self.y_state = "unchecked"
+
+    # A raw write that does not parse.
+    atomic action AgentBreaksYaml:
+        require self.y_state != "broken"
+        self.y_state = "broken"
+
+    # The page's 4 s detail poll.
+    atomic fair action PagePoll:
+        require self.pg_name != disk_name(self) or self.pg_err != (self.y_state == "broken")
+        self.poll()
+
+    atomic func poll():
+        self.pg_name = disk_name(self)
+        self.pg_err = self.y_state == "broken"
+
+action Init:
+    project = Project()
+
+# --- What holds.
+
+# Rename is a textual splice: the comments and keys stay as they were.
+transition assertion RenameKeepsTheRest(before, after):
+    b = before.project
+    a = after.project
+    return b.y_name == a.y_name or b.draft or (b.y_comments == a.y_comments and b.y_added == a.y_added and b.y_state == a.y_state)
+
+# Only a raw write makes a file that fails CheckHost or Parse: Rename,
+# the CLI, SetSecret and the editor never make one out of a better file.
+transition assertion OnlyRawWritesSkipChecks(before, after):
+    b = before.project
+    a = after.project
+    rank = {"ok": 0, "unchecked": 1, "broken": 2}
+    worse = rank[a.y_state] > rank[b.y_state]
+    return not worse or (a.y_name == b.y_name and a.y_added == b.y_added and a.y_comments == b.y_comments and a.draft == b.draft)
+
+# The CLI refuses a file that fails CheckHost (WriteFile) or Parse (Load).
+transition assertion CliNeedsAGoodFile(before, after):
+    b = before.project
+    a = after.project
+    return b.y_added or not a.y_added or b.draft or b.y_state != "broken"
+
+# A broken file stays listed, under its slug, with its error: the page
+# never shows a parse error for a file that parses.
+always assertion ErrorOnlyWhenBroken:
+    p = project
+    return not p.pg_err or p.pg_name == "alpha"
+
+# The page's name and error callout catch up with disk (the 4 s poll).
+always eventually assertion PageCatchesUp:
+    p = project
+    return p.pg_name == disk_name(p) and p.pg_err == (p.y_state == "broken")
+
+# --- What SHOULD hold and does not. Each was appended to this spec and
+# fizz failed it; the counterexamples are in the commit that added the
+# flow. Kept as comments so the spec models the product as it is.
+#
+# A save never overwrites a version the editor never displayed:
+#   transition assertion NoLostUpdate(before, after):
+#       b = before.project
+#       a = after.project
+#       return not (b.draft and not a.draft) or (b.fy_name == b.y_name and b.fy_added == b.y_added and b.fy_comments == b.y_comments and b.fy_state == b.y_state)
+#
+# A rename is never undone by a stale draft:
+#   transition assertion RenameSticks(before, after):
+#       return before.project.y_name != "Beta" or after.project.y_name == "Beta"
+#
+# CLI and SetSecret mutations keep the file's comments:
+#   always assertion MutationsKeepComments:
+#       return project.y_comments
+#
+# Every write enforces Parse + CheckHost:
+#   always assertion NoUncheckedDefinition:
+#       return project.y_state == "ok"
+#
+# A clean editor eventually shows disk (the product has no re-read to
+# make fair):
+#   always eventually assertion CleanEditorCatchesUp:
+#       p = project
+#       return p.draft or (p.fy_name == p.y_name and p.fy_added == p.y_added and p.fy_state == p.y_state)
