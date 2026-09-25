@@ -496,6 +496,7 @@ func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		for _, c := range a.sup.Children(id) {
+			a.sup.hold("archive-end-"+c.ID, nil)
 			if err := a.sup.EndChild(c.ID); err != nil {
 				return err
 			}

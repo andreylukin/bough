@@ -1,0 +1,380 @@
+# Archiving a parent that has background agents, with the request NOT
+# atomic: POST /archive's steps interleave with its children booting,
+# finishing, the queue draining and a person starting a thread
+# (go/tests/model/README.md). archive_unarchive.fizz is the one-agent,
+# one-step view of the same buttons; this is the view from inside the
+# request.
+#
+# Code (as of main 5471918e):
+#   api.go archive       SetArchived(id, true) FIRST (flag saved, then the
+#                        parent's child killed), then, only with
+#                        stopChildren, EndChild for each of Children(id)
+#                        oldest first; the first error returns it (500).
+#   supervisor.go        SetArchived, Kill -> stopKilledOrb (a failed
+#                        stop is only logged), EndProject.
+#   children.go          CreateChild refuses an archived parent unless the
+#                        spawn is a person's thread (opt.Thread); EndChild
+#                        = stopChild (drop a queued child | stopReq on a
+#                        booting one | interrupt) + Kill + inspect the orb
+#                        and stopOrb it, whose error IS returned;
+#                        childEventLocked frees the slot and drains the
+#                        queue on every close; report -> notifyFrom
+#                        appends to a dead parent's file.
+#   app.tsx archiveRow   the dialog is chosen from the row's agentCounts
+#                        (running map + queued); act() refreshes the list
+#                        on success AND failure, and a failure shows
+#                        "Couldn't archive" with Retry.
+#
+# Sizes: the running cap is 1. Child a is a project child (it has an
+# orb) and is always started first; child b is spawned while a holds the
+# slot, so it always queues behind it; thread is a person's project
+# thread for this parent (a main) that arrives after the request took its
+# Children snapshot. Each one has its own actions rather than a oneof, as
+# in background_agents.fizz.
+#
+# Child states: none (no row: never spawned, or queued and dropped),
+# queued, booting (slot reserved, process starting, no task yet), running
+# (turn open), idle (turn closed, process kept), ended (process killed).
+#
+# What serve does on its own right after a step is folded into it: a
+# freed slot drains the queue in the same step, and a closed turn's
+# report lands in the same step (on the parent's file when it is dead:
+# unread). Boot, finish, the request's own steps and the orb reaper are
+# fair: nothing a client does holds them.
+#
+# Where this departs from the code it is on purpose and said below; the
+# gaps the model shows are listed at the end.
+
+role Parent:
+    action Init:
+        self.live = False
+        self.archived = False
+        # The page's view: the row is in the default list.
+        self.listed = True
+        self.dialog = "none"
+        # The archive request in flight: none | sent (before SetArchived)
+        # | loop_a | loop_b (EndChild of that child is next).
+        self.req = "none"
+        # The in-flight request's stopChildren; False once it is past
+        # SetArchived (only a stopping request reaches the loop).
+        self.stop = False
+        # The last archive request's answer as the page got it:
+        # none | ok_stop | ok_only | failed ("Couldn't archive" + Retry).
+        self.done = "none"
+        self.a = "none"
+        # a's container: none | up | down | leaked (a stop of it failed:
+        # still running, and nothing of a's is left to stop it).
+        self.orb = "none"
+        self.b = "none"
+        self.thread = "none"
+        # The thread is in the in-flight request's Children snapshot: it
+        # existed when SetArchived ran, so the loop ends it after b.
+        self.tsnap = False
+        # A report was appended to the parent's file while it was dead.
+        self.unread = False
+
+    # The composer: Send spawns the parent's child. Refused (409) while
+    # archived, so there is no prompt then. The loop reads the notices
+    # its file gathered when it mounts.
+    atomic action Prompt:
+        require not self.archived and self.dialog == "none" and self.req == "none"
+        self.live = True
+        self.unread = False
+
+    # The parent's turn spawns a: the slot is free (a is first), so
+    # CreateChild reserves it and launch boots the process.
+    atomic action SpawnA:
+        require self.live and self.a == "none" and self.b == "none"
+        self.a = "booting"
+
+    # A second spawn while a holds the only slot: queued.
+    atomic action SpawnB:
+        require self.live and self.b == "none" and self.a in ("booting", "running")
+        self.b = "queued"
+
+    # A tools.spawn the parent sent before SetArchived's kill that serve
+    # reads after the flag: ErrArchived, nothing changes.
+    atomic action SpawnRefused:
+        require self.archived and self.req != "none"
+        pass
+
+    # A person starts a thread for this main from the project page while
+    # Stop and archive is ending the snapshot: opt.Thread passes the
+    # archived check, and the thread is not in the list being ended.
+    # Only while a exists: the thread is then always younger than a and
+    # b (ids are time-ordered, and no agent is spawned after a loop), so
+    # a later snapshot ends it last; a thread with the slot to itself
+    # would also make a later SpawnA queue, which the model does not
+    # have.
+    atomic action ThreadLate:
+        require self.req in ("loop_a", "loop_b") and self.thread == "none" and self.a != "none"
+        if self.a in ("booting", "running") or self.b in ("booting", "running"):
+            self.thread = "queued"
+        else:
+            self.thread = "running"
+
+    atomic fair action BootA:
+        require self.a == "booting"
+        self.a = "running"
+        self.orb = "up"
+
+    atomic fair action BootB:
+        require self.b == "booting"
+        self.b = "running"
+
+    atomic fair action FinishA:
+        require self.a == "running"
+        self.a = "idle"
+        if not self.live:
+            self.unread = True
+        if self.b == "queued":
+            self.b = "booting"
+        elif self.thread == "queued":
+            self.thread = "running"
+
+    atomic fair action FinishB:
+        require self.b == "running"
+        self.b = "idle"
+        if not self.live:
+            self.unread = True
+        if self.thread == "queued":
+            self.thread = "running"
+
+    atomic fair action FinishThread:
+        require self.thread == "running"
+        self.thread = "idle"
+        if not self.live:
+            self.unread = True
+
+    # Settings / palette / sidebar: askConfirm when the row counts no
+    # running or queued agent, else askChoice. agentCounts counts the
+    # running map, which holds a booting child too, and every child of
+    # the main, a person's thread included.
+    atomic action Archive:
+        require not self.archived and self.dialog == "none" and self.req == "none"
+        if self.a in ("booting", "running") or self.b in ("queued", "booting", "running") or self.thread in ("queued", "running"):
+            self.dialog = "choice"
+        else:
+            self.dialog = "confirm"
+
+    atomic action Cancel:
+        require self.dialog != "none"
+        self.dialog = "none"
+
+    atomic action Confirm:
+        require self.dialog == "confirm"
+        self.dialog = "none"
+        self.req = "sent"
+        self.stop = False
+        self.done = "none"
+
+    atomic action StopAndArchive:
+        require self.dialog == "choice"
+        self.dialog = "none"
+        self.req = "sent"
+        self.stop = True
+        self.done = "none"
+
+    atomic action ArchiveOnly:
+        require self.dialog == "choice"
+        self.dialog = "none"
+        self.req = "sent"
+        self.stop = False
+        self.done = "none"
+
+    # SetArchived: the flag is saved, then the parent's process is
+    # killed. Without stopChildren that is the whole request: 200, and
+    # act's refresh drops the row.
+    atomic fair action SetArchived:
+        require self.req == "sent"
+        self.archived = True
+        self.live = False
+        if self.stop:
+            self.req = "loop_a"
+            self.tsnap = self.thread != "none"
+        else:
+            self.req = "none"
+            self.listed = False
+            self.done = "ok_only"
+        self.stop = False
+
+    # EndChild(a): a booting a gets stopReq and is killed before it reads
+    # its task (no history, so no report); a running one is interrupted
+    # and killed (its turn reports "stopped"); an idle one is killed (the
+    # exit finds its turn already reported). Kill's stopKilledOrb stops
+    # the orb. A booting or running a held the slot, which drains b (or
+    # the thread) mid-loop; an idle one held none.
+    atomic fair action EndA:
+        require self.req == "loop_a"
+        if self.a == "running":
+            self.unread = True
+        if self.a in ("booting", "running"):
+            if self.b == "queued":
+                self.b = "booting"
+            elif self.thread == "queued":
+                self.thread = "running"
+        if self.a != "none":
+            self.a = "ended"
+        if self.orb in ("up", "leaked"):
+            self.orb = "down"
+        self.req = "loop_b"
+
+    # The same EndChild, but the container will not stop (stopKilledOrb
+    # logged it; EndChild's own stopOrb returns it): a is killed, its orb
+    # keeps running, the loop aborts with 500. The parent is already
+    # archived, so act's refresh drops the row under "Couldn't archive",
+    # and b is never reached.
+    atomic action EndAOrbFails:
+        require self.req == "loop_a" and self.a != "none" and self.orb in ("up", "leaked")
+        if self.a == "running":
+            self.unread = True
+        if self.a in ("booting", "running"):
+            if self.b == "queued":
+                self.b = "booting"
+            elif self.thread == "queued":
+                self.thread = "running"
+        self.a = "ended"
+        self.orb = "leaked"
+        self.req = "none"
+        self.tsnap = False
+        self.listed = False
+        self.done = "failed"
+
+    # EndChild(b): a queued b is dropped (no row, no report), a booting
+    # one stopReq'd and killed, a running one interrupted and killed
+    # (reports "stopped"). Then EndChild(thread) when the snapshot has
+    # it (a Retry, or a later archive): a queued thread has just been
+    # drained into b's slot and is killed booting, before it writes
+    # anything; a running one reports "stopped". 200.
+    atomic fair action EndB:
+        require self.req == "loop_b"
+        if self.b == "queued":
+            self.b = "none"
+        elif self.b in ("booting", "running", "idle"):
+            if self.b == "running":
+                self.unread = True
+            if self.thread == "queued" and not self.tsnap and self.b != "idle":
+                self.thread = "running"
+            self.b = "ended"
+        if self.tsnap:
+            if self.thread == "running":
+                self.unread = True
+            self.thread = "ended"
+        self.tsnap = False
+        self.req = "none"
+        self.listed = False
+        self.done = "ok_stop"
+
+    # The banner's Retry: the same POST again. SetArchived is idempotent
+    # and the loop starts over from the first child.
+    atomic action Retry:
+        require self.done == "failed" and self.req == "none" and self.archived
+        self.req = "sent"
+        self.stop = True
+        self.done = "none"
+
+    # The idle-orb reaper (BOUGH_ORB_IDLE) stops a container whose
+    # session has no process. Only a killed a gets there in this model.
+    atomic fair action Reap:
+        require self.orb == "leaked"
+        self.orb = "down"
+
+    # Nothing is respawned; the next Prompt mounts the parent, which
+    # then reads the notices its file gathered.
+    atomic action Unarchive:
+        require self.archived and self.req == "none"
+        self.archived = False
+        self.listed = True
+
+action Init:
+    parent = Parent()
+
+SNAPSHOT_LIVE = ("queued", "booting", "running", "idle")
+
+# SetArchived kills the parent before anything else happens.
+always assertion ArchivedParentNotLive:
+    return not (parent.archived and parent.live)
+
+# After Stop and archive answers 200 every child in its snapshot is
+# killed or dropped. A person's thread that arrived mid-loop is not in
+# the snapshot and is left running (see the gaps below).
+always assertion StopAndArchiveEndsSnapshot:
+    if parent.done != "ok_stop":
+        return True
+    return parent.a not in SNAPSHOT_LIVE and parent.b not in SNAPSHOT_LIVE
+
+# Whatever the request answered, once it has answered, the list the page
+# shows agrees with serve's flag (act refreshes on failure too).
+always assertion PageMatchesServe:
+    if parent.req != "none":
+        return True
+    return parent.listed == (not parent.archived)
+
+# Ending a child stops its container: an ended child's orb is never
+# left "up". One whose stop failed is "leaked" until a Retry or the
+# reaper stops it (OrbsSettle).
+always assertion EndedChildOrbDown:
+    return not (parent.a == "ended" and parent.orb == "up")
+
+# A notice waits on the parent's file only while nobody is there to
+# read it.
+always assertion UnreadOnlyWhileDead:
+    return not (parent.unread and parent.live)
+
+# An archived parent spawns nothing of its own: a and b appear only
+# while it is unarchived. (The thread is a person's and may.)
+transition assertion ArchivedParentSpawnsNothing(before, after):
+    if not before.parent.archived:
+        return True
+    return not (before.parent.a == "none" and after.parent.a != "none") and not (before.parent.b == "none" and after.parent.b != "none")
+
+# Only a stopping request's loop kills or drops a child (a person's
+# thread included): Archive only (and the confirm path) leave every
+# child as it was.
+transition assertion OnlyStopLoopEndsChildren(before, after):
+    ended = (before.parent.a != "ended" and after.parent.a == "ended") or (before.parent.b != "ended" and after.parent.b == "ended") or (before.parent.b == "queued" and after.parent.b == "none") or (before.parent.thread != "ended" and after.parent.thread == "ended")
+    if not ended:
+        return True
+    return before.parent.req in ("loop_a", "loop_b")
+
+# Mounting the parent delivers everything its file gathered.
+transition assertion MountDeliversNotices(before, after):
+    if not before.parent.live and after.parent.live:
+        return not after.parent.unread
+    return True
+
+# Children left running by Archive only, by a failed loop or a late
+# thread still get to finish (and so report).
+always eventually assertion ChildrenSettle:
+    return parent.a not in ("booting", "running") and parent.b not in ("queued", "booting", "running") and parent.thread not in ("queued", "running")
+
+# The request always answers.
+always eventually assertion RequestAnswers:
+    return parent.req == "none"
+
+# A leaked container does not outlive the reaper.
+always eventually assertion OrbsSettle:
+    return parent.orb != "leaked"
+
+# Gaps this model shows in the code (findings, not fixed here). Each is
+# a claim a person would expect that fizz refutes when it is added:
+#   - "No child is live after Stop and archive answers 200" is false: a
+#     person's thread (opt.Thread passes CreateChild's archived check)
+#     that lands after the Children snapshot keeps running under an
+#     archived main (ThreadLate).
+#   - "A failed Stop and archive ends the rest or names them" is false:
+#     EndChild's first error returns, so b is never reached and keeps
+#     running (or is drained into a's slot) while the page, refreshed,
+#     shows the row archived under "Couldn't archive" without saying
+#     which agents are still going (EndAOrbFails). Retry does end them.
+#   - Children(main) includes a person's threads, so the main's row
+#     counts a running thread as its agent (Archive asks "choice"), and
+#     Stop and archive on a main ends threads a person started, once they
+#     are in its snapshot (EndB with tsnap).
+#   - Not modelled, read off the code and not run: every project
+#     child's end inspects and may stop its orb twice (Kill's
+#     stopKilledOrb, 1 min, then EndChild's own, 30 s), one child after
+#     another, inside one
+#     HTTP request; agentCounts
+#     omits a booting empty thread that /api/sessions lists as running
+#     (startingIDs), so its parent gets "confirm" instead of "choice".
