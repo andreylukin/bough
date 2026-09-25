@@ -1,0 +1,299 @@
+# A background agent whose start goes wrong after serve accepted it:
+# the launch fails (the executable is gone, EMFILE), or the child boots
+# and never gets as far as writing its history (orb prep, a hung or
+# killed init), directly from a spawn and from the queue; and serve
+# restarting while a child is started but not yet on disk.
+#
+# Code: go/internal/serve/children.go (CreateChild, launch, abandon,
+# drainQueue, report, stopChild, Children, agentCounts, startingIDs),
+# children_api.go (createChild, children), supervisor.go (start: the
+# exit event; writePrompt), web/src/work.ts agentsFromRows.
+#
+# background_agents.fizz has every launch succeed and serve_restart_resume
+# requeues one clean agent; this flow is the spawn that fails after it
+# was accepted. As there, the spec says what the flow promises, and where
+# the code disagrees the code is the finding (listed at the end).
+#
+# One parent, two children, a running cap of 1. a is spawned directly
+# (the cap is free); b is spawned while a holds the slot, so it always
+# queues, and starts when a's slot frees. Sizes are the smallest that
+# reach every branch; the children are not symmetric on purpose (a is
+# never spawned while b exists, so a never queues except after a
+# restart).
+#
+# fault is the machine the children start on, set by the adapter:
+#   none    a child starts, writes its history and runs its turn
+#   launch  exec fails (the binary serve would run is missing): start()
+#           returns an error, no process
+#   hang    the process starts and never writes history (an init that
+#           blocks, an orb that never comes up): alive, no .jsonl
+# Repair puts it back; a hung child then goes on by itself and writes
+# its history in the same step.
+#
+# Each child's status is what /children and tools.agent say about it:
+#   none     no meta row (never accepted, or a queued one that was stopped)
+#   queued   Task on disk, no process
+#   booting  a live process with no history: the popped-but-not-on-disk
+#            window, held open by fault=hang
+#   running  its history exists and its turn is open
+#   done | failed | stopped   terminal; failed is also "could not start"
+# *_slot: the child is in serve's running map. *_task: meta.json still
+# holds the child's Task, so a restart can start it again. *_n: notices
+# the parent got about the child. total: meta rows spawnedBy the parent
+# (agentCounts' total and the per-session budget). answer: what the last
+# spawn call answered ("ok", or "error" for 5xx).
+#
+# Folded into one step, as serve does them on its own:
+#   - A freed slot drains the queue at once, oldest first (a before b),
+#     and a drained child's launch has its outcome in the same step:
+#     running, booting, or failed with its notice.
+#   - A write of the first prompt that fails is a launch that fails: the
+#     child is killed and the outcome is the same as exec failing. With
+#     a live child the pipe takes a small prompt (64 KiB buffer), so the
+#     write only fails when the child is already gone.
+#   - A child that dies before writing history (Kill: the orb gave up,
+#     an init threw, the OOM killer) is reported in the step it dies in.
+#   - ServeRestart is a crash and a start in one step (the page's
+#     offline window is serve_restart_resume's). It is only taken with
+#     no turn open: a running child across a restart is that flow's.
+# Not modelled: the budget refusal (429) and depth (409), both in
+# background_agents; a failing meta.json save (disk full); Archive with
+# stopChildren, which is Stop on each child; tools.agent polls, which
+# read and change nothing.
+
+PENDING = ("queued", "booting", "running")
+TERMINAL = ("done", "failed", "stopped")
+
+# What starting a child on this machine leads to.
+def started(fault):
+    if fault == "launch":
+        return "failed"
+    if fault == "hang":
+        return "booting"
+    return "running"
+
+# drainQueue after a slot frees (or a restart), oldest first. Returns
+# each child's (status, slot, task, notices) after the drain. A child
+# whose start fails is reported and gives its slot to the next one.
+def drain(fault, a, a_slot, a_task, a_n, b, b_slot, b_task, b_n):
+    busy = 1 if (a_slot or b_slot) else 0
+    if a == "queued" and busy == 0:
+        a = started(fault)
+        if a == "failed":
+            a_task = False
+            a_n += 1
+        else:
+            a_slot = True
+            busy = 1
+            if a == "running":
+                a_task = False
+    if b == "queued" and busy == 0:
+        b = started(fault)
+        if b == "failed":
+            b_task = False
+            b_n += 1
+        else:
+            b_slot = True
+            if b == "running":
+                b_task = False
+    return (a, a_slot, a_task, a_n, b, b_slot, b_task, b_n)
+
+role Parent:
+    action Init:
+        self.fault = "none"
+        self.a = "none"
+        self.a_slot = False
+        self.a_task = False
+        self.a_n = 0
+        self.b = "none"
+        self.b_slot = False
+        self.b_task = False
+        self.b_n = 0
+        self.total = 0
+        self.answer = ""
+
+    # system: the executable serve starts children with goes away.
+    atomic action BreakLaunch:
+        require self.fault == "none"
+        self.fault = "launch"
+
+    # system: children start and hang before writing history.
+    atomic action BreakBoot:
+        require self.fault == "none"
+        self.fault = "hang"
+
+    # system: the machine is fixed; a hung child goes on and writes its
+    # history (its turn is open).
+    atomic fair action Repair:
+        require self.fault != "none"
+        self.fault = "none"
+        if self.a == "booting":
+            self.a = "running"
+            self.a_task = False
+        if self.b == "booting":
+            self.b = "running"
+            self.b_task = False
+
+    # agent: tools.spawn({background}) with the cap free, or its retry
+    # after an error answer. A launch that fails answers 5xx and leaves
+    # nothing behind: no row, no slot, no budget spent.
+    atomic action SpawnA:
+        require self.a == "none" and self.b == "none"
+        st = started(self.fault)
+        if st == "failed":
+            self.answer = "error"
+            return
+        self.answer = "ok"
+        self.total += 1
+        self.a = st
+        self.a_slot = True
+        # Kept on disk until the child's history exists.
+        self.a_task = st == "booting"
+
+    # agent: a second spawn while a holds the slot: queued (201).
+    atomic action SpawnB:
+        require self.b == "none" and self.a in ("booting", "running")
+        self.answer = "ok"
+        self.total += 1
+        self.b = "queued"
+        self.b_task = True
+
+    # a's turn closes; the queue drains into its slot.
+    atomic fair action FinishA:
+        require self.a == "running"
+        self.a = "done"
+        self.a_slot = False
+        self.a_n += 1
+        (self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n) = drain(self.fault, self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n)
+
+    atomic fair action FinishB:
+        require self.b == "running"
+        self.b = "done"
+        self.b_slot = False
+        self.b_n += 1
+        (self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n) = drain(self.fault, self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n)
+
+    # system: a booting child exits before any history: it could not
+    # start, the parent is told so, and its slot goes to the queue.
+    atomic action KillA:
+        require self.a == "booting"
+        self.a = "failed"
+        self.a_slot = False
+        self.a_task = False
+        self.a_n += 1
+        (self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n) = drain(self.fault, self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n)
+
+    atomic action KillB:
+        require self.b == "booting"
+        self.b = "failed"
+        self.b_slot = False
+        self.b_task = False
+        self.b_n += 1
+        (self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n) = drain(self.fault, self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n)
+
+    # user: Stop agent in the Work dialog. A queued child is dropped with
+    # its row and budget; a live one, booting or running, is killed or
+    # interrupted, reported stopped, and gives its slot to the queue.
+    atomic action StopA:
+        require self.a in PENDING
+        if self.a == "queued":
+            self.a = "none"
+            self.a_task = False
+            self.total -= 1
+            return
+        self.a = "stopped"
+        self.a_slot = False
+        self.a_task = False
+        self.a_n += 1
+        (self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n) = drain(self.fault, self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n)
+
+    atomic action StopB:
+        require self.b in PENDING
+        if self.b == "queued":
+            self.b = "none"
+            self.b_task = False
+            self.total -= 1
+            return
+        self.b = "stopped"
+        self.b_slot = False
+        self.b_task = False
+        self.b_n += 1
+        (self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n) = drain(self.fault, self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n)
+
+    # system: serve crashes and comes back with no turn open. Every child
+    # with no history still has its Task on disk and is queued again;
+    # the running map is empty after a start, so the queue drains.
+    atomic action ServeRestart:
+        require self.a != "running" and self.b != "running"
+        if self.a == "booting":
+            self.a = "queued"
+            self.a_slot = False
+        if self.b == "booting":
+            self.b = "queued"
+            self.b_slot = False
+        (self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n) = drain(self.fault, self.a, self.a_slot, self.a_task, self.a_n, self.b, self.b_slot, self.b_task, self.b_n)
+
+action Init:
+    parent = Parent()
+
+# serve never runs more children than its cap.
+always assertion WithinCap:
+    return len([s for s in (parent.a_slot, parent.b_slot) if s]) <= 1
+
+# A running slot is held exactly by a live child that is booting or has
+# its turn open: a failed start holds none (the queue behind it drains),
+# and /children's "running" is agentCounts' running.
+always assertion SlotOnlyForLiveChild:
+    return (parent.a_slot == (parent.a in ("booting", "running"))) and (parent.b_slot == (parent.b in ("booting", "running")))
+
+# Every accepted spawn ends in exactly one report (finished, failed,
+# stopped, could not start), also one that never wrote history; none
+# before it ends.
+always assertion EveryEndReportedOnce:
+    return (parent.a_n == (1 if parent.a in TERMINAL else 0)) and (parent.b_n == (1 if parent.b in TERMINAL else 0))
+
+# The budget counts rows; a spawn answered with an error left none.
+always assertion BudgetCountsRows:
+    rows = len([c for c in (parent.a, parent.b) if c != "none"])
+    return parent.total == rows and parent.total <= 2
+
+always assertion RefusedSpawnLeavesNothing:
+    return parent.answer != "error" or (parent.a == "none" and not parent.a_slot and not parent.a_task)
+
+# A spawned agent is always accounted for: a child with no history (queued
+# or booting) still has its Task on disk, so a restart cannot lose it,
+# and one that ended or has history has none left to start twice.
+always assertion AccountedFor:
+    return (parent.a_task == (parent.a in ("queued", "booting"))) and (parent.b_task == (parent.b in ("queued", "booting")))
+
+# Every spawned child reaches a terminal status the parent is told of.
+always eventually assertion ChildrenSettle:
+    return parent.a not in PENDING and parent.b not in PENDING
+
+# The queue behind a failed launch keeps draining.
+always eventually assertion QueueDrains:
+    return parent.a != "queued" and parent.b != "queued"
+
+# Where the code (main at 5471918e) disagrees, and so what the model
+# tests should find:
+#   - CreateChild saves meta (SpawnedBy) before launch; a launch that
+#     fails abandons the slot and the process but keeps the meta row and
+#     answers 500. The row counts against the budget and in agentCounts'
+#     total, and /children lists it running with Live=false forever (no
+#     history: children_api's "started but not written" branch); the Work
+#     dialog shows it running with Stop disabled (canStop needs live).
+#     A retry leaves a second one (RefusedSpawnLeavesNothing, BudgetCountsRows).
+#   - A failed prompt write returns an error to the caller after the
+#     process started: the answer is 500 but the child and its slot stay
+#     until it exits.
+#   - A child that exits before writing history: the exit event frees
+#     its slot, but report returns on !hasEntry, so the parent is never
+#     told (EveryEndReportedOnce), and its row stays "running" (Live=false).
+#     The same for a Stop that killed it while booting.
+#   - drainQueue saves Task=nil before launch; a launch error is only
+#     emitted as an "error" event on the child's own stream, which
+#     childEventLocked ignores: no report, a ghost row listed running.
+#     A serve crash between that save and the child's first history
+#     write loses the agent: no Task to requeue, no history (AccountedFor).
+#   - A direct spawn never persists a Task at all, so a restart while it
+#     boots loses it the same way.

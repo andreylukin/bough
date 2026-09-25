@@ -52,6 +52,10 @@ type ChildTask struct {
 	Prompt string   `json:"prompt,omitempty"`
 	Extra  []string `json:"extra,omitempty"`
 	Args   []string `json:"args,omitempty"`
+	// MaxRunning is the running cap the spawn asked for. The cap lives
+	// in memory, so a restarted serve had only its default until the
+	// next spawn, and started every requeued child at once.
+	MaxRunning int `json:"maxRunning,omitempty"`
 }
 
 // requeueLocked rebuilds the queue from persisted tasks, oldest first
@@ -66,8 +70,18 @@ func (s *Supervisor) requeueLocked() {
 	sort.Strings(ids)
 	for _, id := range ids {
 		m := s.meta[id]
+		// Its turn got under way before serve could clear the task:
+		// starting it again would run the task twice.
+		if entries, err := s.Entries(id); err == nil && lastTurn(entries).hasEntry {
+			m.Task = nil
+			s.meta[id] = m
+			continue
+		}
 		m.Queued = true
 		s.meta[id] = m
+		if m.Task.MaxRunning > 0 {
+			s.maxRunning = m.Task.MaxRunning // the newest spawn's wins, as in CreateChild
+		}
 		s.queue = append(s.queue, queuedChild{id: id, dir: m.Task.Dir, prompt: m.Task.Prompt, extra: m.Task.Extra, args: m.Task.Args})
 	}
 }
@@ -172,13 +186,15 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	m := SessionMeta{SpawnedBy: parent, Thread: opt.Thread}
 	// The slug IS the membership now: no label to look up.
 	m.Project = slug
+	if q.prompt != "" || len(s.queue) > 0 || len(s.running) >= s.maxRunning {
+		m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra, Args: q.args, MaxRunning: maxRunning}
+	}
 	// Behind anyone already waiting, even with a slot free: the free
 	// slot is theirs. After a lower cap queued B's agent, A's next spawn
 	// raised it back and started ahead of it, since a raised cap starts
 	// no drain on its own.
 	if len(s.queue) > 0 || len(s.running) >= s.maxRunning {
 		m.Queued = true
-		m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra, Args: q.args}
 		s.meta[q.id] = m
 		s.queue = append(s.queue, q)
 		room := len(s.running) < s.maxRunning
@@ -204,6 +220,14 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	}
 	s.mu.Unlock()
 	if err := s.launch(ch, q); err != nil {
+		// Answered with the error, so it must leave nothing: the row
+		// was listed running forever, counted against the budget, and
+		// a retry left another.
+		s.mu.Lock()
+		delete(s.meta, q.id)
+		delete(s.running, q.id)
+		_ = s.saveMetaLocked()
+		s.mu.Unlock()
 		return "", false, err
 	}
 	return q.id, false, nil
@@ -251,13 +275,28 @@ func (s *Supervisor) launch(ch *child, q queuedChild) error {
 		// slot back, and holding one would leak it until serve
 		// restarts. Send takes a slot again the moment the thread is
 		// messaged.
+		// Nor is anything of it left to start again: a task kept here
+		// read its idle exit as a start that failed.
 		s.mu.Lock()
 		delete(s.running, ch.id)
+		if m, ok := s.meta[ch.id]; ok && m.Task != nil {
+			m.Task = nil
+			s.meta[ch.id] = m
+			_ = s.saveMetaLocked()
+		}
 		s.mu.Unlock()
 		go s.drainQueue()
 		return nil
 	}
 	if err := s.writePrompt(ch, q.prompt); err != nil {
+		// A live child takes a small prompt into its pipe, so this is a
+		// child already gone: the same as exec failing, and no process
+		// left holding the slot. The caller reports it.
+		s.mu.Lock()
+		ch.startFailed = true
+		delete(s.running, ch.id)
+		s.mu.Unlock()
+		s.killChild(ch)
 		return err
 	}
 	return nil
@@ -293,15 +332,14 @@ func (s *Supervisor) drainQueue() {
 		q := s.queue[0]
 		s.queue = s.queue[1:]
 		m := s.meta[q.id]
+		// The task stays until the child's turn is under way
+		// (childEventLocked): a restart while it boots starts it again.
 		m.Queued = false
-		m.Task = nil
 		s.meta[q.id] = m
 		s.running[q.id] = true
 		ch := newChild(q.id)
 		ch.booting = true
 		s.kids[q.id] = ch
-		// Saved before launch: a restart after this start must not
-		// start the same child a second time.
 		serr := s.saveMetaLocked()
 		s.mu.Unlock()
 		if serr != nil {
@@ -310,11 +348,45 @@ func (s *Supervisor) drainQueue() {
 			s.mu.Unlock()
 		}
 		if err := s.launch(ch, q); err != nil {
-			s.mu.Lock()
-			s.emitLocked(q.id, "error", err.Error(), nil)
-			s.mu.Unlock()
+			// Nobody is waiting on an answer: an "error" event alone
+			// left a row listed running and a parent never told.
+			s.endUnstarted(q.id, StatusError, err.Error())
 		}
 	}
+}
+
+// endUnstarted records a background agent that ended before its first
+// turn: it could not start (StatusError), or it was stopped while it
+// booted. There is no history to say so, so its row reads Ended, and
+// its parent is told once. Only a child whose start is still pending
+// (its task): an empty thread that sat idle and ended started fine.
+// Not while serve shuts down: that kill is a restart's, which starts
+// it again from its task.
+func (s *Supervisor) endUnstarted(id string, how Status, reason string) {
+	s.mu.Lock()
+	m, ok := s.meta[id]
+	if !ok || s.closed || m.Ended != "" || m.SpawnedBy == "" || m.Task == nil {
+		s.mu.Unlock()
+		return
+	}
+	title := m.Title
+	if title == "" && m.Task != nil {
+		title = oneLineTitle(m.Task.Prompt)
+	}
+	m.Ended, m.Task = how, nil
+	// With the task goes the only name it had: its row keeps it.
+	m.Title = title
+	s.meta[id] = m
+	_ = s.saveMetaLocked()
+	s.mu.Unlock()
+	word, text := "stopped", ""
+	if how == StatusError {
+		word, text = "failed", "Background agent could not start"
+		if r := failReason(reason); r != "" {
+			text += ": " + r
+		}
+	}
+	_ = s.notifyFrom(m.SpawnedBy, id, reportText(id, title, word, text))
 }
 
 // childEventLocked keeps the running count and triggers the report.
@@ -323,6 +395,14 @@ func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 	m, ok := s.meta[id]
 	if !ok || m.SpawnedBy == "" {
 		return
+	}
+	if m.Task != nil && !m.Queued && startsTurn(kind) {
+		// Its turn is under way: from here a restart must not start it
+		// again. requeueLocked reads the history for the gap before this
+		// save lands.
+		m.Task = nil
+		s.meta[id] = m
+		_ = s.saveMetaLocked()
 	}
 	switch kind {
 	case "input":
@@ -336,7 +416,16 @@ func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 			// the running cap.
 			return
 		}
-		go s.report(id, m.SpawnedBy, kind)
+		stopped := false
+		if ch := s.kids[id]; kind == "exit" && ch != nil {
+			if ch.startFailed {
+				delete(s.running, id)
+				go s.drainQueue()
+				return
+			}
+			stopped = ch.stopReq
+		}
+		go s.report(id, m.SpawnedBy, kind, stopped)
 		if kind == "done" && num(extra["jobs"]) > 0 {
 			// A final reply, but jobs an earlier turn adopted still run:
 			// the agent is working until their wake turn closes.
@@ -346,6 +435,17 @@ func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 		delete(s.running, id)
 		go s.drainQueue()
 	}
+}
+
+// startsTurn says an event is the child working on a prompt: the real
+// headless child prints no "input", so its first output is the sign.
+func startsTurn(kind string) bool {
+	switch kind {
+	case "input", "steer", "assistant-delta", "thinking-delta", "assistant", "thinking",
+		"code", "result", "call", "call-delta", "activity", "done", "cancelled":
+		return true
+	}
+	return false
 }
 
 // turnEnd is the last turn of a session file as the report needs it.
@@ -399,16 +499,16 @@ func LastTurn(entries []history.Entry) (reply string, errored bool) {
 // report tells the parent a child's turn ended, exactly once per turn.
 // The event is only the trigger: the closing entry on disk decides, so
 // the reply the parent reads is the one the child actually recorded.
-func (s *Supervisor) report(id, parent, trigger string) {
+func (s *Supervisor) report(id, parent, trigger string, stopped bool) {
 	if trigger == "exit" {
 		s.mu.Lock()
-		stopped := s.waitStops[id]
+		waitStopped := s.waitStops[id]
 		delete(s.waitStops, id)
 		s.mu.Unlock()
 		// The process is gone, so nothing else writes its file. Only a
 		// wait still closed by its done: a turn that opened in the
 		// meantime was cancelled by the stop itself.
-		if entries, err := s.Entries(id); stopped && err == nil {
+		if entries, err := s.Entries(id); waitStopped && err == nil {
 			if st, _ := StatusOf(entries, false); st == StatusDone {
 				_, _ = history.AppendFile(filepath.Join(s.opt.HistDir, id+".jsonl"), "cancelled", nil)
 			}
@@ -439,6 +539,16 @@ func (s *Supervisor) report(id, parent, trigger string) {
 			// from what is there, keyed on the turn's input.
 			key = t.input.Seq
 			word = map[string]string{"done": "finished", "cancelled": "stopped", "exit": "stopped"}[trigger]
+		case !t.hasEntry && trigger == "exit":
+			// It died before its first turn: a hung start that was
+			// killed, an orb that gave up, an init that threw. The parent
+			// was never told, and waited on it forever.
+			if stopped {
+				s.endUnstarted(id, StatusStopped, "")
+			} else {
+				s.endUnstarted(id, StatusError, "it exited before its first turn")
+			}
+			return
 		case time.Now().After(deadline) || !t.hasEntry:
 			return
 		default:
@@ -556,6 +666,9 @@ func (s *Supervisor) Children(parent string) []ChildInfo {
 		}
 		entries, _ := s.Entries(c.ID)
 		c.Status, _ = StatusOf(entries, s.Live(c.ID))
+		if ended := s.Meta(c.ID).Ended; ended != "" && !lastTurn(entries).hasEntry {
+			c.Status = ended
+		}
 		if t := lastTurn(entries); t.errored {
 			c.Error = failReason(t.errText)
 		}
@@ -702,6 +815,17 @@ func (s *Supervisor) stopChild(id string) (string, error) {
 		// Still booting: launch sees this and kills instead of prompting.
 		ch.stopReq = true
 		s.mu.Unlock()
+		return "running", nil
+	}
+	if running && live && s.meta[id].Task != nil {
+		// Started, its prompt not yet a turn (a hung start, an orb still
+		// coming up): an interrupt was held for a prompt it never takes,
+		// then killed it unreported. End it, reported stopped.
+		ch.stopReq = true
+		s.mu.Unlock()
+		s.killChild(ch)
+		// As Kill: a project child's orb may be up by now.
+		s.stopKilledOrb(id)
 		return "running", nil
 	}
 	s.mu.Unlock()

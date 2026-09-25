@@ -55,13 +55,18 @@ func TestChildReportSurvivesRestart(t *testing.T) {
 func TestChildQueueSurvivesRestart(t *testing.T) {
 	t.Parallel()
 	f := childFixture(t)
-	if _, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG a", SpawnedBy: "parent"}, 0, 1); err != nil {
+	a, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG a", SpawnedBy: "parent"}, 0, 1)
+	if err != nil {
 		t.Fatal(err)
 	}
 	b, queued, err := f.sup.CreateChild(CreateOptions{Prompt: "b", SpawnedBy: "parent"}, 0, 1)
 	if err != nil || !queued {
 		t.Fatalf("b = %v %v", queued, err)
 	}
+	// a's turn under way: a restart does not start it again, so its slot
+	// is free for b. One still booting would be started again first and,
+	// hanging, keep b queued behind the cap of 1.
+	waitFor(t, "a's turn under way", func() bool { return f.sup.Meta(a).Task == nil })
 	reopen(t, f)
 	waitFor(t, "b's report", func() bool {
 		for _, n := range notices(t, f, "parent") {

@@ -75,14 +75,20 @@ type SessionMeta struct {
 	Thread bool `json:"thread,omitempty"`
 	// Queued is derived from Task on load.
 	Queued bool `json:"-"`
-	// Task is a queued child's pending start, persisted so the queue
-	// survives a serve restart instead of leaving a ghost that never
-	// runs yet counts against its parent's budget. Cleared on launch.
+	// Task is a child's pending start, persisted so the queue survives
+	// a serve restart instead of leaving a ghost that never runs yet
+	// counts against its parent's budget. Kept while the child boots,
+	// since a restart then would otherwise lose it, and cleared once its
+	// turn is under way, so a restart never starts it twice.
 	Task *ChildTask `json:"task,omitempty"`
 	// Reported is the seq of the child's last turn reported to its
 	// parent. On disk because a restarted serve that re-adopts a child
 	// would otherwise report its old turn again when the process exits.
 	Reported int64 `json:"reported,omitempty"`
+	// Ended is how a background agent that never started a turn ended:
+	// error (it could not start) or stopped. It has no history to say
+	// so, and without this its row read running forever.
+	Ended Status `json:"ended,omitempty"`
 }
 
 // Project is one project. The DIRECTORY is the project:
@@ -185,7 +191,7 @@ type child struct {
 	// Guarded by Supervisor.mu.
 	// booting: a background agent reserved for launch that has not yet
 	// been handed its task. stopReq: stopped while booting, so launch
-	// kills it instead of prompting.
+	// kills it instead of prompting, and its exit is reported stopped.
 	booting, stopReq bool
 	id               string
 	metaID           string // a session id the child volunteered on a "meta" line
@@ -208,6 +214,9 @@ type child struct {
 	// line sent then is a steer that lands only at the next boundary,
 	// so an interrupt must go straight through, not wait for it.
 	inTurn bool
+	// startFailed: launch killed it after its prompt could not be
+	// written; launch's caller reports that, not the exit.
+	startFailed bool
 	// startedIn: the project whose directory projectEnv gave this
 	// process, "" for none. Fixed for the process's life (Row.StartedIn).
 	startedIn string

@@ -4,6 +4,7 @@
 // the DOM, plus the invariants every screen owes. The recipe is
 // go/tests/model/README.md; specs/model/example.spec.ts is the worked
 // example.
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Page, TestInfo } from '@playwright/test';
@@ -230,11 +231,10 @@ function saveTranscripts(serve: Serve, spec: string, ids: string[], title: strin
   if (!root || ids.length === 0) return;
   const dir = path.join(root, spec);
   fs.mkdirSync(dir, { recursive: true });
-  // Capped: a MODEL_COVER=transitions walk is dozens of actions long, and
-  // the whole title as a file name is past the 255-byte limit
-  // (ENAMETOOLONG, which then hid the walk's own result). "path-<i>-"
-  // and the session id keep the name unique.
-  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 100);
+  // A transitions walk's title runs to dozens of steps; a file name past
+  // 255 bytes failed the walk (ENAMETOOLONG) after every step passed.
+  const full = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const slug = full.length <= 120 ? full : `${full.slice(0, 100)}-${crypto.createHash('sha1').update(full).digest('hex').slice(0, 12)}`;
   for (const id of ids) {
     const src = path.join(serve.home, '.bough', 'history', id + '.jsonl');
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, `${slug}-${id}.jsonl`));

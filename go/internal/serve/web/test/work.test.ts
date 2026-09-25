@@ -110,6 +110,15 @@ test("a queued agent can be stopped: it has no process, and serve drops it from 
   expect(w).toMatchObject({ life: "queued", canStop: true });
 });
 
+test("a live agent that has recorded nothing yet is starting, not yet running its task", () => {
+  const [boot, run] = agentsFromRows(row({ id: "p" }), [], [
+    row({ id: "b", spawnedBy: "p", status: "running", live: true, entries: 0, title: "task a" }),
+    row({ id: "r", spawnedBy: "p", status: "running", live: true, entries: 3, title: "task b" }),
+  ]);
+  expect(boot).toMatchObject({ life: "running", starting: true, canStop: true });
+  expect(run.starting).toBeFalsy();
+});
+
 test("workIndex merges jobs, subagents and agents", () => {
   const lines = [line("input", "x"), typed(1, "started"), sub("start", "1", "t"), sub("done", "1", "", { status: "ok" })];
   const ws = workIndex({ session: "p", lines, turns: groupTurns(lines), row: row({ id: "p" }), rows: [row({ id: "c", spawnedBy: "p", status: "queued" })], live: true });

@@ -539,6 +539,13 @@ func TestAMessagedChildHoldsARunningSlot(t *testing.T) {
 	if was, err := f.sup.stopChild(id); err != nil || was != "running" {
 		t.Fatalf("stopChild = %q %v, want running", was, err)
 	}
+	// The fake never takes the prompt, so the stop is held; end it here
+	// and let its report land. Left to the cleanup, the report of the
+	// kill wrote meta.json while the temp dir was being removed.
+	if err := f.sup.Kill(id); err != nil {
+		t.Fatal(err)
+	}
+	waitNotices(t, f, "parent", 2)
 }
 
 // An agent whose turn closed with its calls adopted as jobs is still

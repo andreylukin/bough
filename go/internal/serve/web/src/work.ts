@@ -41,6 +41,8 @@ export interface Worker {
   subrunSeq?: number;
   live: boolean;
   canStop: boolean;
+  /** An agent whose process is up but has recorded nothing yet: a start that hangs read "Running" forever. */
+  starting?: boolean;
 }
 
 const TERMINAL = new Set<WorkLife>(["finished", "failed", "stopped", "unknown"]);
@@ -268,6 +270,8 @@ export function agentsFromRows(parent: Row, rows: Row[], children?: Row[] | null
     if (TERMINAL.has(w.life)) w.endedAt = c.lastAt;
     // A queued agent has no process, but serve can still drop it from its queue.
     w.canStop = (c.live && w.life === "running") || w.life === "queued";
+    // serve lists a started child with no history file as running, with no entries.
+    if (c.live && w.life === "running" && !c.entries) w.starting = true;
     if (w.life === "failed" && c.error) w.error = c.error;
     out.push(w);
   }
