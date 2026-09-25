@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
@@ -187,6 +188,9 @@ func Providers() []Provider {
 // WriteKey is writeKey for other packages.
 func WriteKey(path, env, key string) error { return writeKey(path, env, key) }
 
+// writeMu orders this process's saves; lockFile orders processes.
+var writeMu sync.Mutex
+
 // writeKey appends KEY=value to the env file, replacing any line that
 // already sets that variable. The file is 0600: it holds credentials.
 func writeKey(path, env, key string) error {
@@ -196,10 +200,23 @@ func writeKey(path, env, key string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
+	// Read, rewrite and rename under one lock: two saves at once each
+	// read the file before the other wrote it, and one provider's line
+	// was lost while both reported success.
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	unlock, err := lockFile(path)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer unlock()
 	var kept []string
 	if b, err := os.ReadFile(path); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
-			if k, _, ok := strings.Cut(line, "="); !ok || strings.TrimSpace(k) != env {
+			// `export KEY=` is the same variable: left in, the file had two
+			// lines for it, and the env loader reads the first.
+			k, _, ok := strings.Cut(strings.TrimPrefix(strings.TrimSpace(line), "export "), "=")
+			if !ok || strings.TrimSpace(k) != env {
 				kept = append(kept, line)
 			}
 		}

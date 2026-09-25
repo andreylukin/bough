@@ -1,0 +1,233 @@
+---
+# Every key entry is a rotation and there are two key versions, so a
+# path ends once both are issued and the saves have landed: the checks,
+# restarts and session starts left are self-loops, not a deadlock.
+deadlock_detection: false
+---
+
+# Where a provider key lives once serve runs: serve's own process env,
+# ~/.bough/env, and what the children serve starts inherit.
+#
+#   go/internal/serve/setup.go      /api/setup, /api/setup/check, /api/setup/key
+#   go/plugins/connect/connect.go   writeKey (the file writer /connect and setKey share)
+#   go/cmd/bough/envfile.go         loadEnvFile/applyEnv: at process start the file
+#                                   fills only variables the process does not have
+#   go/internal/serve/supervisor.go start: a child gets os.Environ() of serve
+#
+# One provider P carries the precedence; a second provider Q exists only
+# as the other writer of the same file.
+#
+# Keys are versions: 0 none, 1 the first key, 2 the rotated one. Every
+# entry of a key (welcome, /connect in a terminal, editing the file) is a
+# new key from the provider, and the provider revokes the older one at
+# once: `issued` is the only key that works.
+#
+#   exportP   value of an `export P=` line in ~/.bough/env (a hand-edited
+#             dotfile-style line), 0 when there is none
+#   plainP    value of a plain `P=` line (what writeKey writes), 0 none
+#   fileQ     Q's line is in the file
+#   serveEnv  P in serve's process env
+#   shell     P exported by the shell serve is restarted from by hand
+#   issued    the key the provider accepts
+#   pSaving   POST /api/setup/key for P in flight (read-modify-write of
+#             the file, then os.Setenv in serve)
+#   qSaving   a save of Q in flight at the same time (another tab, or
+#             /connect Q in a terminal)
+#   qSaved    that save answered 200
+#   page      the welcome's key line after the last GET /api/setup/check:
+#             "" never checked, "unset", "works", "rejected", "unknown"
+#             (provider unreachable; the page reads it as usable),
+#             "stale" (the file names a different key than the one serve
+#             hands its sessions: the page says a restart is needed)
+#   pageAbout the key the check asked about is the key a new session gets
+#   pageSaved the key a new session gets is the file's key (or the file has none)
+#   sess      the key the last session started from the page runs on
+#
+# How a key is read (the code, verified):
+# - serve's check (checkSetupKey): process env, else envFileValue, which
+#   takes the LAST line for P, `export` or not.
+# - a child (supervisor.start + the child's loadEnvFile): serve's process
+#   env, else the FIRST line for P in the file (applyEnv skips a variable
+#   once set).
+# - serve itself, at start: its launching env, else the first file line.
+#
+# This spec states the behaviour the claims need, which the product does
+# not have yet (see the notes on the branch):
+# - writeKey replaces `export P=` lines as well as `P=` lines. Today it
+#   keeps them (strings.Cut on "=" leaves the key "export P"), so after a
+#   save the file has two lines, the check reads the new one and every
+#   session the old one.
+# - A save re-reads and rewrites the file under one lock. Today two saves
+#   read, then each writes the same path+".tmp" and renames: one
+#   provider's line is lost while both answer 200.
+# - The check reports "stale" when serve's process env and the file name
+#   different keys. Today a key rotated outside serve (/connect in a
+#   terminal, an edit of the file) leaves serve's env on the old key; the
+#   check asks about that old key and every child inherits it, and
+#   nothing on the page says a restart would pick up the new one.
+#
+# Where this corrects the mapped model:
+# - "ConnectInTerminal" and "EditEnvFile" differ only in the line they
+#   leave: /connect goes through writeKey (plain line), a hand edit is
+#   modelled as the dotfile form (`export P=`) replacing P's lines.
+# - A web save is consistent by construction: setKey writes the file and
+#   os.Setenv's serve, so it never makes serve stale; it can still be
+#   undone by a later restart that reads an older `export` line first.
+# - "ServeRestartedLaunchd" is ServeRestart: launchd's env has no key, so
+#   serve reads the file's first line. ServeRestartFromShell is the other
+#   restart (a shell that exports P beats the file).
+# - A rotation while a web save of P is in flight is left out: two
+#   entries of P racing each other have no right answer to model.
+
+
+def fileFirst(k):
+    return k.exportP if k.exportP != 0 else k.plainP
+
+def fileLast(k):
+    return k.plainP if k.plainP != 0 else k.exportP
+
+# The key a session started now runs on.
+def sessionKey(k):
+    return k.serveEnv if k.serveEnv != 0 else fileFirst(k)
+
+# The key GET /api/setup/check asks the provider about.
+def checkKey(k):
+    return k.serveEnv if k.serveEnv != 0 else fileLast(k)
+
+def stale(k):
+    return k.serveEnv != 0 and fileLast(k) != 0 and k.serveEnv != fileLast(k)
+
+role Keys:
+    action Init:
+        self.exportP = 0
+        self.plainP = 0
+        self.fileQ = False
+        self.serveEnv = 0
+        self.shell = 0
+        self.issued = 0
+        self.pSaving = False
+        self.qSaving = False
+        self.qSaved = False
+        self.page = ""
+        self.pageAbout = True
+        self.pageSaved = True
+        self.sess = 0
+
+    # --- entering a key: each one is a new key, the old one revoked ------
+
+    atomic action SaveKeyViaWelcome:
+        require self.issued < 2 and not self.pSaving
+        self.issued = self.issued + 1
+        self.pSaving = True
+
+    # Fair: the request settles (200 or an error the page shows).
+    atomic fair action SaveKeyLands:
+        require self.pSaving
+        # writeKey: every P line replaced by one plain line, read and
+        # written under the file lock; then os.Setenv in serve.
+        self.exportP = 0
+        self.plainP = self.issued
+        self.serveEnv = self.issued
+        self.pSaving = False
+
+    atomic action ConnectInTerminal:
+        require self.issued < 2 and not self.pSaving
+        self.issued = self.issued + 1
+        # Another bough process: the file changes, serve's env does not.
+        self.exportP = 0
+        self.plainP = self.issued
+
+    atomic action EditEnvFile:
+        require self.issued < 2 and not self.pSaving
+        self.issued = self.issued + 1
+        self.exportP = self.issued
+        self.plainP = 0
+
+    # The person puts the current key in their shell profile.
+    atomic action ExportInShell:
+        require self.issued > 0 and self.shell != self.issued
+        self.shell = self.issued
+
+    # --- the other writer of the file ------------------------------------
+
+    atomic action ConcurrentSaveKey:
+        require not self.qSaving and not self.qSaved
+        self.qSaving = True
+
+    atomic fair action ConcurrentSaveLands:
+        require self.qSaving
+        self.fileQ = True
+        self.qSaving = False
+        self.qSaved = True
+
+    # --- reading the key -------------------------------------------------
+
+    # The provider answered. Fair: the page checks on every mount and
+    # after every save, and the check settles within 8 s.
+    atomic fair action CheckKey:
+        k = checkKey(self)
+        self.pageAbout = (k == sessionKey(self))
+        self.pageSaved = fileLast(self) == 0 or sessionKey(self) == fileLast(self)
+        if k == 0:
+            self.page = "unset"
+        elif stale(self):
+            self.page = "stale"
+        elif k == self.issued:
+            self.page = "works"
+        else:
+            self.page = "rejected"
+
+    atomic action CheckKeyUnreachable:
+        k = checkKey(self)
+        require k != 0 and not stale(self)
+        self.pageAbout = (k == sessionKey(self))
+        self.pageSaved = fileLast(self) == 0 or sessionKey(self) == fileLast(self)
+        self.page = "unknown"
+
+    atomic action StartSession:
+        require sessionKey(self) != 0
+        self.sess = sessionKey(self)
+
+    # launchd's env has no key: serve reads the file's first P line. A
+    # save in flight dies with the process, so none is.
+    atomic action ServeRestart:
+        require not self.pSaving and not self.qSaving
+        self.serveEnv = fileFirst(self)
+        self.page = ""
+        self.pageAbout = True
+        self.pageSaved = True
+
+    atomic action ServeRestartFromShell:
+        require self.shell != 0
+        require not self.pSaving and not self.qSaving
+        self.serveEnv = self.shell
+        self.page = ""
+        self.pageAbout = True
+        self.pageSaved = True
+
+
+action Init:
+    keys = Keys()
+
+def says_works(k):
+    return k.page == "works" or k.page == "unknown"
+
+# setup/check reports on the key a new session will use: a verdict the
+# page shows is about the key serve would hand a child.
+always assertion CheckIsAboutSessionKey:
+    return keys.page not in ("works", "unknown", "rejected") or keys.pageAbout
+
+# A save for P never removes Q's line: once Q's save answered 200, Q's
+# line is in the file.
+always assertion SaveKeepsOtherProvider:
+    return not keys.qSaved or keys.fileQ
+
+# After a rotation the page never says "works" for a key sessions are not
+# using: "works" means the key sessions get is the one the file now names.
+always assertion WorksOnlyForKeyInUse:
+    return not says_works(keys) or (keys.pageAbout and keys.pageSaved)
+
+# After a rotation, new sessions use the new key without a restart, or
+# the page says a restart is needed.
+always eventually assertion RotationReachesSessions:
+    return sessionKey(keys) == keys.issued or keys.page == "stale"

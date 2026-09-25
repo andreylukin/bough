@@ -196,6 +196,44 @@ func TestSetupChecksKey(t *testing.T) {
 	}
 }
 
+// A key rotated outside serve (/connect in a terminal, an edit of the
+// file) leaves serve's env on the old one, which every session it starts
+// inherits: the check says so instead of judging the old key.
+func TestSetupCheckSaysStale(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	home := setupHome(t, f)
+	f.api.getenv = func(k string) string {
+		if k == "ANTHROPIC_API_KEY" {
+			return "sk-old"
+		}
+		if k == "OPENAI_API_KEY" {
+			return "sk-same"
+		}
+		return ""
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".bough"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bough", "env"), []byte("ANTHROPIC_API_KEY=sk-new\nOPENAI_API_KEY=sk-same\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	f.api.checkKey = func(_ context.Context, provider, key string) (int, error) {
+		asked = append(asked, key)
+		return 200, nil
+	}
+	for provider, want := range map[string]string{"anthropic": "stale", "openai": "ok"} {
+		code, body := f.do(t, "GET", "/api/setup/check?provider="+provider, "")
+		if code != 200 || body["state"] != want {
+			t.Errorf("check %s = %d %v, want state %q", provider, code, body, want)
+		}
+	}
+	if len(asked) != 1 || asked[0] != "sk-same" {
+		t.Errorf("the provider was asked about %v; a stale key is not worth asking about", asked)
+	}
+}
+
 // BOUGH_SETUP_CHECK_URL points every provider's key check at one
 // endpoint, so a test of a real serve process can have a key accepted,
 // rejected or unanswerable without asking a real provider.

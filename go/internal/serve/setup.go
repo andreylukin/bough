@@ -188,10 +188,18 @@ func (a *API) checkSetupKey(w http.ResponseWriter, r *http.Request) {
 		if p.Name != name {
 			continue
 		}
-		key := a.getenv(p.Env)
+		file, _ := os.ReadFile(a.envFile())
+		key, saved := a.getenv(p.Env), envFileValue(string(file), p.Env)
+		// serve's env beats the file for every session it starts, so a
+		// key rotated outside serve (/connect in a terminal, an edit of
+		// the file) is not used until serve restarts: say that, rather
+		// than judge a key nobody means any more.
+		if key != "" && saved != "" && key != saved {
+			writeJSON(w, http.StatusOK, map[string]any{"state": "stale", "detail": fmt.Sprintf("%s changed in %s; restart serve to use it", p.Env, a.envFile())})
+			return
+		}
 		if key == "" {
-			file, _ := os.ReadFile(a.envFile())
-			key = envFileValue(string(file), p.Env)
+			key = saved
 		}
 		if key == "" {
 			writeJSON(w, http.StatusOK, map[string]any{"state": "unset"})

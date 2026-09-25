@@ -152,6 +152,10 @@ func (s *Server) Resume(bin string) error {
 	return s.waitReady(s.opts.ReadyTimeout)
 }
 
+// SetEnv replaces Options.Env for the next Resume: a restart from a
+// shell that exports what the first start's did not, or no longer does.
+func (s *Server) SetEnv(env []string) { s.opts.Env = env }
+
 // Bin is the binary the current (or last) serve process runs.
 func (s *Server) Bin() string { return s.bin }
 
@@ -392,6 +396,12 @@ func (s *Server) do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("servetest: %s %s: decode: %w: %s", method, path, err, raw)
 	}
 	return nil
+}
+
+// API is one authenticated request to an endpoint the helpers here do
+// not wrap; a non-2xx answer is an *APIError.
+func (s *Server) API(ctx context.Context, method, path string, body, out any) error {
+	return s.do(ctx, method, path, body, out)
 }
 
 type rowReply struct {
