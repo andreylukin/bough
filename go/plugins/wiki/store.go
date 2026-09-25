@@ -807,8 +807,11 @@ func (s *Store) pagePath(rel string) (string, error) {
 }
 
 // WritePage replaces a page's text and commits it, so the edit is one
-// reviewable change like an ingest.
-func (s *Store) WritePage(rel, body string) error {
+// reviewable change like an ingest. base, when set, is the text the
+// editor read: a page that no longer has it (an ingest rewrote it since)
+// is ErrStale, as EditClaim is, rather than the ingest's change lost
+// under the editor's.
+func (s *Store) WritePage(rel, body string, base *string) error {
 	if rel == ProfilePath {
 		// The one page saved before it exists (see Page), and
 		// topics/me may not exist yet either.
@@ -823,10 +826,15 @@ func (s *Store) WritePage(rel, body string) error {
 	if _, err := os.Stat(path); err != nil && rel != ProfilePath {
 		return ErrNotFound
 	}
+	if base != nil {
+		if b, err := os.ReadFile(path); err == nil && string(b) != *base {
+			return ErrStale
+		}
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return err
 	}
-	commit(s.p, "edit "+rel)
+	commitPage(s.p, "edit "+rel, rel)
 	return nil
 }
 
@@ -1012,7 +1020,7 @@ func (s *Store) EditClaim(rel string, line, end int, raw, action string) error {
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
 		return err
 	}
-	commit(s.p, msg)
+	commitPage(s.p, msg, rel)
 	return nil
 }
 

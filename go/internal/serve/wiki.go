@@ -53,11 +53,14 @@ func (a *API) putWikiPage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Path string `json:"path"`
 		Body string `json:"body"`
+		// Base is the text the editor read; a page changed since is a
+		// 409. A client that sends none overwrites whatever is there.
+		Base *string `json:"base"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	if err := a.wikiStore().WritePage(body.Path, body.Body); err != nil {
+	if err := a.wikiStore().WritePage(body.Path, body.Body, body.Base); err != nil {
 		wikiErr(w, err)
 		return
 	}
