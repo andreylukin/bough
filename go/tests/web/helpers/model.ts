@@ -150,6 +150,10 @@ export function modelTests<C>(flow: Flow<C>): void {
       const walk = trace.slice(1).map((s) => name(s.action)).join(' → ');
       const title = `path ${i}: ${walk}`;
       const run = async (serve: Serve, page: Page, info: TestInfo) => {
+        // A spec's timeout is sized for its states-cover walks; a
+        // MODEL_COVER=transitions walk is dozens of steps longer, and at
+        // a second or two a step it ran out of time mid-walk.
+        info.setTimeout(info.timeout + trace.length * 3_000);
         const errors: string[] = [];
         let c: C | undefined;
         const expected = (t: string) => (flow.expectedErrors ?? []).some((re) => re.test(t));
