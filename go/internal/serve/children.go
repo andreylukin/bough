@@ -63,9 +63,17 @@ type ChildTask struct {
 func (s *Supervisor) requeueLocked() {
 	var ids []string
 	for id, m := range s.meta {
-		if m.Task != nil {
-			ids = append(ids, id)
+		if m.Task == nil {
+			continue
 		}
+		// Started and written (it ran), or archived while it booted: the
+		// task is spent. Only a child that never wrote its file starts.
+		if m.Archived || (m.Task.Prompt == "" && s.historyExists(id)) {
+			m.Task = nil
+			s.meta[id] = m
+			continue
+		}
+		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
@@ -176,7 +184,10 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 			}
 		}
 	}
-	if n >= maxPerSession {
+	// The budget is the model's: a person's thread is neither refused
+	// by it nor counted in it (busyChildren), or one agent main started
+	// would turn away every thread a person asked for.
+	if n >= maxPerSession && !opt.Thread {
 		s.mu.Unlock()
 		return "", false, fmt.Errorf("%w (%d per session)", ErrAgentLimit, maxPerSession)
 	}
@@ -205,6 +216,9 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 		}
 		return q.id, true, err
 	}
+	// Kept until the child writes its history, as a drained one's is: a
+	// restart while it boots starts it again (requeueLocked).
+	m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra, Args: q.args, MaxRunning: maxRunning}
 	s.meta[q.id] = m
 	// Counted from the moment of start, not from the first derived
 	// running status: a burst of spawns would otherwise all see zero
@@ -265,6 +279,12 @@ func (s *Supervisor) launch(ch *child, q queuedChild) error {
 	ch.booting = false
 	s.mu.Unlock()
 	if stop {
+		s.mu.Lock()
+		m := s.meta[ch.id]
+		m.Task = nil
+		s.meta[ch.id] = m
+		_ = s.saveMetaLocked()
+		s.mu.Unlock()
 		s.killChild(ch)
 		return nil
 	}
@@ -274,18 +294,10 @@ func (s *Supervisor) launch(ch *child, q queuedChild) error {
 		// it emits none of the done/cancelled/exit events that give a
 		// slot back, and holding one would leak it until serve
 		// restarts. Send takes a slot again the moment the thread is
-		// messaged.
-		// Nor is anything of it left to start again: a task kept here
-		// read its idle exit as a start that failed.
-		s.mu.Lock()
-		delete(s.running, ch.id)
-		if m, ok := s.meta[ch.id]; ok && m.Task != nil {
-			m.Task = nil
-			s.meta[ch.id] = m
-			_ = s.saveMetaLocked()
-		}
-		s.mu.Unlock()
-		go s.drainQueue()
+		// messaged. It keeps the slot while it boots (its orb is the
+		// expensive part): freed at launch, a queued agent started
+		// beside a thread still booting, past the running cap.
+		go s.freeWhenWritten(ch)
 		return nil
 	}
 	if err := s.writePrompt(ch, q.prompt); err != nil {
@@ -300,6 +312,32 @@ func (s *Supervisor) launch(ch *child, q queuedChild) error {
 		return err
 	}
 	return nil
+}
+
+// freeWhenWritten gives an unprompted child's running slot back once
+// its history file exists (it has booted) or its process is gone. A
+// message sent meanwhile opened a turn that holds the slot now.
+func (s *Supervisor) freeWhenWritten(ch *child) {
+	for !s.historyExists(ch.id) {
+		select {
+		case <-ch.done:
+		case <-time.After(createPoll):
+			continue
+		}
+		break
+	}
+	if entries, _ := s.Entries(ch.id); slices.ContainsFunc(entries, func(e history.Entry) bool { return e.Kind == "input" }) {
+		return
+	}
+	s.mu.Lock()
+	delete(s.running, ch.id)
+	if m, ok := s.meta[ch.id]; ok && m.Task != nil && m.Task.Prompt == "" && s.historyExists(ch.id) {
+		m.Task = nil
+		s.meta[ch.id] = m
+		_ = s.saveMetaLocked()
+	}
+	s.mu.Unlock()
+	s.drainQueue()
 }
 
 // abandon undoes a reservation whose process never started, freeing
@@ -340,6 +378,9 @@ func (s *Supervisor) drainQueue() {
 		ch := newChild(q.id)
 		ch.booting = true
 		s.kids[q.id] = ch
+		// Saved before launch. The task stays until the child writes its
+		// history: a restart before that starts it again, one after it
+		// does not (requeueLocked).
 		serr := s.saveMetaLocked()
 		s.mu.Unlock()
 		if serr != nil {
@@ -396,7 +437,7 @@ func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 	if !ok || m.SpawnedBy == "" {
 		return
 	}
-	if m.Task != nil && !m.Queued && startsTurn(kind) {
+	if m.Task != nil && !m.Queued && (startsTurn(kind) || (m.Task.Prompt == "" && s.historyExists(id))) {
 		// Its turn is under way: from here a restart must not start it
 		// again. requeueLocked reads the history for the gap before this
 		// save lands.
@@ -693,13 +734,17 @@ func (s *Supervisor) QueuedPrompt(id string) (string, bool) {
 	return "", false
 }
 
-// busyChildren counts the children still going: waiting for a slot,
-// running, or holding a question open. A thread that finished, errored
+// busyChildren counts the model's agents still going: waiting for a
+// slot, running, or holding a question open. One that finished, errored
 // or was stopped gives its slot back — nothing of it is still running,
-// and its conversation stays readable either way.
+// and its conversation stays readable either way. A person's thread
+// (SessionMeta.Thread) is not the model's and never counts.
 func (s *Supervisor) busyChildren(parent string) int {
 	n := 0
 	for _, c := range s.Children(parent) {
+		if s.Meta(c.ID).Thread {
+			continue
+		}
 		if c.Queued || c.Status == StatusRunning || c.Status == StatusNeedsYou {
 			n++
 		}

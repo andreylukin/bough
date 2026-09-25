@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/andreylukin/bough/internal/projectdef"
 )
@@ -73,7 +76,14 @@ func (a *API) queuedRow(id string) Row {
 	if m.Project != "" {
 		mode = "project"
 	}
-	now := time.Now()
+	title := m.Title
+	if title == "" {
+		title = oneLineTitle(prompt)
+	}
+	// The create's time, which the id carries: stamping the read's time
+	// floated a waiting row to the top of the list and read "just now"
+	// on every poll for as long as it waited.
+	at := createdAt(id)
 	return Row{
 		ID:        id,
 		Title:     title,
@@ -82,9 +92,40 @@ func (a *API) queuedRow(id string) Row {
 		SpawnedBy: m.SpawnedBy,
 		Project:   m.Project,
 		Mode:      mode,
-		Modified:  now,
-		LastAt:    now,
+		Modified:  at,
+		LastAt:    at,
 	}
+}
+
+// createdAt is when a child's id was minted (a UUIDv7 carries it to
+// the millisecond), or now for an id that carries no time.
+func createdAt(id string) time.Time {
+	u, err := uuid.Parse(id)
+	if err != nil || u.Version() != 7 {
+		return time.Now()
+	}
+	sec, nsec := u.Time().UnixTime()
+	return time.Unix(sec, nsec)
+}
+
+// pendingRow is the row of a child with no history file yet: queued, or
+// started and still booting. ok is false for any other id.
+func (a *API) pendingRow(id string) (Row, bool) {
+	if _, queued := a.sup.QueuedPrompt(id); queued {
+		return a.queuedRow(id), true
+	}
+	if slices.Contains(a.sup.startingIDs(), id) && !a.sup.Meta(id).Archived {
+		return a.startingRow(id), true
+	}
+	return Row{}, false
+}
+
+// startingRow is the row of a child whose process runs and whose
+// history file is not written yet.
+func (a *API) startingRow(id string) Row {
+	row := a.queuedRow(id)
+	row.Queued, row.Status, row.Live = false, StatusRunning, true
+	return row
 }
 
 // pendingRows are the sessions history.List cannot see yet — queued
@@ -102,9 +143,7 @@ func (a *API) pendingRows(seen map[string]bool) []Row {
 		if seen[id] || a.sup.Meta(id).Archived {
 			continue
 		}
-		row := a.queuedRow(id)
-		row.Queued, row.Status, row.Live = false, StatusRunning, true
-		rows = append(rows, row)
+		rows = append(rows, a.startingRow(id))
 	}
 	return rows
 }

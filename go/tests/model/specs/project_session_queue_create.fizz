@@ -1,0 +1,271 @@
+---
+# The bounds (one thread, one agent, one restart) end every behaviour
+# with nothing left to do: that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# A person's project session created while serve's running cap is full:
+# it queues, and everything a person can do to the queued (then booting)
+# row must work: open it, rename it, archive it, stop it, wait on it.
+#
+# Code: go/internal/serve/orbs.go createProjectSession (Main, then
+# CreateChild with SpawnedBy=main, Thread=true); children.go CreateChild,
+# launch, drainQueue, stopChild, busyChildren, queuedIDs/startingIDs;
+# children_api.go createChild, queuedRow, pendingRows, childOf; api.go
+# info/metaVerb (rename, archive, ack), getSession; web/src/app.tsx the
+# transcript lookup's STARTING_MS window and start().
+#
+# The three entry points (palette 'New orb', the overview's project
+# mode, the projects page's New session) are one POST /api/sessions
+# {mode: project}; the server sees only whether it carries a prompt, so
+# the spec has PostPrompt and PostEmpty. start() opens the new id at
+# once, so both open it.
+#
+# Main(slug) runs first in the same handler; whether it had to create
+# main is project_main_threads' flow and is folded into Post here. Main
+# is a top-level session: it never sits in serve's running map.
+#
+# The cap: MAX_RUNNING = 1 slot, and the other occupant is main's own
+# background agent (the model's tools.spawn), which is also what the
+# per-session limit is for: MAX_PER_SESSION = 1 model agent. Every
+# freed slot drains the queue in the same step (drainQueue runs from the
+# event that freed it), as in background_agents.
+#
+# thread:
+#   none      not posted yet
+#   refused   the create answered 429 (the promise says never)
+#   queued    meta.Task persisted, no process, no history file
+#   booting   process started, holds the slot, no history file yet
+#   empty     history written, no prompt, so no turn: its slot is free
+#   running   history written, the prompt's turn open, holds the slot
+#   idle      that turn closed
+#   gone      a queued thread stopped: dropped with its row
+# agent: none | running | queued | done (main's one model agent)
+# view: what the open page shows for the thread: closed (not open),
+#   queued, starting, transcript, missing ('Session not found')
+# lastat: where the listed row's LastAt comes from: "post" (the create),
+#   "history" (the file's last entry once it exists).
+# verb: the answer to the last header verb on the row: "", ok, refused
+#   (an error that says why), 404.
+# spawn: "429" after main's model was refused an agent, until one ends.
+#
+# Where this disagrees with the code as of main 5471918e, the spec says
+# what the flow promises and the code is the finding (stage 2 checks it):
+#   - Open on a queued row: getSession 404s (a.info reads history only);
+#     the page shows 'starting' for STARTING_MS (120 s) when it created
+#     the id and then 'Session not found' while the list still shows the
+#     row queued; opened from the list (not created by this page) it is
+#     'Session not found' at once. Promised: 'queued', then 'starting'.
+#   - queuedRow stamps Modified/LastAt = time.Now() on every read, so a
+#     queued or booting row floats to the top and reads 'just now' for
+#     as long as it waits. Promised: the create's time, stable.
+#   - rename/archive/ack go through metaVerb, which 404s on any id with
+#     no history file. Promised: rename works (meta only) and archive
+#     refuses with a reason (409: stop it first) while the row is
+#     pending. Ack is the same metaVerb path and is not modelled.
+#   - CreateChild counts main's busy children (busyChildren) against
+#     maxPerSession: a person's pending/running thread both takes a
+#     model agent's budget and is itself refused (429) behind one.
+#     Promised: only model agents count.
+#   - A thread booting when serve restarts has had its Task cleared
+#     (drainQueue saves before launch) and no history: after the restart
+#     it is neither queued nor listed. Promised: it boots again.
+
+MAX_RUNNING = 1
+MAX_PER_SESSION = 1
+
+PENDING = ("queued", "booting")
+LIVE = ("empty", "running", "idle")
+LISTED = ("queued", "booting", "empty", "running", "idle")
+AGENT_BUSY = ("running", "queued")
+
+def view_of(thread, opened):
+    if not opened:
+        return "closed"
+    if thread == "queued":
+        return "queued"
+    if thread == "booting":
+        return "starting"
+    if thread in LIVE:
+        return "transcript"
+    return "missing"
+
+role Queue:
+    action Init:
+        self.thread = "none"
+        self.prompted = False
+        self.agent = "none"
+        self.spawn = ""
+        self.opened = False
+        self.view = "closed"
+        self.lastat = ""
+        self.renamed = False
+        self.verb = ""
+        self.restarts = 0
+
+    # --- a person creates the session (either entry point), and the
+    # page opens it at once. No per-session count applies to a thread.
+
+    atomic action PostPrompt:
+        require self.thread == "none"
+        self.prompted = True
+        self.lastat = "post"
+        self.opened = True
+        if self.agent == "running":
+            self.thread = "queued"
+        else:
+            self.thread = "booting"
+        self.view = view_of(self.thread, self.opened)
+
+    atomic action PostEmpty:
+        require self.thread == "none"
+        self.prompted = False
+        self.lastat = "post"
+        self.opened = True
+        if self.agent == "running":
+            self.thread = "queued"
+        else:
+            self.thread = "booting"
+        self.view = view_of(self.thread, self.opened)
+
+    # --- main's model and its one background agent.
+
+    atomic action AgentSpawn:
+        # tools.spawn({background}) from main. Past its budget (model
+        # agents only) 429 and nothing else changes; else it queues when
+        # the slot is taken.
+        require self.agent != "done" and self.spawn == ""
+        agents = len([a for a in (self.agent,) if a in AGENT_BUSY])
+        if agents >= MAX_PER_SESSION:
+            self.spawn = "429"
+        elif self.thread in ("booting", "running"):
+            self.agent = "queued"
+        else:
+            self.agent = "running"
+
+    atomic fair action AgentFinish:
+        # The agent's turn closes; its slot drains the queue.
+        require self.agent == "running"
+        self.agent = "done"
+        self.spawn = ""
+        if self.thread == "queued":
+            self.thread = "booting"
+            self.view = view_of(self.thread, self.opened)
+
+    # --- the thread's own life.
+
+    atomic fair action HistoryWritten:
+        # The child's history file appears. With no prompt launch writes
+        # none and gives the slot back, which drains a queued agent.
+        require self.thread == "booting"
+        self.lastat = "history"
+        if self.prompted:
+            self.thread = "running"
+        else:
+            self.thread = "empty"
+            if self.agent == "queued":
+                self.agent = "running"
+        self.view = view_of(self.thread, self.opened)
+
+    atomic fair action Finish:
+        require self.thread == "running"
+        self.thread = "idle"
+        if self.agent == "queued":
+            self.agent = "running"
+
+    # --- the page, and time passing on it.
+
+    atomic action Poll:
+        # The list's 4 s GET /api/sessions while the row is pending: it
+        # must not move the row.
+        require self.thread in PENDING
+        pass
+
+    atomic action StartingWindowExpires:
+        # STARTING_MS (120 s) pass with the page on a pending id. A row
+        # the list shows is still waiting, not missing.
+        require self.opened and self.thread in PENDING
+        pass
+
+    atomic action Leave:
+        require self.opened
+        self.opened = False
+        self.view = view_of(self.thread, self.opened)
+
+    atomic action Open:
+        # Clicking the row in the list (a page that did not create it).
+        require not self.opened and self.thread in LISTED
+        self.opened = True
+        self.view = view_of(self.thread, self.opened)
+
+    # --- header verbs on the pending row.
+
+    atomic action Rename:
+        # Meta only: a pending row has meta, so it takes the name.
+        require self.thread in PENDING and not self.renamed
+        self.renamed = True
+        self.verb = "ok"
+
+    atomic action Archive:
+        # A pending row cannot be archived yet; serve says why (stop it).
+        require self.thread in PENDING
+        self.verb = "refused"
+
+    atomic action Stop:
+        # Stop agent on main's Work dialog: a queued child is dropped from
+        # the queue and meta, so it has no row; an open page then shows
+        # it missing, which is true.
+        require self.thread == "queued"
+        self.thread = "gone"
+        self.verb = "ok"
+        self.view = view_of(self.thread, self.opened)
+
+    # --- serve restarts (launchd, bough update). Every child dies with
+    # it: an open turn closes, and the running map starts empty, so what
+    # was pending drains at once. Not with the agent queued: the restart
+    # queue is ordered by id, which the spec cannot see.
+
+    atomic action ServeRestart:
+        require self.restarts == 0 and self.agent != "queued"
+        self.restarts = 1
+        if self.agent == "running":
+            self.agent = "done"
+            self.spawn = ""
+        if self.thread == "queued":
+            self.thread = "booting"
+        elif self.thread == "running":
+            self.thread = "idle"
+        self.view = view_of(self.thread, self.opened)
+
+action Init:
+    queue = Queue()
+
+# An id the list shows is never 'Session not found' by its own lookup.
+always assertion ListedNeverMissing:
+    return not (queue.view == "missing" and queue.thread in LISTED)
+
+# A pending row's LastAt is the create's, however often the list polls.
+always assertion PendingLastAtStable:
+    return queue.thread not in PENDING or queue.lastat == "post"
+
+# Every header verb on a listed row succeeds or says why; none 404s.
+always assertion HeaderVerbsAnswer:
+    return queue.verb != "404"
+
+# A person's thread is never refused by, nor counted in, the model
+# agents' per-session budget: a 429 means the model agents fill it.
+always assertion ThreadOutsideAgentBudget:
+    return queue.thread != "refused" and (queue.spawn != "429" or queue.agent in AGENT_BUSY)
+
+# serve never runs more than its cap.
+always assertion WithinCap:
+    held = len([h for h in (queue.thread in ("booting", "running"), queue.agent == "running") if h])
+    return held <= MAX_RUNNING
+
+# A queued project session starts once a slot frees.
+always eventually assertion QueuedStarts:
+    return queue.thread != "queued"
+
+# An opened pending session shows its transcript once it boots.
+always eventually assertion OpenedBoots:
+    return not (queue.opened and queue.thread in PENDING)
