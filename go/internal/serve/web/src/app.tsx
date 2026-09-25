@@ -308,8 +308,11 @@ export function sidebarSelected(view: View, lost: string | null, selected: strin
   return view !== "sessions" || lost !== null ? null : selected ?? lastId;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
+  /** The session whose transcript is on screen (App's `viewing`): its finish is being acked. The
+   *  marked row is also the one you left, which is not on screen once you went home. */
+  viewing?: string;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
   /** The fleet's freshness: when the list last loaded (null before), and why the last refresh failed. */
@@ -749,7 +752,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
                 : MARKED.has(r.status) ? <StatusMark status={r.status} size={16} bare />
                 // The open row is being looked at; its ack is already on the way.
-                : isUnseen(r) && !on ? <UnseenDot /> : null}
+                // Only while it is: the row you left stays marked, and while its
+                // ack had not landed it read as seen with the finish unacked.
+                : isUnseen(r) && !(viewing !== undefined ? r.id === viewing : on) ? <UnseenDot /> : null}
             </span>
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
             <span className={stacked ? "row-stack" : "row-line"}>
@@ -1951,6 +1956,21 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
   );
 }
 
+/**
+ * A row's identity across its live and recorded forms. A native call in
+ * flight is a live line with a seq between records (withRunningCalls);
+ * its end lands as a record with a seq of its own. Keyed by seq, every
+ * row around it remounted then: a call row or Working fold the reader
+ * had open snapped shut the moment the call finished. The call id is
+ * the same in both.
+ */
+function rowKey(l: Line): string {
+  return isNativeCall(l) ? "call:" + String(l.data!.id) : String(l.seq);
+}
+function itemKey(it: Item): string {
+  return it.kind === "tools" ? rowKey(it.lines[0]) : it.kind === "line" ? rowKey(it.line) : String(it.seq);
+}
+
 /** Fired when a turn starts or output streams in; open output cards close. */
 const TRANSCRIPT_GREW = "bough:transcript-grew";
 
@@ -2144,7 +2164,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
     } else if (isNativeCall(l)) {
       const f = nativeFacts(l);
       facts.push(f);
-      rows.push(<NativeCall key={l.seq} line={l} current={failSeq === l.seq} />);
+      rows.push(<NativeCall key={rowKey(l)} line={l} current={failSeq === l.seq} />);
     } else if (l.kind === "job") {
       // Consecutive job rows share one head.
       let j = i;
@@ -3169,7 +3189,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       const spawned = next?.kind === "sub" ? subagentsFromTurn(turn, "", live).find((w) => w.subrunSeq === next.seq && w.result) : undefined;
       // Only the turn's one group can own its whole diff.
       const sole = items.filter((x) => x.kind === "tools").length === 1;
-      return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} spawned={spawned} turnEdits={sole ? turnEdits : undefined} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
+      return <ToolRun key={"tools" + rowKey(it.lines[0])} lines={it.lines} codes={codes} live={live} spawned={spawned} turnEdits={sole ? turnEdits : undefined} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
     }
     if (it.line.kind.startsWith("todo/")) {
       // Consecutive todo records fold into one row, rendered at the first.
@@ -3251,7 +3271,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       <div className="turn-body">
         {segs.map((sg) => {
           if (sg.kind !== "work") return <Fragment key={"i" + sg.item.seq}>{renderItem(sg.item, 0, [sg.item])}</Fragment>;
-          const rows = sg.items.map((it, i) => <Fragment key={"i" + it.seq}>{renderItem(it, i, sg.items)}</Fragment>);
+          const rows = sg.items.map((it, i) => <Fragment key={"i" + itemKey(it)}>{renderItem(it, i, sg.items)}</Fragment>);
           // Only while the thread says the turn is working: a turn waiting on your answer is not.
           const running = live && working !== undefined && sg === runningSeg;
           if (!running && sg.rows < 2) return rows;
@@ -3261,7 +3281,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           const settled = tip?.kind === "tools" ? done(tip.lines.at(-1)) : tip?.kind === "line" && done(tip.line);
           const step = working && working !== "Working" && working !== WAITING_MODEL && working !== "Thinking" && !settled ? working : sg.step;
           return (
-            <WorkSegmentRow key={"seg" + sg.seq} seg={sg} session={ctx?.session ?? ""} all={allSegs}
+            <WorkSegmentRow key={"seg" + itemKey(sg.items[0])} seg={sg} session={ctx?.session ?? ""} all={allSegs}
                             defaultOpen={Boolean(fail && sg.last && (sg.seqs.includes(fail.seq) || sg.failed > 0))}
                             running={running} since={turn.prompt?.at} step={step}>
               {rows}
@@ -4008,13 +4028,25 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // Shown only while you have scrolled away from the end, so reading
   // history during a live turn has a way back that does not yank you.
   const [away, setAway] = useState(false);
+  // A jump to the latest under way. Its smooth scroll passes through
+  // "not at the end" on its way there, and each of those scroll events
+  // used to drop the stick: a fragment or a record arriving meanwhile
+  // moved the end past where the jump was headed, and the jump stopped
+  // short with "New activity" back on screen. Only the reader's own
+  // wheel, touch or pointer ends it early.
+  const jumping = useRef(false);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     // A slack of a couple of lines: "near the bottom" is what a reader
     // means by "at the bottom", and an exact test loses the stick the
     // moment a fragment arrives a pixel early.
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (jumping.current) {
+      if (!near) return;
+      jumping.current = false;
+    }
+    atBottom.current = near;
     if (!loading) scrollMemo.set(row.id, { top: el.scrollTop, follow: atBottom.current });
     // What was recorded when you left, so the button can say something new arrived.
     if (!atBottom.current && !away) awayAt.current = newest;
@@ -4025,6 +4057,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const [down, setDown] = useState(false);
   const toStart = () => {
     atBottom.current = false;
+    jumping.current = false;
     const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     scroller.current?.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
   };
@@ -4033,6 +4066,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     atBottom.current = true; setAway(false);
     scrollMemo.delete(row.id);
     const still = instant || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    jumping.current = !still;
     end.current?.scrollIntoView({ block: "end", behavior: still ? "auto" : "smooth" });
   };
   // More than a screen from the end: a smooth scroll would crawl, so jump.
@@ -4086,6 +4120,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     if (e.key === "End") { e.preventDefault(); toLatest(); return; }
     if (by[e.key] === undefined) return;
     e.preventDefault();
+    jumping.current = false;
     el.scrollBy({ top: by[e.key] });
   };
   // Coming back to a session lands where you were reading. One that was
@@ -4114,6 +4149,22 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   useLayoutEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
+  // A row opened or shut at the end (the Working fold, a call) while
+  // following it: scroll anchoring nudged the view to keep what was on
+  // screen in place, and that nudge read as the reader scrolling away:
+  // "Jump to latest" showed and the turn was no longer followed. Whether
+  // it was followed is read at the click (a summary's toggle, by pointer
+  // or key, is its click), before the layout that nudges it.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const clicked = (e: MouseEvent) => {
+      if (!atBottom.current || !(e.target instanceof Element) || !e.target.closest("summary")) return;
+      requestAnimationFrame(() => { atBottom.current = true; end.current?.scrollIntoView({ block: "end" }); });
+    };
+    el.addEventListener("click", clicked, true);
+    return () => el.removeEventListener("click", clicked, true);
+  }, []);
   const turns = useMemo(() => groupTurns(lines), [lines]);
   const stored = useMemo(() => storedNotices(lines), [lines]);
   // R4-B: the last finished turn ended on a failed command: the header says Failed, as its footer does, never a checked Done.
@@ -4685,6 +4736,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
       {orbView === "build" && row.orb && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
+           // The scrollbar is the scroller's own pointerdown; a click on a row scrolls nothing.
+           onWheel={() => { jumping.current = false; }} onTouchMove={() => { jumping.current = false; }} onPointerDown={(e) => { if (e.target === e.currentTarget) jumping.current = false; }}
            onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}
            tabIndex={0} role="region" aria-label="Transcript">
         {loading && loadError && (
@@ -5272,12 +5325,25 @@ export default function App() {
       // The engine's own "model is thinking" only says a request is out
       // and nothing came back: that is Waiting (worded the same on the
       // page), and as a label of work it turned the header to Working.
-      if (ev.kind === "activity") { setActivity(ev.text === ENGINE_WAITING ? "" : ev.text); return; }
+      // The engine announces neither its input nor its replies (serve's
+      // supervisor: the child never prints "input"), so a turn's prompt
+      // landed only with its first recorded call end or its done: until
+      // then it stood as an unrecorded send, and a live call started
+      // meanwhile rendered as a turn of its own above it. A model request and a native call's start both come after
+      // everything before them was recorded: catch up on those too, the
+      // fragments before them superseded as by any record.
+      const recorded = () => { superseded = runs; clearTimeout(timer); timer = setTimeout(catchUp, 120); };
+      if (ev.kind === "activity") {
+        setActivity(ev.text === ENGINE_WAITING ? "" : ev.text);
+        if (ev.text === ENGINE_WAITING) recorded();
+        return;
+      }
       // An engine's call carries the provider's call id (a string); the loop's per-block calls number theirs.
       const native = (ev.kind === "call" || ev.kind === "sub:call") && typeof ev.extra?.id === "string";
       // Live only, never refetched: a native call's start and its streamed output.
       if (ev.kind === "call-delta" || (native && ev.extra?.phase === "start")) {
         setNativeRunning((m) => liveNative(m, ev));
+        if (ev.kind !== "call-delta") recorded();
         return;
       }
       // A native call's end falls through: it is recorded, and the refetch below brings the row that replaces the running one.
@@ -5863,7 +5929,7 @@ export default function App() {
                onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
                onStartIn={(path) => { setPalCwd(path); setPalette(true); }}
                startIn={palCwd ? (palCwd === home ? "home" : palCwd.split("/").filter(Boolean).pop() || palCwd) : undefined} />
-      <Sidebar rows={visible} projects={projects} selected={sidebarSelected(view, lost, selected, lastId)} active={pane === "list"}
+      <Sidebar rows={visible} projects={projects} selected={sidebarSelected(view, lost, selected, lastId)} active={pane === "list"} viewing={viewing || ""}
                onSelect={(id) => {
                  openSession(id);
                  // A row there only for what was said lands on the line that said it.
@@ -5876,11 +5942,16 @@ export default function App() {
                view={view === "project" ? "projects" : view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
-               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => void refresh()}
+               // Its Retry says it is loading again while the read is out:
+               // "Couldn’t load archived" stayed until it answered.
+               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => { setLoadErr(null); void refresh(); }}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal} onOpenProject={goProject}
                onMove={(id, p) => act(() => api.assign(id, p), "move the session")}
-               loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
+               // A first load that failed says it is loading again while the
+               // retry is out: "Sessions unavailable" stayed on screen until
+               // it answered, as if the click had done nothing.
+               loadedAt={loadedAt} loadErr={loadErr} onRetry={() => { if (loadedAt === null) setLoadErr(null); void refresh(); }} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">

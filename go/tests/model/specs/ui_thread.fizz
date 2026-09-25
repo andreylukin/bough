@@ -332,7 +332,11 @@ role Thread:
             self.edits = True
         self.fresh = self.away
 
-    # The turn ends on an error (a provider failure): the error card.
+    # The turn ends on an error (a provider failure): the error card. A
+    # turn that made a call had a response answer first: its usage is
+    # recorded with the error, and a call that wrote leaves its "N files"
+    # link, as a finished turn's does. Only a turn that never got an
+    # answer reports nothing.
     atomic action Fail:
         require live(self) and self.status == "running" and self.call != "running"
         self.status = "error"
@@ -340,6 +344,10 @@ role Thread:
         self.workOpen = False
         self.callOpen = self.call == "failed"
         self.errCard = True
+        if self.call != "none":
+            self.usage = True
+        if self.call == "ok":
+            self.edits = True
         self.fresh = self.away
 
 action Init:
