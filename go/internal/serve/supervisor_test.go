@@ -742,7 +742,11 @@ func TestSupervisorAnswerRejectsAskEndedDuringReload(t *testing.T) {
 func TestSupervisorNativeAskOutlivesItsSiblings(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
+	f.seed(t, "sess-native")
+	var seq int64
 	emit := func(kind, text string, extra map[string]any) {
+		seq++
+		f.seed(t, "sess-native", history.Entry{Seq: seq, Kind: kind, Data: extra})
 		f.sup.mu.Lock()
 		f.sup.emitLocked("sess-native", kind, text, extra)
 		f.sup.mu.Unlock()

@@ -1550,21 +1550,35 @@ func (s *Supervisor) PendingAsk(id string) *Ask {
 // not closed: the arm is all there is to go on.
 func askClosedIn(entries []history.Entry, askID string) bool {
 	asked, closed := false, false
+	call := ""
 	for _, e := range entries {
 		switch e.Kind {
 		case "ask":
 			if str(e.Data["id"]) == askID {
 				asked, closed = true, false
+				call = str(e.Data["call"])
 			}
 		case "ask/answer":
 			if str(e.Data["id"]) == askID {
 				closed = true
 			}
 		case "call":
-			if t := str(e.Data["tool"]); t == "ask" || t == "secret" {
+			if e.Data["phase"] == "start" {
+				continue
+			}
+			if call != "" {
+				if str(e.Data["id"]) == call {
+					closed = true
+				}
+			} else if t := str(e.Data["tool"]); t == "ask" || t == "secret" {
 				closed = true
 			}
-		case "result", "done", "cancelled":
+		case "result":
+			// A native ask can outlive a sibling run_js result.
+			if call == "" {
+				closed = true
+			}
+		case "done", "cancelled":
 			closed = true
 		}
 	}
