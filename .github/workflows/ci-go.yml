@@ -257,7 +257,7 @@ jobs:
       # Uploaded even when green: the merge job needs every shard's blob.
       - name: Upload blob report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: blob-report-${{ matrix.shard }}
           path: go/tests/web/blob-report/
@@ -286,7 +286,7 @@ jobs:
           pattern: blob-report-*
           merge-multiple: true
       - run: npx playwright merge-reports --reporter html ./all-blob-reports
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: playwright-html-report
           path: go/tests/web/playwright-report/
