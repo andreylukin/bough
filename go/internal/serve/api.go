@@ -544,7 +544,19 @@ func (a *API) unarchive(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) ack(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	a.metaVerb(w, id, func() error { return a.sup.Acknowledge(id) })
+	var body struct {
+		Seq int64 `json:"seq"`
+	}
+	// The body is optional: a bare POST acks everything recorded. A
+	// page names the last entry it showed, so a finish that landed
+	// while the request was on its way is not marked seen unseen.
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: bad request body: %w", err))
+			return
+		}
+	}
+	a.metaVerb(w, id, func() error { return a.sup.Acknowledge(id, body.Seq) })
 }
 
 func (a *API) metaVerb(w http.ResponseWriter, id string, fn func() error) {

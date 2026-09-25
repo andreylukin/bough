@@ -1,0 +1,279 @@
+---
+# A session nobody touches any more (the turn over, both acks saved, B
+# caught up) has no next step; that is an end state, not a deadlock. The
+# liveness checks still see it: an end state stutters forever.
+deadlock_detection: false
+---
+# Two browser tabs on one session (go/tests/model/README.md). Tab A is
+# the one acting: it archives, unarchives, renames, stops or marks the
+# session seen. Tab B has the same session open and only learns about A
+# through its list poll or the session's event stream, and it may act on
+# what it last read.
+#
+# Server (go/internal/serve): POST /archive and /unarchive set
+# meta.Archived (SetArchived kills the child when archiving; both are
+# idempotent: a second archive answers 200), /rename sets the title in
+# meta, /interrupt stops the turn, /ack is Supervisor.Acknowledge, and
+# /prompt refuses an archived session with 409 (ErrArchived). The row's
+# unseen is "the last done is past meta.Ack" (digest.go).
+#
+# Page (web/src/app.tsx): the list poll (refresh(true)) runs every 4 s,
+# every 12 s while a session is open (its event stream is expected to
+# carry its changes), never in a hidden tab, and once at once when the
+# tab comes back. It reads the open session's row too, also when the
+# list no longer has it (archived). Every action of B's goes through act
+# or deliverTo, whose finally awaits refresh(): B's own action ends with
+# a fresh read. archiveRow picks Archive or Unarchive from B's copy of
+# the row (r.archived), not the server's. The page acks a shown unseen
+# finish (viewingUnseen) unless document.hidden, and refreshes after.
+#
+# Fields: the server's (archived, title, status, seq, ack, unseen), B's
+# copy of the row (bArchived, bTitle, bStatus, bUnseen), B's tab
+# (bVisible), whether B has read since the server last changed (bFresh),
+# whether B's composer shows a refused send (bRefused: set by the Send
+# that was refused, gone at B's next read) and the two acks in flight (aAck, bAck: -1 when none, else the seq the ack read).
+#
+# Mapped states, as field values:
+#   BothViewing              bFresh and bVisible
+#   AArchived_BStale         archived and not bArchived
+#   BPollDropsRow/BShowsArchived  a PollTick after that: bArchived
+#   ARenamed_BHeaderStale    title != bTitle
+#   AStopped_BWorking        status "stopped", bStatus "working"
+#   AAcked_BDotStale         not unseen and bUnseen
+#   BHidden / BVisibleAgain  bVisible False / True again
+#   BActsOnStale             B.ArchiveMenu or B.Send with bFresh False
+#   AckRead_n_then_saved_after_n+1  aAck or bAck < seq while saving
+#   UnseenAgainSpurious      unreachable: the ack is saved as max(); see
+#                            AckMonotonic
+#   Converged                bFresh, no ack in flight, nothing unseen
+#
+# Where this differs from the code, on purpose or as a finding:
+# - Supervisor.Acknowledge reads the entries without s.mu and then sets
+#   meta.Ack unconditionally. Two acks that race a new entry can save out
+#   of order: the one that read seq n saves after the one that read n+1,
+#   meta.Ack goes back to n and the finish at n+1 shows unseen again,
+#   in both tabs, although B already acked it. The spec saves
+#   max(ack, read) (AckSave), which is the contract AckMonotonic and
+#   NoSpuriousUnseen state; the code's unconditional set fails both (the
+#   mutation that proves them is exactly the code).
+# - seq counts done entries only, at most MAXSEQ. A stopped turn writes
+#   an interrupted done in the product; it never makes the row unseen
+#   (status is not done), so here it writes nothing.
+# - Archiving kills the child: a turn in flight ends "stopped".
+# - The event stream carries status only (a turn ending, an interrupt);
+#   rename and archive reach B by the poll. An archived session has no
+#   child and sends no event (Event requires not archived).
+# - A's own view is always fresh (every action of A's refreshes) and is
+#   not state here; A's Archive/Unarchive/Rename/Stop are single
+#   requests, atomic steps. Only A's ack is split, to race B's.
+# - The palette's "Mark every failure seen" acks through the same
+#   Acknowledge; it is A.AckRead/AckSave here (trouble is not modelled).
+# - One rename, t0 -> t1, before the first turn. A rename is a meta write
+#   that touches nothing else here; its only interplay is B's copy going
+#   stale, which one rename shows. Renaming later, or again, multiplies
+#   every ack interleaving by the title and adds no claim (~1.5x states).
+# - Timing is not modelled: "within one poll" is "at the next PollTick";
+#   that B waits 12 s instead of 4 s while streaming is a latency, not a
+#   state.
+
+MAXSEQ = 2
+
+role Session:
+    action Init:
+        self.archived = False
+        self.title = "t0"
+        self.status = "idle"
+        self.seq = 0
+        self.ack = 0
+        self.unseen = False
+        self.bArchived = False
+        self.bTitle = "t0"
+        self.bStatus = "idle"
+        self.bUnseen = False
+        self.bVisible = True
+        self.bFresh = True
+        self.bRefused = False
+        self.aAck = -1
+        self.bAck = -1
+
+    # Any change on the server: the row's unseen is derived again, and
+    # B's copy is no longer known to be current.
+    atomic func changed():
+        self.unseen = self.status == "done" and self.seq > self.ack
+        self.bFresh = False
+
+    # B's refresh: the list read (or the open row's own read, once the
+    # list no longer has it) replaces B's copy of the row.
+    atomic func bRead():
+        self.bArchived = self.archived
+        self.bTitle = self.title
+        self.bStatus = self.status
+        self.bUnseen = self.unseen
+        self.bFresh = True
+        self.bRefused = False
+
+    # --- tab A: one request each, A's view refreshed after ---
+
+    atomic action AArchive:
+        require not self.archived
+        self.archived = True
+        if self.status == "working":
+            self.status = "stopped"
+        self.changed()
+
+    atomic action AUnarchive:
+        require self.archived
+        self.archived = False
+        self.changed()
+
+    atomic action ARename:
+        require self.title == "t0" and self.seq == 0 and self.status == "idle"
+        self.title = "t1"
+        self.changed()
+
+    atomic action AStop:
+        require self.status == "working"
+        self.status = "stopped"
+        self.changed()
+
+    # Acknowledge, split where the code is: the entries are read first
+    # (outside s.mu), the ack saved later under it. A marks seen only
+    # what it shows as unseen.
+    atomic action AAckRead:
+        require self.unseen and self.aAck == -1
+        self.aAck = self.seq
+
+    atomic fair action AAckSave:
+        require self.aAck != -1
+        if self.aAck > self.ack:
+            self.ack = self.aAck
+        self.aAck = -1
+        self.changed()
+
+    # --- the session's child ---
+
+    # The turn finishes: a done entry, the row unseen until acked.
+    atomic fair action ChildWritesEntry:
+        require self.status == "working"
+        self.seq = self.seq + 1
+        self.status = "done"
+        self.changed()
+
+    # --- tab B ---
+
+    # The list poll (or the read on coming back to the tab). Only when it
+    # has something to bring: a read that changes nothing is not a step.
+    atomic fair<strong> action BPollTick:
+        require self.bVisible and not self.bFresh
+        self.bRead()
+
+    # The session's event stream: a status change, not a row. Events
+    # arrive in a hidden tab too (EventSource keeps running).
+    atomic action BEvent:
+        require not self.archived and self.bStatus != self.status
+        self.bStatus = self.status
+
+    atomic action BHide:
+        require self.bVisible
+        self.bVisible = False
+
+    atomic action BShow:
+        require not self.bVisible
+        self.bVisible = True
+
+    # archiveRow on B's copy: Unarchive when B thinks it archived, else
+    # Archive (after the confirm dialog). Both requests are idempotent on
+    # the server, so a stale B re-archives or re-unarchives harmlessly;
+    # act's refresh then brings B's copy up to date.
+    atomic action BArchiveMenu:
+        require self.bVisible
+        if self.bArchived:
+            if self.archived:
+                self.archived = False
+                self.changed()
+        else:
+            if not self.archived:
+                self.archived = True
+                if self.status == "working":
+                    self.status = "stopped"
+                self.changed()
+        self.bRead()
+
+    # The composer: disabled while B's copy says archived or working
+    # (a running turn gets a steer, which is not this flow). A stale copy
+    # sends to an archived session: serve answers 409 and deliverTo shows
+    # the message. Otherwise a turn starts. Bounded by MAXSEQ turns.
+    atomic action BSend:
+        require self.bVisible and not self.bArchived and self.bStatus != "working" and self.seq < MAXSEQ
+        refused = self.archived
+        if not self.archived:
+            self.status = "working"
+            self.changed()
+        self.bRead()
+        self.bRefused = refused
+
+    # viewingUnseen: B shows the transcript, its copy says unseen, and
+    # the tab is not hidden. The ack's save refreshes B.
+    atomic fair<strong> action BAckRead:
+        require self.bVisible and self.bUnseen and self.bAck == -1
+        self.bAck = self.seq
+
+    atomic fair action BAckSave:
+        require self.bAck != -1
+        if self.bAck > self.ack:
+            self.ack = self.bAck
+        self.bAck = -1
+        self.changed()
+        self.bRead()
+
+action Init:
+    session = Session()
+
+# The menu B offers is "Archive" exactly when its copy says not archived:
+# once B has read the row, that copy is the server's.
+always assertion NoArchiveOfferOnceRead:
+    return not (session.bFresh and session.archived and not session.bArchived)
+
+# B's header (title, status, dot) equals the server's after one read.
+always assertion BReadIsTruth:
+    s = session
+    return not s.bFresh or (s.bArchived == s.archived and s.bTitle == s.title and
+                            s.bStatus == s.status and s.bUnseen == s.unseen)
+
+# An archived session never runs a turn: nothing B sends starts one.
+always assertion ArchivedNeverWorks:
+    return not (session.archived and session.status == "working")
+
+# B's send to an archived session is refused with a message, never
+# delivered and never unarchiving it on the quiet.
+# (ArchivedNeverWorks covers "never delivered".)
+transition assertion ArchivedSendRefused(before, after):
+    b = before.session
+    a = after.session
+    if not b.bRefused and a.bRefused:
+        return a.archived and b.archived and a.status == b.status
+    return True
+
+# A hidden tab never starts an ack.
+transition assertion HiddenTabNeverAcks(before, after):
+    return before.session.bVisible or not (before.session.bAck == -1 and after.session.bAck != -1)
+
+# meta.Ack never goes back.
+transition assertion AckMonotonic(before, after):
+    return after.session.ack >= before.session.ack
+
+# A finish that was seen does not come back unseen without a new entry.
+transition assertion NoSpuriousUnseen(before, after):
+    b = before.session
+    a = after.session
+    return not (not b.unseen and a.unseen) or a.seq > b.seq
+
+# B converges once visible: its copy is current again, and stays so
+# until the server next changes.
+always eventually assertion BConverges:
+    return not session.bVisible or session.bFresh
+
+# Viewing a session clears its unseen in every tab: the server's dot and
+# B's copy of it.
+always eventually assertion UnseenClears:
+    return not session.bVisible or not (session.unseen or session.bUnseen)

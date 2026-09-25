@@ -1285,3 +1285,50 @@ func TestSupervisorStderrLeavesAskArmed(t *testing.T) {
 		t.Fatal("the stderr line was not relayed")
 	}
 }
+
+// Two tabs' acks race a new finish and the one that read the older entry
+// saves last. Acknowledge used to set it unconditionally, taking the ack
+// back and bringing a finish the other tab had seen back unseen
+// (tests/model/specs/multi_tab_remote_change.fizz, AckMonotonic).
+func TestSupervisorAcknowledgeNeverGoesBack(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	now := time.Now()
+	f.seed(t, "sess-ack",
+		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
+		history.Entry{Seq: 2, At: now, Kind: "input"},
+		history.Entry{Seq: 3, At: now, Kind: "done"},
+		history.Entry{Seq: 4, At: now, Kind: "input"},
+		history.Entry{Seq: 5, At: now, Kind: "done"},
+	)
+	if err := f.sup.Acknowledge("sess-ack", 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.sup.Acknowledge("sess-ack", 3); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.sup.Meta("sess-ack").Ack; got != 5 {
+		t.Errorf("ack after a late save of seq 3 = %d, want 5", got)
+	}
+	// A page acks only what it showed; a bare ack takes everything.
+	if err := f.sup.Acknowledge("sess-ack", 0); err != nil {
+		t.Fatal(err)
+	}
+	f.seed(t, "sess-shown",
+		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
+		history.Entry{Seq: 2, At: now, Kind: "done"},
+		history.Entry{Seq: 3, At: now, Kind: "done"},
+	)
+	if err := f.sup.Acknowledge("sess-shown", 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.sup.Meta("sess-shown").Ack; got != 2 {
+		t.Errorf("ack up to 2 saved %d", got)
+	}
+	if err := f.sup.Acknowledge("sess-shown", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.sup.Meta("sess-shown").Ack; got != 3 {
+		t.Errorf("a bare ack saved %d, want the last entry 3", got)
+	}
+}

@@ -2090,7 +2090,7 @@ func (s *Supervisor) restoreMetaLocked(id string, old SessionMeta, had bool) {
 }
 
 // Acknowledge marks everything the session has recorded so far as seen.
-func (s *Supervisor) Acknowledge(id string) error {
+func (s *Supervisor) Acknowledge(id string, upTo int64) error {
 	entries, err := s.Entries(id)
 	if err != nil {
 		return err
@@ -2099,10 +2099,17 @@ func (s *Supervisor) Acknowledge(id string) error {
 	if n := len(entries); n > 0 {
 		last = entries[n-1].Seq
 	}
+	if upTo > 0 && upTo < last {
+		last = upTo
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old, had := s.meta[id]
 	m := old
+	// A late acknowledgement cannot undo a newer one.
+	if last <= m.Ack {
+		return nil
+	}
 	m.Ack = last
 	s.meta[id] = m
 	// A failed ack leaves the mark: the page says it could not clear it.
