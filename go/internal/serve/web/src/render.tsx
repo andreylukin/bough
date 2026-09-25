@@ -842,7 +842,7 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
     // The error that ended the turn is the turn's outcome, not one of its actions: keep its card in view.
     const before = cur.at(-1), last = before?.kind === "tools" ? before.lines.at(-1) : before?.kind === "line" ? before.line : undefined;
     const blockFailed = last?.kind === "result" && ((typeof last.data?.exit === "number" && last.data.exit !== 0) || thrownError(last));
-    if (it.kind === "line" && it.line.kind === "error" && !blockFailed && items.slice(items.indexOf(it) + 1).every((x) => x.kind === "line" && (x.line.kind === "done" || isHookLine(x.line)))) { flush(); out.push({ kind: "notice", item: it }); continue; }
+    if (it.kind === "line" && it.line.kind === "error" && !blockFailed && items.slice(items.indexOf(it) + 1).every((x) => x.kind === "line" && (x.line.kind === "done" || isQuiet(x.line.kind)))) { flush(); out.push({ kind: "notice", item: it }); continue; }
     cur.push(it);
   }
   flush();

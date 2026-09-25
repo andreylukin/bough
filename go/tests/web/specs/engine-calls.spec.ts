@@ -113,10 +113,10 @@ test('a recorded engine turn: call rows open onto output, a wake turn is a quiet
   await expect(page.getByText('SENTINEL_BUILD_OUTPUT')).toBeVisible();
 });
 
-test('a turn that left a call running says so until the call reports, and leads to Work', async ({ page, serve }) => {
+test('a recorded running call is not shown as live after its process exits', async ({ page, serve }) => {
   await page.goto(`${serve.url}/#/s/${SID_RUNNING}`);
   await expect(page.getByText('Fixed the parser; the build runs on in the background.')).toBeVisible();
-  await expect(page.getByRole('button', { name: '1 call still running' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '1 call still running' })).toHaveCount(0);
 });
 
 // The live half needs an engine-unreal row that mounts in this binary.

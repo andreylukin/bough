@@ -5542,7 +5542,13 @@ export default function App() {
     // nothing saying so. Retry on a backoff until one lands.
     let backoff = 4000;
     let synced = Date.now();
+    let fetching = false;
+    let again = false;
     const catchUp = () => {
+      // A list poll and the event timer can notice the same missing lines.
+      // Keep one read in flight and remember signals received during it.
+      if (fetching) { again = true; return; }
+      fetching = true;
       // The fetch used to start inside a setLines updater, which React may
       // run twice. The cursor comes from a ref instead, and the stream
       // boundary is captured when the request starts: a response must not
@@ -5568,11 +5574,19 @@ export default function App() {
         });
       }).catch(() => {
         if (!live) return;
+        again = false; // the backoff below already retries this read
         // The transcript stays; the header says it is no longer current.
         setPaused((p) => p ?? synced);
         clearTimeout(timer);
         timer = setTimeout(catchUp, backoff);
         backoff = Math.min(backoff * 2, 30_000);
+      }).finally(() => {
+        fetching = false;
+        if (live && again) {
+          again = false;
+          clearTimeout(timer);
+          timer = setTimeout(catchUp, 120);
+        }
       });
     };
     setActivity("");

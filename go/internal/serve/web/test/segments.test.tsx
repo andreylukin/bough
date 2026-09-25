@@ -138,3 +138,15 @@ test("a turn that ends on an error after its work shows the error card outside t
   expect(card).toBeGreaterThan(-1);
   expect(seg === -1 || html.slice(seg, card).includes("</details>")).toBe(true);
 });
+
+test("a provider error stays visible when its unfinished call becomes a job", () => {
+  const ended: Line[] = [lines[0],
+    { seq: 2, at: at(1), kind: "call", text: "read", data: { id: "read", tool: "view" } },
+    { seq: 3, at: at(2), kind: "error", text: "context window exceeded" },
+    { seq: 4, at: at(2), kind: "job", text: "", data: { event: "started", id: 1 } },
+    { seq: 5, at: at(2), kind: "done", text: "", data: { stop: "error", running: 1 } }];
+  const notice = segsOf(ended).find((s) => s.kind === "notice");
+  expect(notice?.kind === "notice" && notice.item.seq).toBe(3);
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(ended)[0]} />);
+  expect(html).toContain("Switch model");
+});

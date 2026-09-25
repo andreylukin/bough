@@ -262,9 +262,8 @@ func TestQueuedEmptyThreadEndingIsNoFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "b started", func() bool { return f.sup.historyExists(b) })
-	if m := f.sup.Meta(b); m.Task != nil {
-		t.Fatalf("the started empty thread keeps a task: %+v", m)
-	}
+	// The history file precedes the started event that clears the task.
+	waitFor(t, "b's start acknowledged", func() bool { return f.sup.Meta(b).Task == nil })
 	if err := f.sup.Kill(b); err != nil {
 		t.Fatal(err)
 	}

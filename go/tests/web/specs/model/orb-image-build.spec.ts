@@ -260,7 +260,10 @@ modelTests<Ctx>({
         const body = await res.text();
         if (res.ok()) {
           const id: string = JSON.parse(body).session.id;
-          await expect.poll(async () => (await c.serve.api.get(`/api/sessions/${id}`)).status(), { message: `StartAnyway: ${id} never listed` }).toBe(200);
+          await expect.poll(async () => {
+            const read = await c.serve.api.get(`/api/sessions/${id}`);
+            return read.ok() && !(await read.json()).session.starting;
+          }, { message: `StartAnyway: ${id} never started` }).toBe(true);
           created = id;
         } else created = `${res.status()} ${body}`;
         await route.fulfill({ response: res, body });
