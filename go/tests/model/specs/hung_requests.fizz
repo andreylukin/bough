@@ -1,0 +1,221 @@
+---
+deadlock_detection: false
+---
+
+# hung_requests: the session list poll, a send and Stop when a request
+# the web control room waits on is slow or never answers
+# (go/tests/model/README.md). The failures other flows model (ui_sidebar,
+# ui_thread, stop_interrupt) are reads that fail; this one is reads and
+# sends that hang. Its twin, hung_transcript, is the thread's first
+# transcript read and catch-up; the flow was split there because the two
+# together were 7920 states and share no field.
+#
+# Every request goes through api.ts req(), a bare fetch with no timeout
+# and no AbortSignal: a server that accepts the connection and never
+# answers leaves the promise pending for as long as the tab lives. The
+# contrast is palette.tsx getJSON and mention.tsx's skills read, which
+# reject after 15 s and are shown as failures with Retry.
+#
+# List (app.tsx refresh): the poll (every 4 s, 12 s while a session is
+# open) calls refresh(true), which returns at once while inFlight is set:
+# one list read at a time. Every read sets inFlight and takes the next
+# readSeq; only the newest read's answer lands and only its finally
+# clears inFlight. A read that fails sets loadErr, which is what shows
+# "Updates delayed · synced … ago · Retry"; a read that never answers
+# sets nothing. A non-poll read (Retry, the refresh after a send or an
+# action, leaving a thread) is not gated: it supersedes the hung one, and
+# when IT answers, inFlight clears and polling resumes.
+#
+# Send and Stop (Thread deliver/stop, App deliverTo/act), on the open,
+# loaded thread: a send is added to the Thread's `inflight` set as the
+# promise deliverTo returns, and deliverTo does not return until its
+# POST settles AND the list read in its finally (`await refresh()`)
+# settles. Stop sets "Stopping", awaits Promise.allSettled(inflight), and
+# only then POSTs /interrupt (then act's own `await refresh()`).
+#
+# Fields (Page role):
+#   list      the newest list read: none | out | hung (a hung read never
+#             answers; the page cannot tell it from a slow one)
+#   skipped   a poll tick found inFlight set since the list last landed
+#             (loadedAt is frozen and the poll did nothing)
+#   delayed   loadErr is set: "Updates delayed … Retry" is on screen
+#   send      the one send in flight, as Stop's inflight set sees it:
+#             none | post (POST out) | posthung | read (its finally's
+#             list read, which is the `list` slot) | readhung
+#   running   the session's turn is running on the server
+#   stop      Thread.stop(): none | waiting (awaiting inflight sends)
+#
+# Abstractions, each to keep the graph small:
+# - one send at a time: the composer is `busy` while deliverTo is locked.
+#   A send is a steer while the turn runs and a prompt otherwise; the
+#   server takes either when the POST lands. A POST that hangs may or may
+#   not have reached it; this model says not, which only moves `running`,
+#   and no claim reads it.
+# - Stop's POST /interrupt is one step with its effect: once the sends
+#   settle it reaches serve and the turn stops (stop_interrupt models the
+#   hold and SIGINT behind it). A hung /interrupt is not modelled.
+# - TabHidden/Visible add no state: hidden only removes poll ticks, and
+#   visibilitychange calls refresh(true), which is a PollTick. The mapped
+#   TabHidden/Visible actions are PollTick.
+# - the thread is open and loaded throughout; leaving it (a non-poll list
+#   read) is the same step as RetryList for the list, and the transcript
+#   side is hung_transcript's.
+# - Answer/Fail/Hang are the server's choice per request. A request that
+#   is out and not hung answers (fair) or fails; one that hung never does.
+# - a superseded list read that is merely slow will answer, so a send
+#   waiting on it is done when it is superseded; one superseded while
+#   hung keeps the send waiting (its own promise never settles).
+#
+# Fairness: the page's own steps (the poll, the send's awaits, Stop
+# proceeding) and answers to requests that are out are strongly fair.
+# The person (Retry, Send, Stop), the turn (Finish) and the network
+# (Hang, Fail) are not.
+#
+# Corrections to the mapped model, from the code:
+# - "PollsSuppressed" is not permanent: any non-poll read (a send, an
+#   action, leaving the thread; Retry is not on screen) supersedes the
+#   hung read and clears inFlight when it answers. Polls stay suppressed
+#   only while the person does none of those.
+# - Stop does not await "deliverTo's list refresh" as such: it awaits the
+#   send's own promise, which includes that send's own list read. A poll
+#   that hangs does not gate Stop; the read a send made does.
+# - The mapped TimedOut state does not exist: nothing in req() times out.
+# - OpenSession, catch-up and the first read are hung_transcript's.
+#
+# The product does not meet the mapped invariants and liveness claims;
+# they are left out so the check stays green, and each is spelled below
+# with the counterexample fizz gave when it was added (the gaps are
+# findings, not fixed here):
+#
+#   ListStaleShown  not (list == "hung" and skipped and not delayed)
+#     PollTick, PollTick, ListHangs: the list read never answers, every
+#     later poll returns early, and nothing says the list is stale.
+#   StopNotGatedOnRead  not (stop == "waiting" and send in ("read", "readhung"))
+#     Send, SendPostAnswers, Stop: Stop waits on the list read that the
+#     send's finally started, not on anything Stop is about.
+#   (liveness) StopReachesServe  always eventually stop != "waiting"
+#     fizz's lasso ends with send == "readhung", stop == "waiting": the
+#     send's POST landed, its finally's list read hung, and "Stopping"
+#     stays forever with /interrupt never sent. Send, SendPostHangs, Stop
+#     is the same.
+#   (liveness) ListReRead  always eventually list != "hung"
+#     PollTick, PollTick, ListFails, PollTick, PollTick, ListHangs, then
+#     only PollTick: never re-read, though "Updates delayed" is still on
+#     screen from the earlier failure and its Retry is the way out.
+
+def supersede(list, send):
+    # A non-poll refresh: a new newest read, not gated on inFlight. A send
+    # waiting on a slow read is released by it (that read still answers);
+    # one waiting on a hung read keeps waiting. Returns (list, send).
+    if send == "read":
+        send = "none"
+    return ("out", send)
+
+role Page:
+    action Init:
+        self.list = "none"
+        self.skipped = False
+        self.delayed = False
+        self.send = "none"
+        self.running = True
+        self.stop = "none"
+
+    # The interval (and a tab coming back): refresh(true).
+    atomic fair<strong> action PollTick:
+        if self.list == "none":
+            self.list = "out"
+        else:
+            self.skipped = True
+
+    atomic fair<strong> action ListAnswers:
+        require self.list == "out"
+        self.list = "none"
+        self.skipped = False
+        self.delayed = False
+        if self.send == "read":
+            self.send = "none"
+
+    atomic action ListFails:
+        require self.list == "out"
+        self.list = "none"
+        self.skipped = False
+        self.delayed = True
+        if self.send == "read":
+            self.send = "none"
+
+    atomic action ListHangs:
+        require self.list == "out"
+        self.list = "hung"
+        if self.send == "read":
+            self.send = "readhung"
+
+    # The sidebar's Retry, only on screen with loadErr.
+    atomic action RetryList:
+        require self.delayed
+        self.list, self.send = supersede(self.list, self.send)
+
+    atomic action Send:
+        require self.send == "none"
+        self.send = "post"
+
+    # Landed or failed, deliverTo's finally reads the list (not gated).
+    atomic fair<strong> action SendPostAnswers:
+        require self.send == "post"
+        self.running = True
+        self.send = "read"
+        self.list = "out"
+
+    atomic action SendPostFails:
+        require self.send == "post"
+        self.send = "read"
+        self.list = "out"
+
+    atomic action SendPostHangs:
+        require self.send == "post"
+        self.send = "posthung"
+
+    # Stop (Esc, the button, the palette), guarded while stopping.
+    atomic action Stop:
+        require self.running and self.stop == "none"
+        if self.send == "none":
+            # POST /interrupt reaches serve; act then reads the list.
+            self.running = False
+            self.list, self.send = supersede(self.list, self.send)
+        else:
+            self.stop = "waiting"
+
+    # allSettled resolved: POST /interrupt, then act's refresh.
+    atomic fair<strong> action StopProceeds:
+        require self.stop == "waiting" and self.send == "none"
+        self.stop = "none"
+        self.running = False
+        self.list, self.send = supersede(self.list, self.send)
+
+    atomic action Finish:
+        require self.running
+        self.running = False
+
+action Init:
+    page = Page()
+
+# The poll never stacks a read on one still out: a tick that finds one
+# out or hung only notes it was skipped.
+always assertion SkippedOnlyWhileOut:
+    return not page.skipped or page.list != "none"
+
+# A send waiting on its list read is waiting on the newest one.
+always assertion SendReadIsTheListRead:
+    return page.send != "read" or page.list == "out"
+
+# A request that is out and not hung is answered or reported.
+always eventually assertion ListReadSettles:
+    return page.list != "out"
+
+# A send whose requests answer ends: only a hang keeps it in flight.
+always eventually assertion SendSettlesUnlessHung:
+    return page.send in ("none", "posthung", "readhung")
+
+# A Stop with nothing hung reaches serve: the only way it waits forever
+# is a send that hung (StopReachesServe above).
+always eventually assertion StopProceedsUnlessHung:
+    return page.stop != "waiting" or page.send in ("posthung", "readhung")

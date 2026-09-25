@@ -4625,10 +4625,15 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     ro.observe(el);
     return () => { ro.disconnect(); root.style.removeProperty("--composer-h"); };
   }, []);
-  // A stop from a question never made the turn live: its end is the
-  // status leaving needs-you.
+  // A Stop still waiting on the sends before it is not over when the turn
+  // is: once they settle it interrupts whatever runs then (a steer that
+  // landed after the finish starts a turn), so it keeps saying Stopping
+  // until they have.
   const waitsOnYou = row.status === "needs-you";
-  useEffect(() => { if (!live && !waitsOnYou) setStopping(""); }, [live, waitsOnYou]);
+  const stopWaits = useRef(false);
+  const liveNow = useRef(live);
+  liveNow.current = live || waitsOnYou;
+  useEffect(() => { if (!live && !waitsOnYou && !stopWaits.current) setStopping(""); }, [live, waitsOnYou]);
   useEffect(() => {
     if (!restoreOnStop.current || running || loading) return;
     const t = stoppedPrompt(lines);
@@ -4641,7 +4646,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const stop = async () => {
     restoreOnStop.current = true;
     setStopping("stopping");
+    stopWaits.current = true;
     await Promise.allSettled([...inflight.current]);
+    stopWaits.current = false;
+    if (!liveNow.current) setStopping("");
     const ok = await onInterrupt();
     if (ok === false) setStopping("failed");
   };
@@ -5175,7 +5183,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               {/* A turn waiting on a question is still open: it can be
                   stopped without answering. Esc stays with the answer
                   being typed, so only the button says it. */}
-              {(live || waitsOnYou) && !loading && (stopping === "failed"
+              {(live || waitsOnYou || stopping === "stopping") && !loading && (stopping === "failed"
                 ? <button className="btn composer-stop-retry" onClick={stop} title={live ? "Stop (Esc)" : "Stop"} aria-keyshortcuts={live ? "Escape" : undefined}>Retry stop</button>
                 : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
                           aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title={live ? "Stop (Esc)" : "Stop"} aria-keyshortcuts={live ? "Escape" : undefined}>
@@ -5422,7 +5430,13 @@ export default function App() {
       created.current.delete(selected);
       failedLookup.current = null;
       setStarting(false);
-      setLines(r.entries);
+      // A catch-up can land first (the ring's replay arms one at once) and
+      // bring entries recorded after this read was sent; replacing the
+      // lines dropped them, and with no later event nothing re-read them.
+      setLines((cur) => {
+        const seen = new Set(r.entries.map((e) => e.seq));
+        return [...r.entries, ...cur.filter((l) => !seen.has(l.seq))];
+      });
       setLoadedFor(selected);
       setLooked(r.session);
       setRows((prev) => prev.map((x) => (x.id === r.session.id ? r.session : x)));
