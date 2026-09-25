@@ -50,6 +50,7 @@ type Meta struct {
 	Muted      bool   // the Gate answered without the provider
 	Partial    bool   // a cancelled stream; Output holds its text
 	Err        string // provider error the Gate converted
+	Overflow   bool   // Err is Model's context overflow (sticky for it)
 }
 
 type Config struct {

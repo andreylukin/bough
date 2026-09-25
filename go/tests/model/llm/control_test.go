@@ -627,3 +627,73 @@ func TestControlRecordsToolResults(t *testing.T) {
 		t.Fatalf("request 001 carried %q (%v), want no tool results", first, err)
 	}
 }
+
+func TestControlAPIRetry(t *testing.T) {
+	t.Parallel()
+	r := start(t, "--json")
+	Queue(t, r.dir(), "001", Turn{Mode: "api"})
+	r.send("hello")
+	WaitAttempt(t, r.dir(), "001", 1, 30*time.Second)
+	Stream(t, r.dir(), "001", "first try ", 30*time.Second)
+	r.waitFor(`"text":"first try "`)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "transient"})
+	WaitRetryWait(t, r.dir(), "001", 30*time.Second)
+	r.waitFor(`"kind":"delta-reset"`)
+	Retry(t, r.dir(), "001")
+	WaitAttempt(t, r.dir(), "001", 2, 30*time.Second)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "ok", Text: "second try"})
+	r.waitFor(`"text":"second try"`)
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if n := Attempts(r.dir(), "001"); n != 2 {
+		t.Fatalf("%d attempts, want 2", n)
+	}
+}
+
+func TestControlAPIRetriesExhausted(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "api"})
+	r.send("hello")
+	WaitAttempt(t, r.dir(), "001", 1, 30*time.Second)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "transient"})
+	WaitRetryWait(t, r.dir(), "001", 30*time.Second)
+	Retry(t, r.dir(), "001")
+	WaitAttempt(t, r.dir(), "001", 2, 30*time.Second)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "transient"})
+	r.waitFor("[error]")
+	code, out := r.finish()
+	if code != 1 {
+		t.Fatalf("exit %d, want 1 for an errored turn:\n%s", code, out)
+	}
+	if n := Attempts(r.dir(), "001"); n != 2 {
+		t.Fatalf("%d attempts, want 2:\n%s", n, out)
+	}
+}
+
+func TestControlAPIAnswers(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		kind, want string
+		code       int
+	}{
+		{"refused", "the model declined", 1},
+		{"overflow", "no longer fits the model's context window", 1},
+		{"max_tokens", "reply cut off at max_tokens", 0},
+		{"fatal", "the request was refused", 1},
+	} {
+		t.Run(c.kind, func(t *testing.T) {
+			t.Parallel()
+			r := start(t)
+			Queue(t, r.dir(), "001", Turn{Mode: "api", Answer: &Answer{Kind: c.kind, Text: "some text"}})
+			r.send("hello")
+			r.waitFor(c.want)
+			code, out := r.finish()
+			if code != c.code {
+				t.Fatalf("exit %d, want %d:\n%s", code, c.code, out)
+			}
+		})
+	}
+}

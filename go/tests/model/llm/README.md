@@ -21,6 +21,19 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 Every taken turn also leaves `<name>.req`, the request's input items as
 JSON: what reached the model, for a notice that lands inside a running
 turn and has no history entry of its own when it is sent.
+An `{"mode":"api"}` turn goes through the real Messages API adapter
+(`internal/messagesapi`) and its retry loop, with a budget of two
+attempts, against an HTTP server the row plays in process: nothing
+leaves the process. Each HTTP attempt writes `<name>.attempt-<k>` and
+is held; `<name>.stream` streams a fragment into it (`Stream`), and
+`<name>.answer` ends it (`AnswerWith`): `ok` (text, then `calls`),
+`transient` (a 529, or an in-stream `overloaded_error` after output:
+retried), `fatal` (a 400: not retried), `overflow` (a 400 "prompt is too
+long": a context overflow), `refused` or `max_tokens`. Before a retry the
+adapter waits, writing `<name>.waiting`, until `<name>.retry` exists
+(`WaitRetryWait`, `Retry`), so a test can stand in the wait. `answer` on
+the queued turn answers its first attempt at once. `model` on the row
+(`/model <id>`) names the model the row reports, `control` by default.
 
 While a `block` turn is held, each `<name>.say-<n>` the test writes
 (`control.Say`) is streamed as one live assistant delta and renamed
