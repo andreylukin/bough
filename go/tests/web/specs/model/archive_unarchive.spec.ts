@@ -101,7 +101,11 @@ async function answer(c: Ctx, button: string): Promise<void> {
 
 // The Work button's label (workSummaryText): "Work" alone with nothing,
 // else "Work, 1 running" and so on; the spec's words for the one agent.
+// A finished agent whose report landed as a notice (its parent not live)
+// also counts ", 1 new result" until this viewer opens it: that is review
+// state, per viewer and relative to when the page loaded, not the agent's.
 const AGENT: Record<string, string> = { 'Work': 'none', 'Work, 1 running': 'running', 'Work, 1 queued': 'queued', 'Work, 1 finished': 'done', 'Work, 1 stopped': 'stopped' };
+const agentOf = (label: string) => AGENT[label.replace(/, 1 new result$/, '')] ?? `unknown: ${label}`;
 
 async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
   const p = c.page;
@@ -120,7 +124,7 @@ async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
     listed: (await p.locator(`button.row[data-id="${c.id}"]`).count()) >
       (await p.locator(`#sec-archived button.row[data-id="${c.id}"]`).count()),
     dialog: /Archive this session\?/.test(modalText) ? 'confirm' : /Stop its .* too\?/.test(modalText) ? 'choice' : modalText ? `other: ${modalText}` : 'none',
-    agent: AGENT[workLabel] ?? `unknown: ${workLabel}`,
+    agent: agentOf(workLabel),
   };
 }
 
