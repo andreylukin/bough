@@ -172,13 +172,6 @@ const heldEdits = (c: Ctx, turn: boolean) => c.held.some((r) => {
   return /\/edits$/.test(u.pathname) && u.searchParams.has('turn') === turn;
 });
 
-// True once cond holds, false after ms: a wait on the page's reads
-// reaching the route, not a fixed pause.
-async function heldBy(cond: () => boolean, ms: number): Promise<boolean> {
-  for (const end = Date.now() + ms; !cond(); await new Promise((r) => setTimeout(r, 5))) if (Date.now() > end) return false;
-  return true;
-}
-
 // --- the page, as a person sees it
 
 const row = (c: Ctx, sid: Sid) => c.page.locator(`button.row[data-id="${c.ids[sid]}"]`).first();

@@ -263,7 +263,7 @@ func (a *hookDenyAdapter) ModelReads() error {
 		}
 		for _, e := range entries {
 			if e.Kind == "assistant" {
-				told = entryText(e)
+				told = hdelEntryText(e)
 			}
 		}
 	}
@@ -360,12 +360,12 @@ func hookDenyObserve(entries []history.Entry) hookDenyObs {
 		case "assistant":
 			// Code mode: echo's last reply repeats what it was told.
 			if o.engine != "engine" {
-				o.saw = hookDenySaw(entryText(e))
+				o.saw = hookDenySaw(hdelEntryText(e))
 			}
 		case "result":
 			// Code mode: what the block printed (a refusal is a result
 			// too, and its "code" is the block it did not run).
-			o.ran = hookDenyRan(entryText(e))
+			o.ran = hookDenyRan(hdelEntryText(e))
 		case "call":
 			// The engine: what the bash call printed is what the model
 			// reads back.
@@ -472,7 +472,7 @@ func hookDenyChip(lines []serve.Line) string {
 	return "absent"
 }
 
-func entryText(e history.Entry) string {
+func hdelEntryText(e history.Entry) string {
 	t, _ := e.Data["text"].(string)
 	return t
 }

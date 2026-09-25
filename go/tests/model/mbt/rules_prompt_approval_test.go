@@ -475,14 +475,15 @@ func (a *rpaAdapter) view() (rpaView, error) {
 
 // raisedOn names the Asker instance that numbered the ask entry at idx:
 // its gen when it is the current one, "stale" when it is one a ReloadAsk
-// replaced. Each instance numbers its asks ask-1, ask-2, …, so an entry
-// is the current instance's when it is next in its count.
+// replaced. Each new instance starts after the highest recorded ask id,
+// so an entry belongs to an instance when it is next in that count.
 func (a *rpaAdapter) raisedOn(entries []history.Entry, idx int) string {
 	count := make([]int, len(a.insts))
-	cur, inst := -1, -1
+	cur, inst, last := -1, -1, 0
 	for i, e := range entries {
 		for cur+1 < len(a.insts) && a.insts[cur+1] <= i {
 			cur++
+			count[cur] = last
 		}
 		if e.Kind != "ask" || cur < 0 {
 			continue
@@ -499,6 +500,7 @@ func (a *rpaAdapter) raisedOn(entries []history.Entry, idx int) string {
 				}
 			}
 		}
+		last = max(last, k)
 		if in >= 0 {
 			count[in]++
 		}

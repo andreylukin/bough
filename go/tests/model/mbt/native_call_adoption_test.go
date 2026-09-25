@@ -547,7 +547,7 @@ func (a *ncaAdapter) prompt(text string) error {
 	}
 	if _, err := a.waitEntries("the prompt's input", func(es []history.Entry) bool {
 		return slices.ContainsFunc(es, func(e history.Entry) bool {
-			return e.Seq > since && e.Kind == "input" && strings.TrimSpace(entryText(e)) == text
+			return e.Seq > since && e.Kind == "input" && strings.TrimSpace(ncaEntryText(e)) == text
 		})
 	}); err != nil {
 		return err
@@ -622,7 +622,7 @@ func (a *ncaAdapter) steerLanded() error {
 	text := a.steerTxt
 	if _, err := a.waitEntries("the steer's input", func(es []history.Entry) bool {
 		return slices.ContainsFunc(es, func(e history.Entry) bool {
-			return e.Kind == "input" && e.Data["steer"] == true && strings.Contains(entryText(e), text)
+			return e.Kind == "input" && e.Data["steer"] == true && strings.Contains(ncaEntryText(e), text)
 		})
 	}); err != nil {
 		return err
@@ -827,7 +827,7 @@ func hasJob(r serve.Row, id int) bool {
 	return id != 0 && slices.ContainsFunc(r.Jobs, func(j serve.Job) bool { return j.ID == id })
 }
 
-func entryText(e history.Entry) string { s, _ := e.Data["text"].(string); return s }
+func ncaEntryText(e history.Entry) string { s, _ := e.Data["text"].(string); return s }
 
 func isWake(e history.Entry) bool { return e.Kind == "input" && e.Data["wake"] == true }
 

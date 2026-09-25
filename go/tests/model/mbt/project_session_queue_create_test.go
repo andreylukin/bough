@@ -46,7 +46,7 @@ import (
 // the agent from main's children, the view from GET /api/sessions/{id}
 // (404 is 'Session not found'; a queued row is 'queued'; a row with no
 // history entries is 'starting'), lastat and the name from the thread's
-// listed row.
+// psqcListed row.
 const psqConfig = "- id: llm\n  plugin: llm-control\n  config:\n    hold_boot: true\n" +
 	"- id: orb\n  plugin: orb\n  config:\n    runtime: fake\n"
 
@@ -67,7 +67,7 @@ type psqAdapter struct {
 	restarts              int
 	postStart, postEnd    time.Time
 	renameTo              string // the name Rename sent, "" before
-	renamed               bool   // the last name serve listed matched it
+	renamed               bool   // the last name serve psqcListed matched it
 	threadTurn, agentTurn string // held llm-control turns
 	turn                  int
 	kids                  []string // every thread id, for the trace check
@@ -107,7 +107,7 @@ func (a *psqAdapter) Init() error {
 		done <- err
 	}()
 	var main string
-	if err := waitFor("main held at boot", func() (bool, error) {
+	if err := psqcWaitFor("main held at boot", func() (bool, error) {
 		for id, role := range control.Booting(a.dir) {
 			if role == "main" {
 				main = id
@@ -404,8 +404,8 @@ func verbWord(code int, err error) (string, error) {
 	return "", err
 }
 
-// waitFor polls cond until it holds, for at most actionTimeout.
-func waitFor(what string, cond func() (bool, error)) error {
+// psqcWaitFor polls cond until it holds, for at most actionTimeout.
+func psqcWaitFor(what string, cond func() (bool, error)) error {
 	deadline := time.Now().Add(actionTimeout)
 	for {
 		ok, err := cond()
@@ -426,7 +426,7 @@ func waitFor(what string, cond func() (bool, error)) error {
 // turn is closed: a turn main takes on a notice must not take a turn the
 // next step queues.
 func (a *psqAdapter) mainQuiet(has func([]history.Entry) bool) error {
-	return waitFor("main "+a.main+" quiet", func() (bool, error) {
+	return psqcWaitFor("main "+a.main+" quiet", func() (bool, error) {
 		es, err := history.Read(a.histPath(a.main))
 		return err == nil && has(es) && !turnOpen(es), nil
 	})
@@ -460,14 +460,14 @@ func (a *psqAdapter) queueTurn(who string) string {
 }
 
 func (a *psqAdapter) taken(name string) error {
-	return waitFor("turn "+name+" taken", func() (bool, error) {
+	return psqcWaitFor("turn "+name+" taken", func() (bool, error) {
 		_, err := os.Stat(filepath.Join(a.dir, name+".taken"))
 		return err == nil, nil
 	})
 }
 
 func (a *psqAdapter) heldAtBoot(id string) error {
-	return waitFor(id+" held at boot", func() (bool, error) {
+	return psqcWaitFor(id+" held at boot", func() (bool, error) {
 		_, ok := control.Booting(a.dir)[id]
 		return ok, nil
 	})
@@ -488,7 +488,7 @@ func (a *psqAdapter) startAgent() error {
 }
 
 func (a *psqAdapter) waitState(what string, ok func(psqState) bool) error {
-	return waitFor(what, func() (bool, error) {
+	return psqcWaitFor(what, func() (bool, error) {
 		st, err := a.state()
 		return err == nil && ok(st), err
 	})
@@ -504,7 +504,7 @@ func (a *psqAdapter) now() psqState {
 
 func pending(thread string) bool { return thread == "queued" || thread == "booting" }
 
-func listed(thread string) bool {
+func psqcListed(thread string) bool {
 	return slices.Contains([]string{"queued", "booting", "empty", "running", "idle"}, thread)
 }
 
@@ -601,7 +601,7 @@ func (a *psqAdapter) HistoryWritten() error {
 		name = a.queueTurn("thread")
 	}
 	control.ReleaseBoot(a.t, a.dir, a.thread)
-	if err := waitFor("the thread's history", func() (bool, error) { return a.hasHistory(a.thread), nil }); err != nil {
+	if err := psqcWaitFor("the thread's history", func() (bool, error) { return a.hasHistory(a.thread), nil }); err != nil {
 		return err
 	}
 	if a.prompted {
@@ -663,7 +663,7 @@ func (a *psqAdapter) Leave() error {
 }
 
 func (a *psqAdapter) Open() error {
-	if a.gate.pass(!a.opened && listed(a.now().thread)) {
+	if a.gate.pass(!a.opened && psqcListed(a.now().thread)) {
 		a.opened = true
 	}
 	return nil

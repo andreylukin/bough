@@ -301,7 +301,7 @@ func (a *pdwAdapter) turn() error {
 	if err != nil {
 		return err
 	}
-	if err := waitFile(filepath.Join(a.dir, name+".taken")); err != nil {
+	if err := pdwWaitFile(filepath.Join(a.dir, name+".taken")); err != nil {
 		return fmt.Errorf("turn %s taken: %w", name, err)
 	}
 	if _, err := waitRow(a.s, a.sid, "the turn to run", func(r serve.Row) bool { return r.Status == serve.StatusRunning }); err != nil {
@@ -313,7 +313,7 @@ func (a *pdwAdapter) turn() error {
 	return err
 }
 
-func waitFile(p string) error {
+func pdwWaitFile(p string) error {
 	deadline := time.Now().Add(actionTimeout)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(p); err == nil {

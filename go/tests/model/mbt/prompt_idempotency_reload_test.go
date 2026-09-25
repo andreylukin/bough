@@ -276,14 +276,14 @@ func (a *pirAdapter) entries(id string) ([]history.Entry, error) {
 func countInputs(entries []history.Entry, text string) int {
 	n := 0
 	for _, e := range entries {
-		if e.Kind == "input" && strings.TrimSpace(entryText(e)) == text {
+		if e.Kind == "input" && strings.TrimSpace(pirEntryText(e)) == text {
 			n++
 		}
 	}
 	return n
 }
 
-func entryText(e history.Entry) string {
+func pirEntryText(e history.Entry) string {
 	if s, ok := e.Data["typed"].(string); ok {
 		return s
 	}

@@ -134,15 +134,15 @@ func (a *ssoAdapter) Cleanup() error {
 	var errs []error
 	for _, k := range a.kids {
 		if k.id != "" {
-			errs = append(errs, killCwd(a.s, k.id, k.cwd))
+			errs = append(errs, ssoKillCwd(a.s, k.id, k.cwd))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// killCwd SIGKILLs the child whose cwd is cwd (a created session's
+// ssoKillCwd SIGKILLs the child whose cwd is cwd (a created session's
 // command line does not carry its id) and waits for serve to see it gone.
-func killCwd(s *servetest.Server, id, cwd string) error {
+func ssoKillCwd(s *servetest.Server, id, cwd string) error {
 	out, _ := exec.Command("lsof", "-a", "-d", "cwd", "-c", "bough", "-Fpn").Output()
 	pid := 0
 	for _, l := range strings.Split(string(out), "\n") {

@@ -113,10 +113,6 @@ func (a *API) queuedRow(id string) Row {
 	if prompt == "" && m.Task != nil {
 		prompt = m.Task.Prompt
 	}
-	title := m.Title
-	if title == "" {
-		title = oneLineTitle(prompt)
-	}
 	// A queued child has no history yet; only a project spawn carries a
 	// project, so the membership is what says where it will run.
 	mode := "local"
@@ -171,7 +167,7 @@ func (a *API) pendingRow(id string) (Row, bool) {
 // history file is not written yet.
 func (a *API) startingRow(id string) Row {
 	row := a.queuedRow(id)
-	row.Queued, row.Status, row.Live = false, StatusRunning, true
+	row.Queued, row.Status, row.Live, row.Starting = false, StatusRunning, true, true
 	return row
 }
 

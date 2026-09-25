@@ -531,9 +531,6 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, o ullm.Req
 				if then.Call != nil {
 					return a.call(ctx, then.Text, *then.Call)
 				}
-				if len(then.Calls) > 0 {
-					return a.calls(ctx, name, then.Calls)
-				}
 				if then.Mode == "call" {
 					return a.callTurn(ctx, name, then)
 				}
@@ -544,7 +541,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, o ullm.Req
 				// not an error, that the engine records as an error note
 				// mid-turn. Calls, when any, come with it.
 				if then.Mode == "refuse" {
-					r, err := a.calls(ctx, name, then.Calls)
+					r, err := a.calls(ctx, name, attempt, then.Calls)
 					r.Stop = ullm.StopRefused
 					r.Failure = &ullm.Failure{Code: "refusal:control", Message: then.Error}
 					return r, err
@@ -552,7 +549,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, o ullm.Req
 				// A release with calls answers with all of them at once:
 				// one reply whose calls the engine runs in parallel.
 				if len(then.Calls) > 0 {
-					return a.calls(ctx, name, then.Calls)
+					return a.calls(ctx, name, attempt, then.Calls)
 				}
 				// A release with a command answers with a bash call: the
 				// engine records it with its exit and asks again, so a

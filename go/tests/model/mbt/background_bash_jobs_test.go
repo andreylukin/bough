@@ -610,7 +610,7 @@ func (a *bbjAdapter) trigger(ev string) error {
 	return fmt.Errorf("no job event %q", ev)
 }
 
-func countLines(lines []serve.Line, ok func(serve.Line) bool) int {
+func bbjCountLines(lines []serve.Line, ok func(serve.Line) bool) int {
 	n := 0
 	for _, l := range lines {
 		if ok(l) {
@@ -634,7 +634,7 @@ func (a *bbjAdapter) deliver() error {
 	if err != nil {
 		return err
 	}
-	wakes, notes := countLines(lines, isNoticeWake), countLines(lines, isNote)
+	wakes, notes := bbjCountLines(lines, isNoticeWake), bbjCountLines(lines, isNote)
 	idle := a.held == ""
 	var w string
 	if idle {
@@ -648,7 +648,7 @@ func (a *bbjAdapter) deliver() error {
 	a.deferred = nil
 	if idle {
 		if _, err := a.wait("the notice to open a wake turn", actionTimeout, func(_ serve.Row, l []serve.Line) bool {
-			return countLines(l, isNoticeWake) > wakes
+			return bbjCountLines(l, isNoticeWake) > wakes
 		}); err != nil {
 			return err
 		}
@@ -656,7 +656,7 @@ func (a *bbjAdapter) deliver() error {
 		return a.taken(w)
 	}
 	_, err = a.wait("the notice to be queued in the open turn", actionTimeout, func(_ serve.Row, l []serve.Line) bool {
-		return countLines(l, isNote) > notes
+		return bbjCountLines(l, isNote) > notes
 	})
 	return err
 }
@@ -769,7 +769,7 @@ func (a *bbjAdapter) BashBackground(args []fmbt.Arg) error {
 			return err
 		}
 		if _, err := a.wait("the job's started entry", actionTimeout, func(_ serve.Row, l []serve.Line) bool {
-			return countLines(l, func(x serve.Line) bool { return x.Kind == "job" && x.Data["event"] == "started" }) > 0
+			return bbjCountLines(l, func(x serve.Line) bool { return x.Kind == "job" && x.Data["event"] == "started" }) > 0
 		}); err != nil {
 			return err
 		}

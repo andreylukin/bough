@@ -318,11 +318,11 @@ type Supervisor struct {
 	// a respawn through ensure starts the session the same way.
 	spawnArgs map[string]spawnSpec
 
-	// creating is the ids createWithID has spawned a child for and not
+	// creatingIDs is the ids createWithID has spawned a child for and not
 	// yet claimed. That child already writes the history file, so the
 	// row is listed and another tab can send to it; ensure must not
 	// spawn `-r <id>` beside it.
-	creating map[string]bool
+	creatingIDs map[string]bool
 	// unsaved marks a session whose child said its history is not being
 	// saved (a "history" event with saved false). It stays after that
 	// child exits, whose pending entries are then lost for good, until a
@@ -362,28 +362,28 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		rt = container.Default()
 	}
 	s := &Supervisor{
-		home:      home,
-		rt:        rt,
-		started:   time.Now(),
-		stoppedAt: map[string]time.Time{},
-		building:  map[string]bool{},
-		buildErr:  map[string]string{},
-		opt:       opt,
-		exe:       exe,
-		cwd:       cwd,
-		ring:      ring,
-		kids:      map[string]*child{},
-		events:    map[string][]Event{},
-		seq:       map[string]int64{},
-		asks:      map[string]*Ask{},
-		subs:      map[string]map[int]chan Event{},
-		deltas:    map[string]*deltaState{},
-		meta:      map[string]SessionMeta{},
-		mains:     map[string]string{},
-		running:   map[string]bool{},
-		waitStops: map[string]bool{},
-		creating:  map[string]bool{},
-		unsaved:   map[string]bool{},
+		home:        home,
+		rt:          rt,
+		started:     time.Now(),
+		stoppedAt:   map[string]time.Time{},
+		building:    map[string]bool{},
+		buildErr:    map[string]string{},
+		opt:         opt,
+		exe:         exe,
+		cwd:         cwd,
+		ring:        ring,
+		kids:        map[string]*child{},
+		events:      map[string][]Event{},
+		seq:         map[string]int64{},
+		asks:        map[string]*Ask{},
+		subs:        map[string]map[int]chan Event{},
+		deltas:      map[string]*deltaState{},
+		meta:        map[string]SessionMeta{},
+		mains:       map[string]string{},
+		running:     map[string]bool{},
+		waitStops:   map[string]bool{},
+		creatingIDs: map[string]bool{},
+		unsaved:     map[string]bool{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {
@@ -548,11 +548,11 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 		}
 	}
 	s.spawnArgs[id] = spawnSpec{args: slices.Clone(args), env: env}
-	s.creating[id] = true
+	s.creatingIDs[id] = true
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		delete(s.creating, id)
+		delete(s.creatingIDs, id)
 		s.mu.Unlock()
 	}()
 
@@ -619,25 +619,6 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 			return "", fmt.Errorf("serve: supervisor: %s did not appear in %s", path, createTimeout)
 		}
 		time.Sleep(createPoll)
-	}
-}
-
-// hold waits while <HoldDir>/<point> exists (Options.HoldDir), for at
-// most a minute, or until done closes.
-func (s *Supervisor) hold(point string, done <-chan struct{}) {
-	if s.opt.HoldDir == "" {
-		return
-	}
-	p := filepath.Join(s.opt.HoldDir, point)
-	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
-		if _, err := os.Stat(p); err != nil {
-			return
-		}
-		select {
-		case <-done:
-			return
-		case <-time.After(10 * time.Millisecond):
-		}
 	}
 }
 
@@ -753,7 +734,7 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 	}
 	// Create's child is running unclaimed: a second one would be a
 	// second writer on its file, and Create's claim would then fail.
-	if s.creating[id] {
+	if s.creatingIDs[id] {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("serve: supervisor: %s: %w", id, ErrStarting)
 	}
@@ -1980,37 +1961,6 @@ func (s *Supervisor) Main(slug string) (string, error) {
 		return "", fmt.Errorf("serve: supervisor: project %s: start the main thread: %w", slug, err)
 	}
 	return id, nil
-}
-
-// holding says whether <HoldDir>/<point> exists (Options.HoldDir).
-func (s *Supervisor) holding(point string) bool {
-	if s.opt.HoldDir == "" {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(s.opt.HoldDir, point))
-	return err == nil
-}
-
-// hold waits while <HoldDir>/<point> exists (Options.HoldDir), for at
-// most a minute, or until done closes, with <point>.at written while it
-// waits.
-func (s *Supervisor) hold(point string, done <-chan struct{}) {
-	if !s.holding(point) {
-		return
-	}
-	p := filepath.Join(s.opt.HoldDir, point)
-	_ = os.WriteFile(p+".at", nil, 0o644)
-	defer os.Remove(p + ".at")
-	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
-		if _, err := os.Stat(p); err != nil {
-			return
-		}
-		select {
-		case <-done:
-			return
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
 }
 
 // MainID is the project's main thread WITHOUT creating one: "" when it

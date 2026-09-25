@@ -373,7 +373,7 @@ func (a *pdAdapter) waitHistory(id, what string, ok func([]history.Entry) bool) 
 	return fmt.Errorf("%s %s: not settled after %s", what, id, actionTimeout)
 }
 
-func hasInput(text string) func([]history.Entry) bool {
+func pdwpsHasInput(text string) func([]history.Entry) bool {
 	return func(es []history.Entry) bool {
 		for _, e := range es {
 			if e.Kind == "input" && e.Data["text"] == text {
@@ -455,7 +455,7 @@ func (a *pdAdapter) StartMainAndThread() error {
 		return err
 	}
 	a.main = m.Main
-	if err := a.waitHistory(a.main, "main", hasInput(text)); err != nil {
+	if err := a.waitHistory(a.main, "main", pdwpsHasInput(text)); err != nil {
 		return err
 	}
 	task := "work in ~/repos/" + a.repo
@@ -471,7 +471,7 @@ func (a *pdAdapter) StartMainAndThread() error {
 		return fmt.Errorf("new thread: no session id")
 	}
 	a.kids = append(a.kids, a.thread)
-	if err := a.waitHistory(a.thread, "thread", func(es []history.Entry) bool { return hasInput(task)(es) && closedTurns(es) > 0 }); err != nil {
+	if err := a.waitHistory(a.thread, "thread", func(es []history.Entry) bool { return pdwpsHasInput(task)(es) && closedTurns(es) > 0 }); err != nil {
 		return err
 	}
 	if err := a.reported(); err != nil {

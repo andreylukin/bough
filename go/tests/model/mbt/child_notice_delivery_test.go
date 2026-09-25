@@ -669,42 +669,42 @@ func needsReal(s cndState) bool {
 }
 
 // realize puts the report into the real system the way the spec's path
-// sent it. It returns errUndrivable when the real system cannot rest
+// sent it. It returns cndErrUndrivable when the real system cannot rest
 // where the spec is (e.g. a notice the spec queued before a gap began).
 func (a *cndAdapter) realize(s cndState) error {
 	lease := s.proc == "live"
 	switch {
 	case a.viaPipe:
 		if !lease {
-			return errUndrivable
+			return cndErrUndrivable
 		}
 		switch s.report {
 		case "waiting":
 			if !a.gapOn {
-				return errUndrivable
+				return cndErrUndrivable
 			}
 		case "lost":
 			if s.lostHow != "secret_answer" {
-				return errUndrivable
+				return cndErrUndrivable
 			}
 		default:
 			if a.gapOn || s.ask == "secret" {
-				return errUndrivable
+				return cndErrUndrivable
 			}
 		}
 		return a.releaseChild()
 	case a.viaFile && lease:
 		if (s.report == "stored") != a.gapOn {
-			return errUndrivable
+			return cndErrUndrivable
 		}
 		return a.appendReport()
 	case a.viaFile:
 		return a.releaseChild()
 	}
-	return errUndrivable
+	return cndErrUndrivable
 }
 
-var errUndrivable = errors.New("the real system cannot rest where the spec is")
+var cndErrUndrivable = errors.New("the real system cannot rest where the spec is")
 
 func (a *cndAdapter) releaseChild() error {
 	if a.childTurn == "" {
@@ -1173,7 +1173,7 @@ func (a *cndAdapter) cndWalk(w tracecheck.Walk) (checked int, cut string, err er
 				err = a.settleReal(s1)
 			}
 		}
-		if errors.Is(err, errUndrivable) {
+		if errors.Is(err, cndErrUndrivable) {
 			return checked, fmt.Sprintf("step %d (%s) of %s: %v", i, name, cndActs(a.g, w), err), nil
 		}
 		if err != nil {

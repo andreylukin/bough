@@ -333,7 +333,7 @@ function checkLinks(n: Node, html: string) {
 
 function checkSettings(n: Node) {
   const html = renderToStaticMarkup(<HeadMore id={ID} open={n.settings} onToggle={noop}>
-    <SessionSettings row={{ id: ID, title: PROMPT, status: n.status } as Row} projects={[]} catalogue={{ models: [], state: "ready" } as any}
+    <SessionSettings row={{ id: ID, title: PROMPT, status: n.status } as Row} projects={[]} catalogue={{ cat: null, failed: false, retry: noop }}
       failedLoad={false} onModel={noop} onEffort={noop} onAssign={noop} onRename={async () => {}} onArchive={noop} onClose={noop} />
   </HeadMore>);
   const btn = /<button class="more"[^>]*>/.exec(html)![0];

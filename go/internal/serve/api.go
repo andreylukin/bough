@@ -145,6 +145,7 @@ type Row struct {
 	// waiting for a slot; Agents counts a parent's children (nil at 0).
 	SpawnedBy string      `json:"spawnedBy,omitempty"`
 	Queued    bool        `json:"queued,omitempty"`
+	Starting  bool        `json:"starting,omitempty"`
 	Agents    *AgentCount `json:"agents,omitempty"`
 	// Error is a failed background agent's first error line, cleaned;
 	// only the children listing fills it.

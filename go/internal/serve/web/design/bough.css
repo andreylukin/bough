@@ -2858,6 +2858,9 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .block.thin>summary .tool-meta{margin-left:auto;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;color:var(--text-3)}
 .block.thin>summary .copy-btn{width:20px;height:20px;opacity:0}
 .block.thin>summary:hover .copy-btn,.block.thin>summary:focus-within .copy-btn{opacity:1}
+/* a call row's Copy is out of its summary (a control in a control), pinned over the output's corner */
+.call-native>.block-body{position:relative}
+.call-native>.block-body>.copy-btn{position:absolute;top:4px;right:4px;width:24px;height:24px;background:var(--surface)}
 .fail-mark{flex:none;color:var(--red)}
 /* T2 grouped work: quiet row, edit counts and failures the only colour, one rail */
 .work-seg-edits{display:inline-flex;gap:6px;flex:none;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
@@ -2963,9 +2966,10 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .head-stopping{color:var(--text-3)}
 .head-stop-mark{width:6px;height:6px;background:var(--text-3);flex-shrink:0}
 @media (prefers-reduced-motion:reduce){.head-live svg{display:none}.head-live:not(.head-stopping)::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}}
-/* sending: one opacity, fading in when the prompt lands */
-.turn .prompt-text{transition:opacity var(--dur) var(--ease-out)}
-.turn-sending .prompt-text{opacity:.72}
+/* sending: one opacity, fading in when the prompt lands. The words fade,
+   not the "Show full prompt" link: a faded link fell below 4.5:1 (axe). */
+.turn .prompt-text>*{transition:opacity var(--dur) var(--ease-out)}
+.turn-sending .prompt-text>:not(.link){opacity:.72}
 .turn-sending-state{font-size:var(--fs-sm);line-height:16px;color:var(--text-3);font-variant-numeric:tabular-nums}
 /* waiting and working rows: one 24px geometry on the prose edge */
 .waiting-model,.working{display:flex;align-items:center;gap:8px;min-height:24px;margin:8px 0 0;padding-inline-start:22px;

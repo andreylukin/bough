@@ -661,7 +661,7 @@ func (s *Supervisor) reportOwed() {
 		if key == nil || key.Seq <= s.Meta(o.id).Reported || time.Since(key.At) > reportOwedWithin {
 			continue
 		}
-		s.report(o.id, o.parent, "exit")
+		s.report(o.id, o.parent, "exit", false)
 	}
 }
 

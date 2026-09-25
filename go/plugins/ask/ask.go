@@ -393,7 +393,7 @@ func (a *Asker) AskContext(ctx context.Context, question string, options ...stri
 		return "", err
 	}
 	defer release()
-	return a.putIn(ctx.Done(), nil, question, false, options...)
+	return a.putIn(ctx.Done(), nil, "", question, false, options...)
 }
 
 // Answer resolves the pending ask id with text: the history gets an

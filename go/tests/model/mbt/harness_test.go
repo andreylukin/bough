@@ -217,37 +217,7 @@ func runMBT(t *testing.T, spec string, model fmbt.Model, actions map[string]map[
 	runDir := fizzCheck(t, spec)
 	lockMBT(t)
 	startGraphServer(t, runDir)
-	shortTempDir(t)
 	return fmbt.RunTests(t, model, actions, opts)
-}
-
-// shortTempDir points TMPDIR at a short directory for the rest of the
-// test when the current one is long. fmbt listens on
-// os.TempDir()/fizzbee-mbt-<n>/plugin.sock, and a socket path longer than
-// sun_path (104 bytes on macOS) fails with "bind: invalid argument": a
-// run whose TMPDIR was a nested per-command sandbox failed every walk.
-// The env is process-wide and t.Setenv refuses parallel tests; the MBT
-// lock is held, so no other runMBT reads it meanwhile.
-func shortTempDir(t *testing.T) {
-	t.Helper()
-	old := os.TempDir()
-	if len(old)+len("/fizzbee-mbt-4294967295/plugin.sock") < 100 {
-		return
-	}
-	dir, err := os.MkdirTemp("/tmp", "mbt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	prev, had := os.LookupEnv("TMPDIR")
-	os.Setenv("TMPDIR", dir)
-	t.Cleanup(func() {
-		if had {
-			os.Setenv("TMPDIR", prev)
-		} else {
-			os.Unsetenv("TMPDIR")
-		}
-		os.RemoveAll(dir)
-	})
 }
 
 // sessionHistory reads a serve session's transcript off disk: the

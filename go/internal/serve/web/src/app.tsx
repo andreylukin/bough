@@ -5488,6 +5488,12 @@ export default function App() {
     // Its failure is the transcript's own state, with a retry, not a toast.
     api.session(selected).then((r) => {
       if (!live) return;
+      if (r.session.starting) {
+        startingFor.current = selected;
+        setStarting(true);
+        retry = setTimeout(() => setLoadTry((n) => n + 1), 1000);
+        return;
+      }
       created.current.delete(selected);
       failedLookup.current = null;
       setStarting(false);
@@ -5633,7 +5639,7 @@ export default function App() {
   // still read "Steer pending…". The list poll's entry count says more
   // was recorded.
   const openEntries = rows.find((r) => r.id === selected)?.entries ?? 0;
-  useEffect(() => { if (openEntries && loadedFor === selected) retryRef.current(); }, [openEntries]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (openEntries > lines.length && loadedFor === selected) retryRef.current(); }, [openEntries]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The filter reads transcripts too, as ⌘K does: what you remember is
   // often something said ("bg-done"), which no title or branch holds.
@@ -6213,7 +6219,7 @@ export default function App() {
                // Until Archived has loaded, a failed read is its read: the
                // section says so with its own Retry, and a second notice
                // over the list said the same failure twice.
-               loadErr={archived && !rowsAll ? null : loadErr} onRetry={retryList} />
+               loadErr={archived && !rowsAll ? null : loadErr} onRetry={() => void refresh()} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">

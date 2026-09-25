@@ -4,6 +4,7 @@ package llm
 
 import (
 	"fmt"
+	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,7 +34,7 @@ func TestControlTakeAcrossProcesses(t *testing.T) {
 		c := &controlLLM{dir: dir} // one per process
 		wg.Go(func() {
 			for {
-				name, _, ok, err := c.take()
+				name, _, ok, err := c.take(ullm.Request{}, false, nil)
 				if err != nil {
 					t.Errorf("take: %v", err)
 					return

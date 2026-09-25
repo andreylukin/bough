@@ -31,7 +31,7 @@ var headlessJSONContractEvent = regexp.MustCompile(`^\[([a-z:/-]+)\](?: (.*))?$`
 
 var headlessJSONContractKinds = map[string]bool{
 	"assistant": true, "done": true, "usage": true, "input": true, "code": true,
-	"result": true, "ask": true, "system": true, "steer": true, "notice": true,
+	"result": true, "ask": true, "ask/end": true, "system": true, "steer": true, "notice": true,
 }
 
 // headlessJSONContractBuf is a bytes.Buffer safe to read while the

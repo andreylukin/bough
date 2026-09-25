@@ -21,7 +21,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	_ "unsafe" // go:linkname, for the child's host helpers
 
 	fmbt "github.com/fizzbee-io/fizzbee/mbt/lib/go"
 
@@ -330,12 +329,6 @@ func (s *oxsServer) Done(msg string, _ *bool) error {
 
 // --- the child process ---
 
-//go:linkname oxsHostShellEnv github.com/andreylukin/bough/internal/orb.hostShellEnv
-var oxsHostShellEnv func() map[string]string
-
-//go:linkname oxsHostCommand github.com/andreylukin/bough/internal/orb.hostCommand
-var oxsHostCommand func(string, ...string) string
-
 func init() {
 	if addr := os.Getenv(oxsChildEnv); addr != "" {
 		os.Exit(oxsChildMain(addr))
@@ -347,8 +340,8 @@ func init() {
 func oxsChildMain(addr string) int {
 	// orb reads the user's ~/.zshrc and host CLIs by the account's real
 	// home, not $HOME: never here (the orb package's tests stub the same).
-	oxsHostShellEnv = func() map[string]string { return nil }
-	oxsHostCommand = func(string, ...string) string { return "" }
+	orbHostShellEnv = func() map[string]string { return nil }
+	orbHostCommand = func(string, ...string) string { return "" }
 	id := os.Getenv("BOUGH_SESSION_ID")
 	for i, a := range os.Args {
 		if a == "-r" && i+1 < len(os.Args) {

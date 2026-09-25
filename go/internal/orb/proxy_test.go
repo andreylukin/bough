@@ -190,7 +190,7 @@ func TestShimExplainsTooLargeRequest(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho ran\n"), 0o755)
-	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
+	p, err := startProxyBin("127.0.0.1", "", "", fakeBough(fake))
 	if err != nil {
 		t.Fatal(err)
 	}

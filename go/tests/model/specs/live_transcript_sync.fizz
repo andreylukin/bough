@@ -59,8 +59,8 @@ deadlock_detection: false
 #   a failed catch-up just re-arms.
 # - one initial GET slot: Switch replaces it, which is what the page's
 #   `live` guard makes of the old one. Its read (InitialServe) is a step
-#   apart from its landing (InitialOk) because the page REPLACES its
-#   lines with that read.
+#   apart from its landing (InitialOk): entries caught up meanwhile
+#   must survive the older response.
 #
 # Fairness: the page's own steps (responses landing, timers firing, the
 # EventSource retrying, reading its stream) are strongly fair; the person
@@ -82,9 +82,7 @@ deadlock_detection: false
 #   eviction: the ring drops oldest first, so an end never leaves while
 #   its start stays.
 #
-# Where the product does not hold, ConvergesToDisk says so (see its
-# comment): an initial GET that lands after a catch-up throws the
-# catch-up's lines away.
+# An initial GET that lands after a catch-up preserves the newer lines.
 
 MAXREC = 1      # entries the live session records
 RING = 1        # replay ring capacity (500 in the product)
@@ -207,11 +205,9 @@ role Sync:
         require self.get.sess >= 0 and self.get.snap >= 0
         g = self.get
         self.get = record(sess=-1, snap=-1)
-        # setLines(r.entries): a replace, not a merge. A catch-up that
-        # landed first may have added lines this older read lacks.
-        if len([l for l in self.lines if l.seq > g.snap]) > 0:
-            lost = True
-        self.lines = [record(sess=g.sess, seq=s) for s in range(1, g.snap + 1)]
+        # A late initial response must not undo a completed catch-up.
+        newer = [l for l in self.lines if l.seq > g.snap]
+        self.lines = [record(sess=g.sess, seq=s) for s in range(1, g.snap + 1)] + newer
         self.loaded = True
 
     atomic fair<strong> action Deliver:
@@ -309,20 +305,8 @@ always assertion NoForeignLines:
 
 # A dropped or reconnected subscriber converges to the transcript on disk.
 #
-# Except when `lost`, a product gap this model found. Open (or Switch)
-# GETs the whole transcript and subscribes at once. If the GET's read is
-# taken before an entry is recorded, and its response lands after the
-# catch-up that entry's event triggered, setLines replaces the caught-up
-# lines with the older read and the cursor goes back with them. Nothing
-# arms another catch-up until the next recorded event, so after a turn's
-# last entry the thread stays one entry short with nothing saying so.
-# Without `or lost` fizz fails this; the shortest such run is Open,
-# InitialServe, Record, Deliver, CatchUpFire, CatchUpOk, InitialOk, after
-# which only the person or the child can move anything.
-# The mapped claim "converges after the next recorded event" holds: a
-# later entry's catch-up adds the missing one back and clears `lost`.
 always eventually assertion ConvergesToDisk:
-    if sync.sel == -1 or lost:
+    if sync.sel == -1:
         return True
     n = STATIC_DISK
     if sync.sel == 0:

@@ -226,14 +226,14 @@ func (a *wikiEditAdapter) Cleanup() error {
 		control.ReleaseWith(a.t, a.dir, r.turn, control.Turn{Mode: "error", Error: "walk over"})
 	}
 	return poll("the walk's run to exit", func() (bool, error) {
-		if exists(filepath.Join(a.mark, "committing")) {
+		if wevilExists(filepath.Join(a.mark, "committing")) {
 			os.WriteFile(filepath.Join(a.mark, "release"), nil, 0o644)
 		}
-		return !r.alive() && !wikiLockHeld(a.wiki), nil
+		return !r.alive() && !wevilWikiLockHeld(a.wiki), nil
 	})
 }
 
-func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+func wevilExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func (a *wikiEditAdapter) GetRoles() (map[fmbt.RoleId]fmbt.Role, error) {
 	return map[fmbt.RoleId]fmbt.Role{{RoleName: "Wiki", Index: 0}: a}, nil
@@ -267,9 +267,9 @@ func (a *wikiEditAdapter) flag() (*wiki.Flag, error) {
 // hook's mark while a run's commit is parked.
 func (a *wikiEditAdapter) phase() string {
 	switch {
-	case !wikiLockHeld(a.wiki):
+	case !wevilWikiLockHeld(a.wiki):
 		return ""
-	case exists(filepath.Join(a.mark, "committing")):
+	case wevilExists(filepath.Join(a.mark, "committing")):
 		return "committing"
 	}
 	return "running"
@@ -581,11 +581,11 @@ func (a *wikiEditAdapter) Lock() error {
 				pid = p
 			}
 		}
-		alive = func() bool { return pid != 0 && procAlive(pid, match) }
+		alive = func() bool { return pid != 0 && wevilProcAlive(pid, match) }
 	}
 	taken := filepath.Join(a.dir, name+".taken")
 	return poll("the spawned "+kind+" to reach the lock", func() (bool, error) {
-		if exists(taken) {
+		if wevilExists(taken) {
 			a.run = &welRun{kind: kind, turn: name, phase: "running", alive: alive}
 			return true, nil
 		}
@@ -654,15 +654,15 @@ func (a *wikiEditAdapter) children(match string) ([]int, error) {
 	return pids, nil
 }
 
-// procAlive: a reaped or zombie process no longer counts.
-func procAlive(pid int, match string) bool {
+// wevilProcAlive: a reaped or zombie process no longer counts.
+func wevilProcAlive(pid int, match string) bool {
 	out, err := exec.Command("ps", "-o", "stat=,command=", "-p", strconv.Itoa(pid)).Output()
 	return err == nil && !strings.HasPrefix(strings.TrimSpace(string(out)), "Z") && strings.Contains(string(out), match)
 }
 
-// wikiLockHeld probes .ingest.lock the way the next run would: a
+// wevilWikiLockHeld probes .ingest.lock the way the next run would: a
 // non-blocking flock, dropped at once when it succeeds.
-func wikiLockHeld(dir string) bool {
+func wevilWikiLockHeld(dir string) bool {
 	f, err := os.OpenFile(filepath.Join(dir, ".ingest.lock"), os.O_RDWR, 0)
 	if err != nil {
 		return false
@@ -740,7 +740,7 @@ func (a *wikiEditAdapter) RunEnds() error {
 	control.Release(a.t, a.dir, r.turn)
 	r.phase = "committing"
 	return poll("the run's commit to start", func() (bool, error) {
-		if exists(filepath.Join(a.mark, "committing")) {
+		if wevilExists(filepath.Join(a.mark, "committing")) {
 			return true, nil
 		}
 		if !r.alive() {
@@ -761,7 +761,7 @@ func (a *wikiEditAdapter) RunCommits() error {
 		return err
 	}
 	if err := poll("the run to commit and exit", func() (bool, error) {
-		return !r.alive() && !wikiLockHeld(a.wiki), nil
+		return !r.alive() && !wevilWikiLockHeld(a.wiki), nil
 	}); err != nil {
 		return err
 	}

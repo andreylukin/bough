@@ -132,6 +132,7 @@ export interface Row {
   spawnedBy?: string;
   /** A background agent waiting for a running slot (status "queued"). */
   queued?: boolean;
+  starting?: boolean;
   /** Background agents this session started; absent when it started none. */
   agents?: { running: number; queued: number; total: number };
   /** A failed background agent's first error line (children listing only). */

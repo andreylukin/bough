@@ -127,15 +127,13 @@ func (a *sftAdapter) closeOpened() error {
 	}
 	id := a.opened
 	a.opened = ""
-	// A project thread's POST answers before its child has written
-	// history, and serve knows a session only by its history file.
+	// GET also lists a child that is still booting; archive becomes
+	// available once its history file exists.
 	for deadline := time.Now().Add(actionTimeout); ; {
-		err := a.api(http.MethodGet, "/api/sessions/"+id, nil, nil)
-		if ae := (*servetest.APIError)(nil); err == nil || !errors.As(err, &ae) || ae.Status != http.StatusNotFound {
-			if err != nil {
-				return err
-			}
+		if _, err := os.Stat(filepath.Join(a.home, ".bough", "history", id+".jsonl")); err == nil {
 			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("session %s never wrote history", id)

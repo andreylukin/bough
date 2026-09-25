@@ -356,9 +356,6 @@ func (a *sccoAdapter) live(id string) (bool, error) {
 // else names what the ground truth shows that the spec has no value
 // for, so the comparison fails on it.
 func (a *sccoAdapter) agent(id string, m map[string]serve.SessionMeta, notices map[string]int, isA bool) (string, bool, error) {
-	if m[id].Task != nil {
-		return "q", false, nil
-	}
 	entries, err := history.Read(a.histPath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", false, err
@@ -368,6 +365,11 @@ func (a *sccoAdapter) agent(id string, m map[string]serve.SessionMeta, notices m
 		if e.Kind == "input" {
 			turns++
 		}
+	}
+	// A task stays in metadata until the first turn is observed, so it
+	// can be recovered after a crash during boot.
+	if m[id].Task != nil && turns == 0 {
+		return "q", false, nil
 	}
 	open := turnOpen(entries)
 	live, err := a.live(id)

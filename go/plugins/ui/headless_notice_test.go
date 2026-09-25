@@ -59,13 +59,13 @@ func withAsk(t *testing.T, ask *hlAskState) (notices *[]string, ans *recordAnswe
 	var got []string
 	ans = &recordAnswers{}
 	hlMu.Lock()
-	oldNotify, oldAsk, oldAnswer := hlNotify, hlAsk, hlAnswer
+	oldNotify, oldAsk, oldAnswer, oldTyped := hlNotify, hlAsk, hlAnswer, hlTyped
 	hlNotify = func(s string) bool { got = append(got, s); return true }
-	hlAsk, hlAnswer = ask, ans
+	hlAsk, hlAnswer, hlTyped = ask, ans, true
 	hlMu.Unlock()
 	t.Cleanup(func() {
 		hlMu.Lock()
-		hlNotify, hlAsk, hlAnswer = oldNotify, oldAsk, oldAnswer
+		hlNotify, hlAsk, hlAnswer, hlTyped = oldNotify, oldAsk, oldAnswer, oldTyped
 		hlMu.Unlock()
 	})
 	return &got, ans
@@ -84,20 +84,20 @@ func TestHeadlessNoticeDoesNotAnswerSecret(t *testing.T) {
 	if len(ans.got) != 0 {
 		t.Fatalf("notice answered the secret: %q", ans.got)
 	}
-	hlLineIn(`{"answer": "hunter2"}`)
+	hlLineIn(`{"answer": "hunter2", "ask": "s1"}`)
 	if len(ans.got) != 1 || ans.got[0] != "s1=hunter2" {
 		t.Fatalf("secret answers = %q, want s1=hunter2", ans.got)
 	}
 }
 
-// serve's {"answer"} line is the answer whatever its text looks like: a
+// serve's {"answer", "ask"} line is the answer whatever its text looks like: a
 // reply that parses as {"notice"} or {"prompt"} is not a report and not
 // a prompt. Found by tests/model/mbt/notice_during_open_ask_test.go
 // (AskPlain, AnswerNoticeLike).
 func TestHeadlessAnswerLineIsTheAnswer(t *testing.T) {
 	for _, text := range []string{`{"notice":"x"}`, `{"prompt":"y"}`, "1"} {
 		notices, ans := withAsk(t, &hlAskState{id: "q1", options: []string{"a", "b"}})
-		b, _ := json.Marshal(map[string]string{"answer": text})
+		b, _ := json.Marshal(map[string]string{"answer": text, "ask": "q1"})
 		hlLineIn(string(b))
 		want := "q1=" + text
 		if text == "1" {

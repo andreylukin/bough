@@ -351,7 +351,8 @@ modelTests<Ctx>({
 
   read: readUiState,
   status: (c) => c.page.locator('.thread-head h1').first(),
-  sessions: (c) => [c.id],
+  // This graph describes UI state, which is checked in the browser.
+  sessions: () => [],
   async check(c, where) {
     // Judged at rest: a hover's fade (the prompt's time and Copy under
     // the pointer) runs on real time, and axe measuring halfway through

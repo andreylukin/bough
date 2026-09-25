@@ -746,10 +746,19 @@ func (a *liveTranscriptSyncAdapter) InitialOk() error {
 	if ok, err := a.step(a.get != nil && a.get.served); !ok {
 		return err
 	}
-	// setLines(r.entries): a replace, as app.tsx does it.
+	// The initial response includes its snapshot and preserves entries
+	// a catch-up recorded after that snapshot was taken.
+	prior := a.lines
 	a.lines = nil
+	seen := map[int64]bool{}
 	for _, l := range a.get.entries {
+		seen[l.Seq] = true
 		a.lines = append(a.lines, ltsLine{sess: a.get.sess, line: l})
+	}
+	for _, l := range prior {
+		if !seen[l.line.Seq] {
+			a.lines = append(a.lines, l)
+		}
 	}
 	a.get, a.loaded = nil, true
 	return nil
