@@ -25,6 +25,15 @@ test("typed job: exit 0 finished, non-zero failed, absent unknown with no output
   expect(ws[2]).toMatchObject({ exitNote: "Exit not recorded.", outputState: "not-recorded", canStop: false });
 });
 
+// A killed adopted engine call is cancelled before it exits, and a job
+// serve ends at its child's reap never exited at all: stopped is the
+// outcome either way, not "Outcome unknown".
+test("typed job finished stopped with no exit is stopped", () => {
+  const [w] = jobsFromLines([typed(5, "started", { call: "c" }), typed(5, "finished", { call: "c", stopped: true })], "s", true);
+  expect(w).toMatchObject({ life: "stopped", canStop: false });
+  expect(w.exitNote).toBeUndefined();
+});
+
 test("typed job started with no outcome runs only while the session is live", () => {
   expect(jobsFromLines([typed(4, "started", { until: "ready" })], "s", true)[0]).toMatchObject({ life: "running", canStop: true, outputState: "none" });
   expect(jobsFromLines([typed(4, "started")], "s", false)[0]).toMatchObject({ life: "unknown", canStop: false });

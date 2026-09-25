@@ -897,6 +897,16 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 			code = -1
 		}
 		s.emit(ch, "exit", fmt.Sprintf("child exited: %v", err), map[string]any{"code": code})
+		// Before the lease goes back: no next child reads the file
+		// until its dead jobs are said to be dead.
+		s.mu.Lock()
+		held := ch.id != "" && s.kids[ch.id] == ch
+		s.mu.Unlock()
+		if held {
+			if err := endOrphanJobs(filepath.Join(s.opt.HistDir, ch.id+".jsonl")); err != nil && !errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintf(os.Stderr, "bough: %v\n", err)
+			}
+		}
 		s.drop(ch)
 		close(ch.done)
 	}()

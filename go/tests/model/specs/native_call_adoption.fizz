@@ -1,0 +1,387 @@
+---
+# The bounds (one long call, one steer, a few prompts, one child exit)
+# end every behaviour in a quiet session with nothing left to do: that
+# is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# An engine call that outlives turn_settle (engine-unreal, the default
+# loop row), as history, the row and the page see it.
+#
+# The model runs one long bash call. While the model is quiet and the
+# call still runs, the turn is quiescent and the settle timer is armed
+# (actor.go evaluate/arm). When it fires (settleFired) the call is
+# adopted as job N (actor.go adopt -> tools Jobs.Adopt: job{started,
+# call}), and the turn closes with done{running: 1}. The call runs on;
+# its end is recorded as a call row with adopted:true and job:N, and
+# Jobs' finish records job{finished, exit | stopped}. An end while no
+# turn is open makes the coordinator ask the model on its own: a wake
+# turn (openWake: input{wake, reason:"call"} ... done{wake}). An end
+# while a turn is open reaches the model inside that turn.
+#
+# The person can steer in the settle window (the steer lands instead of
+# the adoption, landQueued in settleFired: the call stays foreground),
+# prompt while the job runs, kill the job from the strip/Work (serve
+# killJob -> Send "/jobkill N" -> Jobs.jobKill -> Runtime.CancelCall:
+# the op is cancelled and the finish says stopped), and the child can
+# exit with the job still running (a serve restart, a crash).
+#
+# Fields (Session role):
+#   status     the row: running while a turn is open in a live child
+#   turn       the open bough turn: none | user | wake
+#   inflight   a model request is out (llm-control holds it)
+#   steer_q    a steer sent, not yet taken into the turn ("Steer pending")
+#   steers     steers sent; bounds the model
+#   call       the long call: none | fg (holds its turn) | adopted (a
+#              job) | ended (its end row is recorded) | lost (its child
+#              died under it; no end row can be written)
+#   job        the job's history record: none | running (started, not
+#              finished) | finished | stopped
+#   job_gen    the child generation that started the job
+#   finishes   job finished entries recorded for it
+#   kill_req   /jobkill N sent, not yet acted on
+#   killed     the kill cancelled the call
+#   wake_pending  the call ended while idle; the wake request is not out
+#   wakes      wake turns opened
+#   child      alive | dead; gen counts respawns (0, then 1)
+#   foot_running  done.running of the turn that adopted (its footer)
+#   settled    how many of those the page counts as reported (footer)
+#   end_row    the call's recorded end row: none | fg | adopted |
+#              interrupted (a lost call's, written by the next child)
+#   turn_dones dones recorded for the current (or last) turn
+#   behind     something was recorded the page has not fetched
+#   work       the Work dialog's word for the job, as of the last fetch
+#   listed     Row.jobs lists the job (serve RunningJobs)
+#   still      the footer's "N calls still running" (foot_running - settled)
+#   prompts    user prompts sent; bounds the model
+#
+# ChildExits records the adopted job finished{stopped}, as engine.go
+# stopJobs means to ("background jobs die with it, said in history").
+# The child cannot: a SIGKILL runs nothing, and a clean exit closes the
+# actor before its finish. serve writes it when it reaps the child
+# (endOrphanJobs); before that, history kept job N started, a respawn
+# listed it as running and the footer said "1 call still running"
+# forever. The resumed child then records the lost call interrupted
+# ("bough restarted before this call finished; it was not re-run").
+#
+# Where this departs from the product today:
+# - KillJob needs the job listed (a live child): serve's killJob goes
+#   through Supervisor.Send, which would spawn a fresh child just to
+#   deliver "/jobkill N" after an exit, and is refused 409 while an ask
+#   is pending. Neither is modelled.
+# - Job ids restart per child (Jobs.next starts at 0 in each process),
+#   so a second adoption after a respawn is job 1 again and the Work
+#   dialog merges the two commands. One long call keeps it out.
+
+MAX_STEERS = 1
+MAX_PROMPTS = 2
+
+ENDED = ("finished", "stopped")
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.turn = "none"
+        self.inflight = False
+        self.steer_q = False
+        self.steers = 0
+        self.call = "none"
+        self.job = "none"
+        self.job_gen = 0
+        self.finishes = 0
+        self.kill_req = False
+        self.killed = False
+        self.wake_pending = False
+        self.wakes = 0
+        self.child = "alive"
+        self.gen = 0
+        self.foot_running = 0
+        self.settled = 0
+        self.end_row = "none"
+        self.turn_dones = 0
+        self.behind = False
+        self.work = "none"
+        self.listed = False
+        self.still = 0
+        self.prompts = 0
+
+    # What the row and the footer derive from the rest.
+    atomic func derive():
+        self.status = "running" if self.turn != "none" and self.child == "alive" else "idle"
+        # RunningJobs(entries, childAlive): started and not finished,
+        # and nothing at all without a child holding the lease.
+        self.listed = self.child == "alive" and self.job == "running"
+        self.still = self.foot_running - self.settled
+
+    # The settle timer runs: the model is quiet, nothing is queued, and
+    # the only thing holding the turn is the foreground call.
+    func armed():
+        return (self.turn == "user" and not self.inflight and not self.steer_q
+                and self.call == "fg")
+
+    atomic func open(kind):
+        self.turn = kind
+        self.inflight = True
+        self.turn_dones = 0
+        self.behind = True
+        self.derive()
+
+    # closeTurn: the only writer of done, once per turn.
+    atomic func close(running):
+        self.turn = "none"
+        self.inflight = False
+        self.turn_dones = self.turn_dones + 1
+        if running > 0:
+            self.foot_running = running
+        self.behind = True
+        self.derive()
+
+    # The adopted call reached its result: its end row (adopted, job N)
+    # and the job's finish are recorded. Its result reaches the model
+    # inside the open turn, or wakes it when none is open.
+    atomic func end_adopted(how):
+        self.call = "ended"
+        self.end_row = "adopted"
+        self.job = how
+        self.finishes = self.finishes + 1
+        self.behind = True
+        if self.turn != "none":
+            self.inflight = True
+        else:
+            self.wake_pending = True
+        self.derive()
+
+    # --- the person ---
+
+    # The first prompt: the turn that starts the long call.
+    atomic action Prompt:
+        require self.prompts == 0 and self.turn == "none"
+        self.prompts = 1
+        self.open("user")
+
+    # Enter while the turn is live: a steer. Only the settle window is
+    # this flow's (turn_lifecycle and steer_queue own the rest).
+    atomic action Steer:
+        armed = self.armed()
+        require armed and self.steers < MAX_STEERS
+        self.steers = self.steers + 1
+        self.steer_q = True
+        self.derive()
+
+    # A prompt while the job runs (or its end is waiting to wake the
+    # model): a turn of its own. The adopted call is not foreground in
+    # it; an end not yet shown to the model goes with this turn's
+    # request instead of a wake of its own.
+    atomic action PromptWhileAdopted:
+        require (self.turn == "none" and self.child == "alive"
+                 and (self.job == "running" or self.wake_pending)
+                 and self.prompts < MAX_PROMPTS)
+        self.prompts = self.prompts + 1
+        self.wake_pending = False
+        self.open("user")
+
+    # Kill from the job strip or Work: POST .../jobs/N/kill.
+    atomic action KillJob:
+        require self.listed and not self.kill_req
+        self.kill_req = True
+        self.derive()
+
+    # A prompt to a session whose child is gone: Send adopts it (ensure)
+    # and the resumed child runs the turn.
+    atomic action PromptAfterExit:
+        require self.child == "dead" and self.turn == "none"
+        self.child = "alive"
+        self.gen = self.gen + 1
+        self.prompts = self.prompts + 1
+        if self.call == "lost":
+            self.end_row = "interrupted"
+        self.open("user")
+
+    # --- the model (llm-control) ---
+
+    # The first turn's reply is the long bash call; the call starts and
+    # the request has answered.
+    atomic action CallsBash:
+        require self.turn == "user" and self.inflight and self.call == "none" and self.prompts == 1
+        self.inflight = False
+        self.call = "fg"
+        self.behind = True
+        self.derive()
+
+    # A text-only answer. With the call still foreground the turn stays
+    # open and the settle timer arms. A steer still waiting lands instead
+    # of the done (closeTurn's landQueued) and the model is asked again.
+    # Otherwise the turn closes, running 0.
+    atomic fair action Reply:
+        require self.turn != "none" and self.inflight
+        if self.turn == "user" and self.call == "fg":
+            self.inflight = False
+            self.behind = True
+            self.derive()
+        elif self.steer_q:
+            self.steer_q = False
+            self.behind = True
+            self.derive()
+        else:
+            self.close(0)
+
+    # --- the system ---
+
+    # The steer is taken into the turn: recorded, sent, the model asked
+    # again; the settle disarms (not quiescent).
+    atomic fair action SteerLands:
+        require self.steer_q
+        self.steer_q = False
+        self.inflight = True
+        self.behind = True
+        self.derive()
+
+    # turn_settle elapsed with the call still foreground. A steer that
+    # slipped in lands instead, and the call stays foreground;
+    # otherwise the call is adopted as a job and the turn closes.
+    atomic fair action SettleFires:
+        require self.turn == "user" and not self.inflight and self.call == "fg"
+        if self.steer_q:
+            self.steer_q = False
+            self.inflight = True
+            self.behind = True
+            self.derive()
+        else:
+            self.call = "adopted"
+            self.job = "running"
+            self.job_gen = self.gen
+            self.close(1)
+
+    # The call's command exits on its own.
+    atomic fair action CallEnds:
+        require self.call in ("fg", "adopted") and self.child == "alive"
+        if self.call == "fg":
+            # Still its turn's: the model is asked again with the result.
+            self.call = "ended"
+            self.end_row = "fg"
+            self.inflight = True
+            self.behind = True
+            self.derive()
+        else:
+            self.end_adopted("finished")
+
+    # The child acts on /jobkill N: the call is cancelled, and its end
+    # says canceled; the finish says stopped. A job that ended first
+    # answers "already finished" and nothing is recorded.
+    atomic fair action KillLands:
+        require self.kill_req
+        if self.job == "running":
+            self.killed = True
+            self.kill_req = False
+            self.end_adopted("stopped")
+        else:
+            self.kill_req = False
+            self.derive()
+
+    # The coordinator asks the model about the ended call on its own:
+    # the wake input opens a turn.
+    atomic fair action WakeRequest:
+        require self.wake_pending and self.turn == "none" and self.child == "alive"
+        self.wake_pending = False
+        self.wakes = self.wakes + 1
+        self.open("wake")
+
+    # The child goes away while the job runs and no turn is open (serve
+    # restart, crash). What should be recorded: the job died with it.
+    atomic action ChildExits:
+        require (self.child == "alive" and self.gen == 0 and self.turn == "none"
+                 and self.job == "running" and not self.wake_pending)
+        self.child = "dead"
+        self.call = "lost"
+        self.job = "stopped"
+        self.finishes = self.finishes + 1
+        self.kill_req = False
+        self.behind = True
+        self.derive()
+
+    # --- the page ---
+
+    # A GET ?since= that lands: the Work dialog reads the job's record,
+    # and the adopting turn's footer counts the end row or the finish
+    # (by call id) as reported.
+    atomic fair action CatchUp:
+        require self.behind
+        self.behind = False
+        self.work = self.job
+        if self.job in ENDED:
+            self.settled = self.foot_running
+        self.derive()
+
+action Init:
+    session = Session()
+
+# done.running is the number of calls the closing turn adopted: the one
+# long call, once it is a job, and nothing before.
+always assertion DoneRunningIsAdopted:
+    return session.foot_running == (1 if session.job != "none" else 0)
+
+# One done per turn: none while it is open, one once it closed.
+always assertion OneDonePerTurn:
+    return session.turn_dones <= 1 and (session.turn == "none" or session.turn_dones == 0)
+
+# A job's started entry gets at most one finished entry, and only an
+# ended job has one.
+always assertion JobFinishesOnce:
+    return session.finishes == (1 if session.job in ENDED else 0)
+
+# A finished job is never listed as running.
+always assertion FinishedNotListed:
+    return not (session.listed and session.job in ENDED)
+
+# The footer never says fewer calls are running than done.running
+# minus the reported ones: settled stays within done.running, and
+# counts only a job that ended.
+always assertion FooterBounded:
+    return (0 <= session.settled and session.settled <= session.foot_running
+            and (session.settled == 0 or session.job in ENDED))
+
+# An adopted call's end row says adopted (job N), a foreground call's
+# does not; a lost call has none until the next child says interrupted.
+always assertion EndRowAdopted:
+    if session.call == "ended":
+        return session.end_row == ("fg" if session.job == "none" else "adopted")
+    if session.call == "lost":
+        return session.end_row == ("interrupted" if session.gen > 0 else "none")
+    return session.end_row == "none"
+
+# A steer in the settle window keeps the call foreground: while a steer
+# waits to be taken, its turn is open and the call was not adopted (the
+# call may end on its own meanwhile; both then reach the model).
+always assertion SteerKeepsForeground:
+    return not session.steer_q or (session.turn == "user" and session.call in ("fg", "ended"))
+
+# A killed adopted job records stopped, and Work says Stopped once the
+# page has it.
+always assertion KilledShowsStopped:
+    return (not session.killed or session.job == "stopped") and (session.behind or session.work == session.job)
+
+# Row.jobs is empty without a live child, and never lists a job a dead
+# child started.
+always assertion RowJobsLiveChildOnly:
+    return not session.listed or (session.child == "alive" and session.job_gen == session.gen)
+
+# One wake turn at most for the one adopted call.
+always assertion OneWake:
+    return session.wakes <= 1
+
+# Every adopted call ends and its job finishes.
+always eventually assertion AdoptedCallsEnd:
+    return session.job != "running"
+
+# An end while idle is taken to the model (a wake turn, or the prompt
+# that beat it).
+always eventually assertion WakeResolves:
+    return not session.wake_pending
+
+# "still running" clears once the page has caught up.
+always eventually assertion StillRunningClears:
+    return session.still == 0 and not session.behind
+
+# Every turn closes.
+always eventually assertion TurnsClose:
+    return session.turn == "none"
