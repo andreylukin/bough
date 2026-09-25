@@ -729,5 +729,5 @@ function saveTranscript(serve: Serve, id: string, info: TestInfo): void {
   if (!fs.existsSync(src)) return;
   const dir = path.join(root, SPEC);
   fs.mkdirSync(dir, { recursive: true });
-  fs.copyFileSync(src, path.join(dir, `${info.title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${id}.jsonl`));
+  fs.copyFileSync(src, path.join(dir, `${info.title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 120)}-${id}.jsonl`));
 }

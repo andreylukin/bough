@@ -317,7 +317,7 @@ function saveTranscripts(c: Ctx, title: string): void {
   const dir = path.join(root, SPEC);
   fs.mkdirSync(dir, { recursive: true });
   const src = path.join(c.serve.home, '.bough', 'history', c.id + '.jsonl');
-  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 120);
   if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, `${slug}-${c.id}.jsonl`));
 }
 
