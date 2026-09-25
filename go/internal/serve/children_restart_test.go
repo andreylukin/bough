@@ -118,6 +118,33 @@ func TestCloseLeavesQueuedChildQueued(t *testing.T) {
 	}
 }
 
+// A child killed by serve's own shutdown is not reported: after the
+// restart its turn reads interrupted and can be resumed. Close's kills
+// used to start report() like any exit, which raced the process's end:
+// sometimes the parent got a "stopped" notice and meta.json a save
+// after Close returned (thread_report_routing.fizz, ServeRestart).
+func TestCloseReportsNoKilledChild(t *testing.T) {
+	t.Parallel()
+	f := childFixture(t)
+	a, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG a", SpawnedBy: "parent"}, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a's turn open", func() bool {
+		es, _ := f.sup.Entries(a)
+		turn := lastTurn(es)
+		return turn.input != nil && turn.closing == nil
+	})
+	f.sup.Close()
+	time.Sleep(300 * time.Millisecond) // a report the kill triggered
+	if got := notices(t, f, "parent"); len(got) != 0 {
+		t.Fatalf("the shutdown reported the child it killed: %q", got)
+	}
+	if m := f.sup.Meta(a); m.Reported != 0 {
+		t.Fatalf("the shutdown recorded a report: %+v", m)
+	}
+}
+
 // A notice to a lease still starting waits for its stdin rather than
 // falling back to the file the new process has already read.
 func TestNotifyWaitsForStartingChild(t *testing.T) {
