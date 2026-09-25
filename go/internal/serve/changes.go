@@ -2,8 +2,11 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -79,10 +82,27 @@ var (
 	sessionEdits = SessionEdits
 )
 
+// cwdGone answers 410 when the session's working directory no longer
+// exists (a removed worktree): git then fails the way it does outside a
+// repository, and the page said "not a Git repository" about a checkout.
+func cwdGone(w http.ResponseWriter, in history.SessionInfo) bool {
+	if in.Cwd == "" {
+		return false
+	}
+	if _, err := os.Stat(in.Cwd); !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	writeErr(w, http.StatusGone, fmt.Errorf("serve: api: session %q: its working directory %s no longer exists", in.ID, in.Cwd))
+	return true
+}
+
 func (a *API) changes(w http.ResponseWriter, r *http.Request) {
 	in, ok := a.info(r.PathValue("id"))
 	if !ok {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", r.PathValue("id")))
+		return
+	}
+	if cwdGone(w, in) {
 		return
 	}
 	ctx, cancel := readCtx(r)
@@ -143,8 +163,9 @@ func relPath(dir, p string) string {
 // other dirt: only files a turn recorded, each diffed from the checkpoint
 // before the session's first turn, so an edit already in the tree when
 // the session started is not counted as the agent's. A file put back as
-// it was drops out. ok is false outside a repository.
-func SessionEdits(ctx context.Context, dir string, entries []history.Entry) (edits []Edit, ok bool) {
+// it was drops out. ok is false outside a repository; err is a checkpoint
+// git could not read or a tree it could not snapshot.
+func SessionEdits(ctx context.Context, dir string, entries []history.Entry) (edits []Edit, ok bool, err error) {
 	base, files := baseline(entries)
 	return editsBetween(ctx, dir, base, "", files)
 }
@@ -180,33 +201,63 @@ func turnSpan(entries []history.Entry, turn int) (base, end string, files []stri
 	return base, end, files, found
 }
 
+// ErrTurnUndone is TurnEdits' answer for a turn /undo reverted.
+var ErrTurnUndone = errors.New("this turn was undone")
+
+// undone reports whether an undo entry names the turn.
+func undone(entries []history.Entry, turn int) bool {
+	for _, e := range entries {
+		if s, ok := e.Data["seq_of_turn"].(float64); e.Kind == "undo" && ok && int(s) == turn {
+			return true
+		}
+	}
+	return false
+}
+
 // TurnEdits is what one turn (the seq of its input) changed: its files,
-// from its checkpoint to the next turn's.
-func TurnEdits(ctx context.Context, dir string, entries []history.Entry, turn int) ([]Edit, bool) {
+// from its checkpoint to the next turn's. An undone turn is
+// ErrTurnUndone: its files went back to its checkpoint, and a later
+// checkpoint taken before the undo would still list them as its.
+func TurnEdits(ctx context.Context, dir string, entries []history.Entry, turn int) ([]Edit, bool, error) {
 	base, end, files, _ := turnSpan(entries, turn)
+	if undone(entries, turn) {
+		if !isRepo(ctx, dir) {
+			return nil, false, nil
+		}
+		return nil, true, ErrTurnUndone
+	}
 	return editsBetween(ctx, dir, base, end, files)
 }
 
-// editsBetween diffs files from the base checkpoint to end (the tree now when "").
-func editsBetween(ctx context.Context, dir, base, end string, files []string) (edits []Edit, ok bool) {
-	// git -C "" is the server's own cwd: a session with no recorded cwd has no repository.
-	if dir == "" || exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--git-dir").Run() != nil {
-		return nil, false
+// isRepo: git -C "" is the server's own cwd, so a session with no
+// recorded cwd has no repository.
+func isRepo(ctx context.Context, dir string) bool {
+	return dir != "" && exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--git-dir").Run() == nil
+}
+
+// editsBetween diffs files from the base checkpoint to end (the tree now
+// when ""). A checkpoint it cannot diff, or a now it cannot snapshot, is
+// an error: answered as no edits, the page said the turns changed nothing.
+func editsBetween(ctx context.Context, dir, base, end string, files []string) (edits []Edit, ok bool, err error) {
+	if !isRepo(ctx, dir) {
+		return nil, false, nil
 	}
 	if len(files) == 0 {
-		return nil, true
+		return nil, true, nil
 	}
 	var now string
 	if base != "" {
 		if now = end; now == "" {
-			now, _ = history.SnapshotContext(ctx, dir)
+			if now, err = history.SnapshotContext(ctx, dir); err != nil {
+				return nil, true, fmt.Errorf("snapshot the working tree: %w", err)
+			}
 		}
 	}
 	if now == "" {
 		for _, f := range files {
 			edits = append(edits, Edit{Change: Change{Path: relPath(dir, f), Add: -1, Del: -1}})
 		}
-		return edits, true
+		return edits, true, nil
 	}
 	args := []string{"-C", dir, "diff", "--numstat", "--relative", base, now, "--"}
 	for _, f := range files {
@@ -215,11 +266,11 @@ func editsBetween(ctx context.Context, dir, base, end string, files []string) (e
 		}
 	}
 	if args[len(args)-1] == "--" {
-		return nil, true
+		return nil, true, nil
 	}
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
-		return nil, true
+		return nil, true, fmt.Errorf("diff checkpoint %s: %w", base, err)
 	}
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.SplitN(l, "\t", 3)
@@ -236,7 +287,7 @@ func editsBetween(ctx context.Context, dir, base, end string, files []string) (e
 		c.New = exec.CommandContext(ctx, "git", "-C", dir, "cat-file", "-e", base+":./"+c.Path).Run() != nil
 		edits = append(edits, Edit{Change: c, Patch: true})
 	}
-	return edits, true
+	return edits, true, nil
 }
 
 // SessionDiff is one file's patch from the session's first checkpoint to now.
@@ -267,7 +318,7 @@ func diffBetween(ctx context.Context, dir, base, end, path string) (string, erro
 	now := end
 	if now == "" {
 		var err error
-		if now, err = history.Snapshot(dir); err != nil {
+		if now, err = history.SnapshotContext(ctx, dir); err != nil {
 			return "", err
 		}
 	}
@@ -287,17 +338,28 @@ func (a *API) edits(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: read session %q: %w", id, err))
 		return
 	}
+	if cwdGone(w, in) {
+		return
+	}
 	ctx, cancel := readCtx(r)
 	defer cancel()
 	var files []Edit
 	var repo bool
-	if turn, err := strconv.Atoi(r.URL.Query().Get("turn")); err == nil {
-		files, repo = TurnEdits(ctx, in.Cwd, entries, turn)
+	if turn, terr := strconv.Atoi(r.URL.Query().Get("turn")); terr == nil {
+		files, repo, err = TurnEdits(ctx, in.Cwd, entries, turn)
 	} else {
-		files, repo = sessionEdits(ctx, in.Cwd, entries)
+		files, repo, err = sessionEdits(ctx, in.Cwd, entries)
 	}
 	if ctx.Err() != nil {
 		writeErr(w, http.StatusGatewayTimeout, fmt.Errorf("serve: api: reading this session's edits took longer than %s (a large working tree?)", changesTimeout))
+		return
+	}
+	if errors.Is(err, ErrTurnUndone) {
+		writeJSON(w, http.StatusOK, map[string]any{"repo": true, "undone": true, "files": []Edit{}})
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: reading this session's edits: %w", err))
 		return
 	}
 	if files == nil {
@@ -328,7 +390,12 @@ func (a *API) diff(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: diff path %q is not inside the tree", path))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	if cwdGone(w, in) {
+		return
+	}
+	// Bounded like the lists: a patch to the tree now snapshots it, and
+	// on a tree too big to read it answered long after the page gave up.
+	ctx, cancel := readCtx(r)
 	defer cancel()
 	var text string
 	var err error
@@ -345,6 +412,10 @@ func (a *API) diff(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		text, err = Diff(ctx, in.Cwd, path)
+	}
+	if ctx.Err() != nil {
+		writeErr(w, http.StatusGatewayTimeout, fmt.Errorf("serve: api: diff %s took longer than %s (a large working tree?)", path, changesTimeout))
+		return
 	}
 	if err != nil {
 		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: diff %s: %w", path, err))

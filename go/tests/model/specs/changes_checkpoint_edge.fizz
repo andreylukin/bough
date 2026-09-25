@@ -1,0 +1,328 @@
+# The Changes page (#/s/<id>/changes) when the world under it is not
+# healthy: checkpoints gone, a snapshot that fails, a working directory
+# removed, a tree too big to read in time, turns undone, a turn still
+# writing. changes_review models healthy repos and checkpoints only.
+#
+# Checked against: go/internal/serve/changes.go (Changes, SessionEdits,
+# turnSpan, TurnEdits, editsBetween, SessionDiff, TurnDiff, diffBetween,
+# the changes/edits/diff handlers, changesTimeout), go/plugins/history
+# (SnapshotContext), go/plugins/commands/tree.go (turns, runUndo,
+# undoTurn), web/src/changes.tsx (useChanges, ChangesBody).
+#
+# This spec states what the page SHOULD show. The product disagrees in
+# four places (the suspected bugs; see each read below): stage 2's MBT
+# is expected to go red there, which is the point.
+#
+# One session, in a git checkout, with at most two turns. Turn 1 writes
+# file "a", turn 2 writes "b". A turn is
+#   none     not started
+#   running  its input (and checkpoint) recorded, nothing written yet
+#   wrote    it wrote its file; no done entry, so no recorded files yet
+#   done     its done entry lists its file
+#   undone   /undo put its file back to its checkpoint ("undo" entry)
+# Turn 2 starts only once turn 1 is done or undone. /undo takes the last
+# done turn not undone and is refused while a turn runs, and once the
+# cwd is gone, since there is no checkout to put its files back into
+# (a refusal changes nothing and is left out).
+#
+# fault is the one thing that goes wrong, at most once, never undone:
+#   none        healthy
+#   cp_gone     the checkpoint objects are unreadable (refs/bough/turns
+#               GC'd or corrupt): every checkpoint diff fails
+#   snap_fails  snapshotting the tree now fails (index lock, disk): only
+#               reads that diff to "now" need it
+#   slow        the tree is too big: every git read outlives
+#               changesTimeout
+#   cwd_gone    the session's cwd was removed (worktree removed)
+#
+# The page. open, scope (session | turn1 | turn2 | tree: what the page
+# was opened on; the tab switch is changes_review's), view:
+#   loading     no answer yet
+#   files       a list (listed)
+#   no_changes  an answered empty list ("No edits")
+#   not_repo    "This folder is not a Git repository"
+#   undone      the turn was undone: nothing of it is current
+#   error       the read failed, with the reason
+# rfault is the fault the last list read saw (the adapter knows when it
+# injected one). behind: something that ticks the transcript (a write, a
+# turn's end, an undo) happened after the read; Poll re-reads. A fault
+# ticks nothing: on the tree the 10 s poll sees it (behind), on the
+# edits scopes nothing re-reads until the next tick.
+# diff is the patch of the file card opened after the last list read:
+# none | loading | shown | error | timeout.
+#
+# Pruned: the world moves only while the page is closed or answered and
+# current with no diff in flight; a fault only while no turn runs and no
+# patch is on screen (a patch read before the fault is not about it).
+
+def status(p, k):
+    if k == 1:
+        return p.t1
+    return p.t2
+
+def fileof(k):
+    if k == 1:
+        return "a"
+    return "b"
+
+# What git diff HEAD plus untracked shows now.
+def on_disk(p):
+    fs = []
+    for k in [1, 2]:
+        if status(p, k) in ["wrote", "done"]:
+            fs.append(fileof(k))
+    return fs
+
+# Turn k diffs to "now" (a snapshot) when no later input has a checkpoint.
+def last_turn(p, k):
+    return k == 2 or p.t2 == "none"
+
+def turn_of(scope):
+    if scope == "turn1":
+        return 1
+    return 2
+
+# One list read: (view, listed).
+def read(p):
+    # A missing cwd is not "not a repository", and a read that outlived
+    # changesTimeout is a 504, not an empty list. (Product: Changes and
+    # editsBetween answer repo=false when the cwd is gone.)
+    if p.fault in ["cwd_gone", "slow"]:
+        return "error", []
+    if p.scope == "tree":
+        fs = on_disk(p)
+        if fs:
+            return "files", fs
+        return "no_changes", []
+    if p.scope == "session":
+        recorded = [k for k in [1, 2] if status(p, k) in ["done", "undone"]]
+        if not recorded:
+            return "no_changes", []
+        # The first checkpoint to a snapshot of now. (Product: a failed
+        # snapshot lists the files patch=false as if no checkpoint was
+        # taken; a failed git diff answers repo=true with no files.)
+        if p.fault in ["cp_gone", "snap_fails"]:
+            return "error", []
+        # An undone turn's file is back at the checkpoint: it drops out.
+        fs = [fileof(k) for k in recorded if status(p, k) == "done"]
+        if fs:
+            return "files", fs
+        return "no_changes", []
+    k = turn_of(p.scope)
+    # (Product: turnSpan never reads undo entries, so a turn undone under
+    # a later one keeps listing its file from its checkpoint to the next.)
+    if status(p, k) == "undone":
+        return "undone", []
+    if p.fault == "cp_gone" or (p.fault == "snap_fails" and last_turn(p, k)):
+        return "error", []
+    return "files", [fileof(k)]
+
+# One file's patch for the open card.
+def patch(p):
+    # (Product: diffBetween snapshots with context.Background, so a slow
+    # tree holds a session or last-turn diff past changesTimeout.)
+    if p.fault == "slow":
+        return "timeout"
+    if p.fault == "cwd_gone":
+        return "error"
+    if p.scope == "tree":
+        return "shown"
+    if p.fault == "cp_gone":
+        return "error"
+    if p.fault == "snap_fails" and (p.scope == "session" or last_turn(p, turn_of(p.scope))):
+        return "error"
+    return "shown"
+
+def running(p):
+    return p.t1 in ["running", "wrote"] or p.t2 in ["running", "wrote"]
+
+# The world may move: page closed, or answered, current, no diff pending.
+def settled(p):
+    return not p.open or (p.view != "loading" and not p.behind and p.diff != "loading")
+
+role Page:
+    action Init:
+        self.t1 = "none"
+        self.t2 = "none"
+        self.fault = "none"
+        self.open = False
+        self.scope = "session"
+        self.view = "none"
+        self.listed = []
+        self.rfault = "none"
+        self.behind = False
+        self.diff = "none"
+
+    atomic func reread():
+        v, fs = read(self)
+        self.view = v
+        self.listed = fs
+        self.rfault = self.fault
+        self.behind = False
+        self.diff = "none"
+
+    atomic func opening(scope):
+        self.open = True
+        self.scope = scope
+        self.view = "loading"
+        self.listed = []
+        self.rfault = "none"
+        self.behind = False
+        self.diff = "none"
+
+    # A transcript tick: the open page re-reads on its next Poll.
+    atomic func tick():
+        if self.open:
+            self.behind = True
+
+    # --- the person
+
+    # The Changes chip / palette: the session's own edits.
+    atomic action OpenSession:
+        require not self.open
+        self.opening("session")
+
+    # A turn footer's "N files" link. Only a finished turn has one.
+    atomic action OpenTurn1:
+        require not self.open and self.t1 in ["done", "undone"]
+        self.opening("turn1")
+
+    atomic action OpenTurn2:
+        require not self.open and self.t2 in ["done", "undone"]
+        self.opening("turn2")
+
+    atomic action OpenTree:
+        require not self.open
+        self.opening("tree")
+
+    atomic action Close:
+        require self.open and settled(self)
+        self.open = False
+        self.scope = "session"
+        self.view = "none"
+        self.listed = []
+        self.rfault = "none"
+        self.diff = "none"
+
+    # Open a listed file's card: GET diff?path&scope(&turn).
+    atomic action DiffFile:
+        require self.open and self.view == "files" and not self.behind and self.diff == "none"
+        self.diff = "loading"
+
+    # --- the server and the timers
+
+    atomic fair action Answer:
+        require self.open and self.view == "loading"
+        self.reread()
+
+    # The tree's 10 s poll, or the edits' re-read on a transcript tick.
+    atomic fair action Poll:
+        require self.open and self.view != "loading" and self.behind and self.diff != "loading"
+        self.reread()
+
+    atomic fair action DiffAnswer:
+        require self.diff == "loading"
+        self.diff = patch(self)
+
+    # --- the session's world
+
+    atomic action StartTurn:
+        require settled(self) and not running(self)
+        require self.t1 == "none" or self.t2 == "none"
+        if self.t1 == "none":
+            self.t1 = "running"
+        else:
+            self.t2 = "running"
+        self.tick()
+
+    atomic action AgentWrite:
+        require settled(self) and "running" in [self.t1, self.t2]
+        if self.t1 == "running":
+            self.t1 = "wrote"
+        else:
+            self.t2 = "wrote"
+        self.tick()
+
+    atomic action TurnEnds:
+        require settled(self) and "wrote" in [self.t1, self.t2]
+        if self.t1 == "wrote":
+            self.t1 = "done"
+        else:
+            self.t2 = "done"
+        self.tick()
+
+    atomic action Undo:
+        require settled(self) and not running(self) and "done" in [self.t1, self.t2]
+        require self.fault != "cwd_gone"
+        if self.t2 == "done":
+            self.t2 = "undone"
+        else:
+            self.t1 = "undone"
+        self.tick()
+
+    atomic func fail(f):
+        self.fault = f
+        if self.open and self.scope == "tree":
+            self.behind = True
+
+    atomic action CorruptCheckpoint:
+        require settled(self) and not running(self) and self.fault == "none" and self.diff == "none" and self.t1 != "none"
+        self.fail("cp_gone")
+
+    atomic action SnapshotFails:
+        require settled(self) and not running(self) and self.fault == "none" and self.diff == "none" and self.t1 != "none"
+        self.fail("snap_fails")
+
+    atomic action TreeGrows:
+        require settled(self) and not running(self) and self.fault == "none" and self.diff == "none"
+        self.fail("slow")
+
+    atomic action RemoveWorktree:
+        require settled(self) and not running(self) and self.fault == "none" and self.diff == "none"
+        self.fail("cwd_gone")
+
+action Init:
+    page = Page()
+
+def fresh(p):
+    return p.open and p.view not in ["none", "loading"] and not p.behind
+
+# A git failure shows an error, never "no edits" (nor a list).
+always assertion GitFailureShowsError:
+    if not fresh(page) or page.rfault == "none":
+        return True
+    if page.rfault in ["cwd_gone", "slow"]:
+        return page.view == "error"
+    # The tree is git diff HEAD: no checkpoint or snapshot in it.
+    if page.scope == "tree":
+        return True
+    if page.scope == "session" and (page.t1 in ["done", "undone"] or page.t2 in ["done", "undone"]):
+        return page.view == "error"
+    return page.view != "no_changes"
+
+# "Not a repository" only when the cwd exists and is not one. This
+# session's cwd is always a checkout or gone, so never.
+always assertion NotRepoOnlyForNonRepo:
+    return page.view != "not_repo"
+
+# An undone turn does not keep listing its edits as current.
+always assertion UndoneTurnNotListed:
+    if not fresh(page):
+        return True
+    if page.t1 == "undone" and "a" in page.listed:
+        return False
+    if page.t2 == "undone" and "b" in page.listed:
+        return False
+    return True
+
+# Every diff read ends within changesTimeout: on a tree too big to read,
+# with a timeout, never a patch after the fact.
+always assertion DiffBounded:
+    return page.fault != "slow" or page.diff not in ["shown", "error"]
+
+# Every open answers or times out with a message.
+always eventually assertion OpenAnswers:
+    return not page.open or (page.view != "loading" and not page.behind)
+
+always eventually assertion DiffEnds:
+    return page.diff != "loading"
