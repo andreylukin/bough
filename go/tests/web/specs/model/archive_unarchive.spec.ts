@@ -109,10 +109,16 @@ const agentOf = (label: string) => AGENT[label.replace(/, 1 new result$/, '')] ?
 
 async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
   const p = c.page;
-  const work = p.locator('button.work-summary');
-  const workLabel = (await work.count()) ? (await work.getAttribute('aria-label')) ?? '' : 'Work';
-  const modal = dialog(c);
-  const modalText = (await modal.count()) ? (await modal.innerText()) : '';
+  // One synchronous read in the page: a count() and then getAttribute()
+  // or innerText() are two round trips, and a locator read auto-waits
+  // with no timeout. The Work button unmounts when the last agent goes
+  // (StopAndArchive dropping a queued one), and when that landed between
+  // the two the read waited for a button that never came back.
+  const { workLabel, modalText } = await p.evaluate(() => {
+    const work = document.querySelector('button.work-summary');
+    const modal = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+    return { workLabel: work ? work.getAttribute('aria-label') ?? '' : 'Work', modalText: modal ? modal.innerText : '' };
+  });
   // live has no surface on the page: nothing it draws says whether the
   // session's child is up. It is read off serve, as another client would.
   const { session } = await getSession(c, c.id);
