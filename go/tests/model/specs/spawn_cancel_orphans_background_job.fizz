@@ -1,0 +1,144 @@
+# A background job survives the subagent that started it.
+#
+# Code:
+#   go/plugins/agenttools/agenttools.go, go/internal/agenttools/agenttools.go
+#     (the Call a tool runs with: Session, Worker — "" for the main
+#     agent, else the subagent's name — and the ctx a tool's Call
+#     receives)
+#   go/plugins/tools/jobs.go start: tools.bash(cmd, limit) detaches the
+#     command under j.ctx (the Jobs row's own context, fixed for the
+#     session's life), not under the calling block's ctx. A job's owner
+#     is j.session(), the session file — never the subagent that called
+#     bash. Esc cancels the turn's context, which is what tools.spawn's
+#     child runs under (spawn_call_budget_cancel.fizz: c1/c2 die with
+#     it); a job that same child started is a sibling goroutine off
+#     j.ctx and is unreachable from that cancel.
+#
+# Escape cancels a running subagent (bough-subagents: the loop's spawn
+# blocks the block on the child; the engine's native spawn runs it in
+# parallel) but, by design, does not reach a background job that
+# subagent started with tools.bash(cmd, limit): the job keeps running
+# after the subagent — and the turn that held it — are gone, and its
+# eventual finish still queues a notice for the session (jobs.go
+# notify(b.owner, ...), b.owner fixed at start time). That notice can
+# only be delivered once nothing else is answering it (Take, Wake): a
+# later, unrelated turn, or a wake turn of its own if the session was
+# idle. spawn_call_budget_cancel.fizz models spawn's own cancel/budget
+# bookkeeping and never grows a job past that cancel; this flow is the
+# job-outlives-cancelled-subagent handoff on its own.
+#
+# One session. child is the subagent (spawn's blocking model of it: at
+# most one at a time, as in spawn_call_budget_cancel); job is the one
+# background job it may start. Esc kills the turn and any live child in
+# it, in one step (the process the turn runs in exits); it never touches
+# job, whether or not the child that started it is still around. A
+# finished job's notice can only land once a turn is open to carry it as
+# an input, or opens one of its own (a wake) when none is: reports counts
+# notices actually delivered, so "the job survived but its report never
+# reaches anyone" would show up as job ending with reports not moving.
+
+MAX_SPAWNS = 1
+MAX_ESCS = 1
+MAX_JOBS = 1
+
+role Session:
+    action Init:
+        self.turn = "idle"      # idle | running
+        self.child = "none"     # none | running (the one subagent, spawn-blocking)
+        self.job = "none"       # none | running (the one background job)
+        self.spawns = 0
+        self.escs = 0
+        self.reports = 0        # finish notices actually delivered to a turn
+        self.wakes = 0          # of those, ones that opened an idle turn
+
+    # person: a prompt opens a turn.
+    atomic action Prompt:
+        require self.turn == "idle"
+        self.turn = "running"
+
+    # agent: tools.spawn(task) (or the engine's native spawn). Blocks on
+    # the child; only one modelled here, as spawn_call_budget_cancel
+    # does for a single slot.
+    atomic action Spawn:
+        require self.turn == "running" and self.child == "none"
+        require self.spawns < MAX_SPAWNS
+        self.spawns = self.spawns + 1
+        self.child = "running"
+
+    # agent (inside the child): tools.bash(cmd, limit). Detaches under
+    # the Jobs row's own context, never the child's.
+    atomic action StartJob:
+        require self.child == "running" and self.job == "none"
+        require self.reports < MAX_JOBS
+        self.job = "running"
+
+    # the child finishes normally, no cancel involved.
+    atomic fair action ChildDone:
+        require self.child == "running"
+        self.child = "none"
+
+    # the turn closes once nothing foreground is running in it.
+    atomic fair action Done:
+        require self.turn == "running" and self.child == "none"
+        self.turn = "idle"
+
+    # person: Esc. The turn's context is cancelled: the live child (if
+    # any) dies with it and the turn ends in the same step. A job that
+    # child started is not derived from that context and is untouched —
+    # the thing this flow exists to pin down.
+    atomic action Esc:
+        require self.turn == "running" and self.escs < MAX_ESCS
+        self.escs = self.escs + 1
+        self.child = "none"
+        self.turn = "idle"
+
+    # system: the job's process exits (limit or a clean exit; both queue
+    # the same "finished" notice in jobs.go). Whether its spawning child
+    # is still running, just ended, or was cancelled out from under it by
+    # Esc makes no difference here: the job's own context outlived all of
+    # them.
+    atomic fair action JobFinishes:
+        require self.job == "running"
+        self.job = "none"
+        if self.turn == "idle":
+            self.wakes = self.wakes + 1
+            self.turn = "running"
+        self.reports = self.reports + 1
+
+action Init:
+    session = Session()
+
+# The one behaviour under test: cancelling the subagent (and with it the
+# turn) never ends the job it started. The only action that ends job is
+# JobFinishes, and that always moves reports — so a job that disappears
+# without a report would fail this, whatever ended it.
+transition assertion JobEndsOnlyByFinishing(before, after):
+    if before.session.job == "running" and after.session.job == "none":
+        return after.session.reports == before.session.reports + 1
+    return True
+
+# Esc never touches a job in flight.
+transition assertion EscNeverEndsJob(before, after):
+    if before.session.turn == "running" and before.session.job == "running":
+        if after.session.escs > before.session.escs:
+            return after.session.job == "running"
+    return True
+
+# A job can only be running under a child that spawned it, or after that
+# child (and maybe its whole turn) is already gone — never with no child
+# ever having existed to start it.
+always assertion JobImpliesEverSpawned:
+    return session.job == "none" or session.spawns > 0
+
+# Every finished job is eventually reported, cancelled subagent or not.
+always eventually assertion JobEventuallyReports:
+    return session.job != "running"
+
+# A wake only ever comes from a job's own report landing on an idle
+# session (the orphaned-report path this flow is about).
+always assertion WakesAreReports:
+    return session.wakes <= session.reports
+
+# Every turn this flow opens eventually closes, wake turns included.
+always eventually assertion TurnsClose:
+    return session.turn == "idle"
