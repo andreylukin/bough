@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -129,8 +130,13 @@ func (a *portalAdapter) Cleanup() error {
 	return iorb.ClosePortal(a.s.Home, a.id, a.guest)
 }
 
+// PID names this test process as the orb's owner: internal/serve/orbs.go's
+// ownerAlive forces a status with no live owner to "stopped" (checked
+// only by the real serve the browser walk drives against, not this
+// package's own direct-state-read adapter, which is why the gap only
+// showed up there).
 func portalState(session string, status iorb.Status, ip string) iorb.State {
-	return iorb.State{Session: session, Status: status, IP: ip}
+	return iorb.State{Session: session, Status: status, IP: ip, PID: os.Getpid()}
 }
 
 func (a *portalAdapter) view() (running, open bool, ip string, err error) {

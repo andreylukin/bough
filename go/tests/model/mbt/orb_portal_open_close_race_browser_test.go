@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/plugins/history"
@@ -59,6 +60,11 @@ func TestOrbPortalOpenCloseRaceBrowserServe(t *testing.T) {
 	defer a.closeFakes()
 
 	const slug = "portalp"
+	// WriteFile only overwrites an existing project's file; the
+	// directory it lives in has to exist first.
+	if _, err := projectdef.CreateEmpty(a.s.Home, slug, ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := projectdef.WriteFile(a.s.Home, slug, projectdef.FileYAML, "name: "+slug+"\nrepos:\n  - path: "+a.s.Home+"\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -127,36 +133,55 @@ func TestOrbPortalOpenCloseRaceBrowserServe(t *testing.T) {
 // session of slug: a page's row.mode gates the Portal button and Stop
 // orb on it (RuntimeStrip in web/src/app.tsx), and only a project
 // session's row carries an orb view at all.
+//
+// CreateSession's HTTP response can land before the meta entry it
+// wrote is durable on disk (history.Store writes and retries off the
+// request goroutine), so a read right after the POST returns can see
+// no meta entry yet and this would silently write the file back
+// unchanged, leaving the session "local" forever — poll for it instead
+// of reading once.
 func markProjectSession(home, id, slug string) error {
 	path := filepath.Join(home, ".bough", "history", id+".jsonl")
-	entries, err := history.Read(path)
-	if err != nil {
-		return err
-	}
-	for i := range entries {
-		if entries[i].Kind != "meta" {
-			continue
-		}
-		if entries[i].Data == nil {
-			entries[i].Data = map[string]any{}
-		}
-		entries[i].Data["mode"] = "project"
-		entries[i].Data["project"] = slug
-		break
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	for _, e := range entries {
-		b, err := json.Marshal(e)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		entries, err := history.Read(path)
 		if err != nil {
 			return err
 		}
-		if _, err := f.Write(append(b, '\n')); err != nil {
+		found := false
+		for i := range entries {
+			if entries[i].Kind != "meta" {
+				continue
+			}
+			found = true
+			if entries[i].Data == nil {
+				entries[i].Data = map[string]any{}
+			}
+			entries[i].Data["mode"] = "project"
+			entries[i].Data["project"] = slug
+			break
+		}
+		if !found {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("markProjectSession: %s: no meta entry in history after %s", id, 5*time.Second)
+			}
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
+		if err != nil {
 			return err
 		}
+		defer f.Close()
+		for _, e := range entries {
+			b, err := json.Marshal(e)
+			if err != nil {
+				return err
+			}
+			if _, err := f.Write(append(b, '\n')); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	return nil
 }
