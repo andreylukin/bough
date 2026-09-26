@@ -1,0 +1,76 @@
+# An attachment chip in the transcript (go/internal/serve/web/src/prompt.tsx,
+# AttChip): hover or focus opens its popover, a click pins it, and a pinned
+# popover survives the pointer leaving. Escape (document capture phase, with
+# stopPropagation) closes a pinned popover and returns focus to the chip; a
+# mousedown outside closes it without touching focus. An overlay under the
+# chip (the strip's Details) closes on Escape only when no popover swallowed it.
+#
+# open is derived in the code (hover or pinned); it is a field here so the
+# adapter and readUiState both read it as the region's presence. The 150 ms
+# leave grace is the Leave action's timer: it is one step, so a re-enter
+# before it fires is Enter after Leave with hover still true.
+
+role Chip:
+    action Init:
+        self.hover = False
+        self.pinned = False
+        self.open = False
+        self.focus = "none"
+        self.overlay = True
+
+    atomic action Enter:
+        require not self.hover
+        self.hover = True
+        self.open = True
+
+    atomic action Leave:
+        require self.hover
+        self.hover = False
+        self.open = self.pinned
+
+    atomic action Click:
+        # toggles the pin; the click also focuses the chip
+        self.pinned = not self.pinned
+        self.focus = "chip"
+        self.open = self.hover or self.pinned
+
+    atomic action FocusPop:
+        require self.pinned and self.focus != "pop"
+        self.focus = "pop"
+
+    atomic action Blur:
+        require self.focus != "none"
+        self.focus = "none"
+        self.hover = False
+        self.open = self.pinned
+
+    atomic action Escape:
+        if self.pinned:
+            self.pinned = False
+            self.hover = False
+            self.open = False
+            self.focus = "chip"
+        elif self.overlay:
+            self.overlay = False
+
+    atomic action OutsideClick:
+        require self.pinned
+        self.pinned = False
+        self.open = self.hover
+        self.focus = "none"
+
+    atomic action OpenOverlay:
+        require not self.overlay
+        self.overlay = True
+
+action Init:
+    chip = Chip()
+
+always assertion PinnedIsOpen:
+    return not chip.pinned or chip.open
+
+always assertion OpenMeansHoverOrPin:
+    return chip.open == (chip.hover or chip.pinned)
+
+always assertion PopFocusNeedsPin:
+    return chip.focus != "pop" or chip.pinned
