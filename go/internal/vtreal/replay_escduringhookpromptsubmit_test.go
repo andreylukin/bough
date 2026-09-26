@@ -64,12 +64,15 @@ func TestEscDuringHookPromptSubmit(t *testing.T) {
 	}
 	a := startCfg(t, 100, 30, escduringhookpromptsubmitConfig(escduringhookpromptsubmitTape(t)))
 	// Only the first prompt is gated. The poll is a JS loop, so the
-	// VM interrupt esc sends lands between calls.
+	// VM interrupt esc sends lands between calls. A missing release
+	// file must be "not yet", not an error: tools.bash throws on a
+	// non-zero exit, and a bare "test -e" failed the hook on the first
+	// poll whenever esc came later than 50ms (the macOS CI runner).
 	hooksWrite(t, a.home, "user-prompt-submit", "gate.js", fmt.Sprintf(`
 if (!event.input.includes("FIRSTGATED")) return;
 tools.bash(%q);
 for (;;) { if (String(tools.bash(%q)).includes("OPEN")) break; }
-return;`, "echo up > "+fifo, "sleep 0.05; test -e "+release+" && echo OPEN"))
+return;`, "echo up > "+fifo, "sleep 0.05; if test -e "+release+"; then echo OPEN; fi"))
 
 	a.typeText("FIRSTGATED prompt")
 	a.key(uv.KeyEnter, 0)
