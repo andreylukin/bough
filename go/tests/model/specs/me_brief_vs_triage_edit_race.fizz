@@ -1,0 +1,136 @@
+# The 5-minute launchd wiki tick can run `/llm-wiki brief`
+# (plugins/wiki/brief.go Brief/runBrief, the SKILL.md brief recipe) at
+# the same moment the person dismisses or pins a Me page row, which
+# writes topics/me/triage.json (plugins/wiki/triage.go Mark, an
+# unlocked read-modify-write). Recipe: go/tests/model/README.md.
+#
+# The brief run is not one write: it reads triage.json once, near the
+# start ("Then read topics/me/triage.json" in SKILL.md, well before
+# it gathers every source and rewrites topics/me/signals.json at the
+# end), and a dismiss written after that read is a snapshot the brief
+# never saw. sticky_override_file_writers models triage.json's readers
+# (the Me page's own optimistic override) but not this second writer:
+# the background regenerate, racing the person's own Mark on the same
+# file's *reader*, not the file itself (the brief never writes
+# triage.json — only Mark does).
+#
+# Code this is checked against:
+#   plugins/wiki/brief.go   Brief/runBrief (the tick and Refresh: one
+#                           headless run, triage read early, signals.json
+#                           written once at the end), Me (reads
+#                           triage.json and signals.json fresh, never
+#                           cached, on every call)
+#   plugins/wiki/triage.go  Mark (unlocked read-modify-write of
+#                           triage.json; dismiss also clears a pin)
+#   plugins/wiki/SKILL.md   the brief recipe: read triage.json once,
+#                           "never list [dismissed keys] again... in
+#                           rows"; signals.json items decide only
+#                           whether a signal exists, never a dismissal
+#   web/src/me.tsx          groupSignals: filters by triage.dismissed
+#                           and orders by triage.pinned every time it
+#                           renders, against whatever triage.json
+#                           Me() most recently read — never the brief's
+#                           stale snapshot
+#
+# What the race can and cannot do, worked out against that code:
+# - A signal dismissed after GatherStart (the brief's one read) but
+#   before GatherWrite (its one write) is still written into
+#   signals.json as present, because the skill's own "don't list a
+#   dismissed row" filter used the stale snapshot. But this does NOT
+#   resurrect it on screen: groupSignals re-reads triage.json fresh on
+#   every Me() call and filters by *today's* dismissed set, not the
+#   brief's. DismissedNeverShown holds regardless of interleaving.
+# - A pin set during the gather is not "dropped" either: the skill's
+#   item list never consults pinned (pinned only reorders, done
+#   client-side against fresh triage.json), so which items exist is
+#   independent of when a pin landed. PinnedAndPresentLeads holds
+#   regardless of interleaving, for exactly the same reason.
+# - The one real gap: a signal that is not among what the brief
+#   gathered this run (present == False) cannot be led even if it is
+#   pinned — a pin only has effect once some regenerate's item list
+#   contains its key again. That is a property of what a brief
+#   chooses to gather, not of write ordering, and is out of reach of a
+#   two-field file race like this one; PinnedAndPresentLeads is stated
+#   with that "if present" guard rather than asserting pins are never
+#   lost.
+#
+# Finding: modelled, no interleaving bug. The one place a stale
+# snapshot could show — a dismiss racing the gather's one read — is
+# caught by the live re-filter on every read, which is exactly what
+# distinguishes this file pair from off.yml's per-process caches in
+# sticky_override_file_writers (there, a cache can go stale across
+# reads; here, Me() never caches either file).
+
+role Page:
+    action Init:
+        self.dismissed = False
+        self.pinned = False
+        self.gathering = False
+        self.snap_dismissed = False # the brief's one read of triage.json
+        self.present = True         # the signal is in signals.json's items
+
+    # --- the background regenerate: one read, then (much later) one write
+
+    atomic action GatherStart:
+        # SKILL.md: "Then read topics/me/triage.json" — near the top of
+        # the run, before every source is gathered.
+        require not self.gathering
+        self.gathering = True
+        self.snap_dismissed = self.dismissed
+
+    atomic fair action GatherWrite:
+        # runBrief's single rewrite of signals.json (and the day's
+        # brief) at the end of the headless session. Whether the item
+        # is written present follows the skill's own filter, applied
+        # to the snapshot it read at GatherStart — not to triage.json
+        # as it stands now.
+        require self.gathering
+        self.gathering = False
+        self.present = not self.snap_dismissed
+
+    # --- the person's own Mark, any time, including mid-gather
+
+    atomic action Dismiss:
+        require not self.dismissed
+        self.dismissed = True
+        self.pinned = False # triage.go Mark("dismiss"): also unpins
+
+    atomic action Undismiss:
+        require self.dismissed
+        self.dismissed = False
+
+    atomic action Pin:
+        require not self.pinned and not self.dismissed
+        self.pinned = True
+
+    atomic action Unpin:
+        require self.pinned
+        self.pinned = False
+
+action Init:
+    page = Page()
+
+# What the Me page actually shows: groupSignals filtering signals.json's
+# items by triage.json's *current* dismissed set (both read fresh by
+# Me() on every call — never the brief's stale one).
+def shown(p):
+    return p.present and not p.dismissed
+
+def leads(p):
+    return shown(p) and p.pinned
+
+# A dismissed signal is never shown, whatever the brief's snapshot was
+# reading when it decided `present`.
+always assertion DismissedNeverShown:
+    return not (page.dismissed and shown(page))
+
+# A pinned signal that is present leads, whatever the brief's snapshot
+# was reading when a pin landed. (A pin on an absent signal has nothing
+# to lead — the known, non-race limitation noted above.)
+always assertion PinnedAndPresentLeads:
+    return not (page.pinned and page.present) or leads(page)
+
+# The brief always finishes what it starts (GatherWrite is fair): a
+# stale snapshot is a window, never a stuck state.
+always eventually assertion GatherFinishes:
+    return not page.gathering
