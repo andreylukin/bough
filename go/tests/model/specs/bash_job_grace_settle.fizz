@@ -1,0 +1,102 @@
+---
+deadlock_detection: false
+---
+
+# Foreground bash with a limit under code mode (plugins/tools/jobs.go):
+# tools.bash(cmd, limit) starts a job and claim() waits up to job_grace
+# for it. A job that ends in the grace is the caller's (claimed: no
+# finish notice); one still running at the deadline is handed back as a
+# job and unclaimed, so its finish becomes a notice. A closing turn
+# also unclaims (claim's `turn` case). Then jobs()/job() call settleIn:
+# wait up to job_settle for the running job, returning early on finish
+# or turn close.
+#
+# The finish goroutine and claim's deadline check both take b.mu, so
+# "done before the deadline check" and "claimed read at finish" are
+# ordered; the spec's assertions are that order's consequences.
+#
+# Fields (Bash role):
+#   job      none | running | done
+#   claim    none | waiting | answered (result returned to caller) | released (handed back as a job)
+#   settle   none | waiting | saw_finish | timed_out | cut (turn closed)
+#   notices  finish notices queued
+#   turn     open | closed
+
+role Bash:
+    action Init:
+        self.job = "none"
+        self.claim = "none"
+        self.settle = "none"
+        self.notices = 0
+        self.turn = "open"
+
+    atomic action Start:
+        require self.job == "none" and self.turn == "open"
+        self.job = "running"
+        self.claim = "waiting"
+
+    # The job's process ends: a claimed job makes no notice.
+    atomic fair action JobEnds:
+        require self.job == "running"
+        self.job = "done"
+        if self.claim != "waiting":
+            self.notices = self.notices + 1
+
+    # claim's loop sees done before its deadline.
+    atomic fair action ClaimSeesDone:
+        require self.claim == "waiting" and self.job == "done"
+        self.claim = "answered"
+
+    # claim's deadline passes with the job still running.
+    atomic fair action GraceExpires:
+        require self.claim == "waiting" and self.job == "running"
+        self.claim = "released"
+
+    # The turn closes while claim waits: unclaimed, job handed back.
+    atomic action TurnCloses:
+        require self.turn == "open"
+        self.turn = "closed"
+        if self.claim == "waiting":
+            self.claim = "released"
+            if self.job == "done":
+                self.notices = self.notices + 1
+        if self.settle == "waiting":
+            self.settle = "cut"
+
+    # jobs()/job() while a released job runs.
+    atomic action SettleStarts:
+        require self.claim == "released" and self.job == "running"
+        require self.settle == "none" and self.turn == "open"
+        self.settle = "waiting"
+
+    atomic action SettleSeesFinish:
+        require self.settle == "waiting" and self.job == "done"
+        self.settle = "saw_finish"
+
+    atomic action SettleTimesOut:
+        require self.settle == "waiting" and self.job == "running"
+        self.settle = "timed_out"
+
+action Init:
+    b = Bash()
+
+# A job answered to its caller never also raises a notice.
+always assertion AnsweredNoNotice:
+    return not (b.claim == "answered" and b.notices > 0)
+
+# At most one notice per job.
+always assertion AtMostOneNotice:
+    return b.notices <= 1
+
+# A handed-back job that finished has exactly one notice.
+always assertion ReleasedFinishNotices:
+    return not (b.claim == "released" and b.job == "done" and b.notices != 1)
+
+always assertion SettleSawFinishMeansDone:
+    return b.settle != "saw_finish" or b.job == "done"
+
+always assertion SettleOnlyAfterRelease:
+    return b.settle == "none" or b.claim == "released"
+
+always eventually assertion ClaimResolves:
+    return b.claim != "waiting"
