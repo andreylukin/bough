@@ -36,19 +36,19 @@ role Bash:
         self.claim = "waiting"
 
     # The job's process ends: a claimed job makes no notice.
-    atomic action JobEnds:
+    atomic fair action JobEnds:
         require self.job == "running"
         self.job = "done"
         if self.claim != "waiting":
             self.notices = self.notices + 1
 
     # claim's loop sees done before its deadline.
-    atomic action ClaimSeesDone:
+    atomic fair action ClaimSeesDone:
         require self.claim == "waiting" and self.job == "done"
         self.claim = "answered"
 
     # claim's deadline passes with the job still running.
-    atomic action GraceExpires:
+    atomic fair action GraceExpires:
         require self.claim == "waiting" and self.job == "running"
         self.claim = "released"
 
