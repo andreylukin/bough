@@ -1,0 +1,122 @@
+---
+# Two fires racing to completion, both attributed correctly (or both lost
+# to the fallback's shared name) is where a walk ends, not a deadlock.
+deadlock_detection: false
+---
+
+# hookbridge_session_attribution_race: one hooks service, fired by a
+# parent session and its subagent at the same time
+# (go/internal/unreal/hookbridge/hookbridge.go). hook_deny_effect_vs_ledger
+# covers one session's own fire; this is what happens when two callers
+# share the service concurrently.
+#
+# Code this is checked against:
+#   internal/unreal/hookbridge/hookbridge.go  Bridge.fire: the
+#     sessionFirer path (FireAs/FireApplying) takes the session as an
+#     argument on the call itself, so two goroutines calling it at once
+#     never interfere. The fallback, sessionNamer.SetSession(id), is
+#     process-wide: it is set on the shared Firer just before Fire, so a
+#     second caller's SetSession between the first's SetSession and its
+#     Fire renames the fire in flight.
+#   plugins/hooks/hooks.go  Service.SetSession / Fire (the fallback pair,
+#     still reachable through Bridge.fire for a Firer that has SetSession
+#     but not FireAs — hookbridge_test.go's `firer` stub is exactly that)
+#     vs FireAs/TakeFireRecordsFor (the safe pair; `sessFirer` in the same
+#     test file).
+#
+# "safe" is a Firer that implements sessionFirer (today's plugins/hooks.
+# Service): each caller's session travels with the call, so interleaving
+# never matters. "fallback" is a Firer with only the old SetSession
+# seam: naming and firing are two separate steps on shared state, so the
+# other caller's SetSession, run between them, wins. THIS SPEC IS THE
+# CONTRACT: a walk that reaches a_attr or b_attr set to the other
+# caller's name is the race, reachable only in fallback mode; safe mode
+# must never do that no matter how the two callers interleave.
+#
+# All state lives in the Flow role (fizzbee-mbt compares role state); "A"
+# is the parent session's bridge, "B" a subagent's, sharing one Firer.
+
+role Flow:
+    action Init:
+        # Fixed once, before either caller starts (Bridge.get returns the
+        # same Firer to both; whether it is old or new is a property of
+        # that Firer, not of a single call).
+        self.mode = "fallback"
+        # "idle" -> "set" (fallback only: SetSession ran, Fire has not)
+        # -> "fired".
+        self.a_phase = "idle"
+        self.b_phase = "idle"
+        # The fallback's shared, process-wide name (sessionNamer's own
+        # field); "" until either caller's SetSession runs.
+        self.current = ""
+        # The session each fire actually landed under. "" before firing,
+        # else "A" or "B"; a fired caller whose attr is not its own name
+        # is the misattribution.
+        self.a_attr = ""
+        self.b_attr = ""
+
+    atomic fair action UseSafeFirer:
+        require self.mode == "fallback" and self.a_phase == "idle" and self.b_phase == "idle"
+        self.mode = "safe"
+
+    # --- caller A (the parent session's bridge) ---------------------------
+
+    # Only the fallback path calls SetSession at all; FireAs never
+    # touches shared state.
+    atomic fair action A_SetSession:
+        require self.mode == "fallback" and self.a_phase == "idle"
+        self.current = "A"
+        self.a_phase = "set"
+
+    atomic fair action A_Fire:
+        require (self.mode == "safe" and self.a_phase == "idle") or (self.mode == "fallback" and self.a_phase == "set")
+        if self.mode == "safe":
+            self.a_attr = "A"
+        else:
+            # Fire.go's Service.Fire records under whatever SetSession
+            # last named, read now, not at A's own SetSession.
+            self.a_attr = self.current
+        self.a_phase = "fired"
+
+    # --- caller B (a subagent's bridge, same Firer) ------------------------
+
+    atomic fair action B_SetSession:
+        require self.mode == "fallback" and self.b_phase == "idle"
+        self.current = "B"
+        self.b_phase = "set"
+
+    atomic fair action B_Fire:
+        require (self.mode == "safe" and self.b_phase == "idle") or (self.mode == "fallback" and self.b_phase == "set")
+        if self.mode == "safe":
+            self.b_attr = "B"
+        else:
+            self.b_attr = self.current
+        self.b_phase = "fired"
+
+action Init:
+    flow = Flow()
+
+# A safe Firer never misattributes, whatever order the two callers run
+# in: FireAs carries the session on the call, so there is nothing shared
+# to race on.
+always assertion SafeFirerNeverMisattributes:
+    if flow.mode != "safe":
+        return True
+    a_ok = flow.a_phase != "fired" or flow.a_attr == "A"
+    b_ok = flow.b_phase != "fired" or flow.b_attr == "B"
+    return a_ok and b_ok
+
+# Whichever caller wins the fallback's shared name is still one of the
+# two live callers, never neither and never both: SetSession only ever
+# holds one name at a time.
+always assertion FallbackAttributionIsALiveCaller:
+    if flow.mode != "fallback":
+        return True
+    a_ok = flow.a_phase != "fired" or flow.a_attr in ("A", "B")
+    b_ok = flow.b_phase != "fired" or flow.b_attr in ("A", "B")
+    return a_ok and b_ok
+
+# Liveness: both callers eventually fire, race or not — nothing in the
+# shared name traps a caller in "set" forever.
+always eventually assertion BothCallersFire:
+    return flow.a_phase == "fired" and flow.b_phase == "fired"
