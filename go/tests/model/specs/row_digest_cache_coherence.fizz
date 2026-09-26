@@ -1,0 +1,84 @@
+# /api/sessions builds each row from two things read at different times
+# (go/internal/serve/digest.go, api.go rowOf, status.go StatusOf):
+#
+#   digest  cached per session, keyed on the transcript file's (size,
+#           mtime): digestOf(entries) turns entries into askDead/askLive
+#           etc, and digests.m keeps that answer until the key changes
+#           (digest() in digest.go). A recompute reads the transcript
+#           again and rebases the cache on the transcript's current
+#           identity.
+#   live    a.sup.Live(id): read fresh on every request, never cached
+#           (api.go rowOf, lines ~762-766).
+#
+# The row is digest-plus-live merged per request. The two are read at
+# different moments, so a request can combine a digest computed before
+# the transcript last changed with a live flag read after — or the
+# reverse. cacheKey/digestKey stand in for the (size, mtime) identity;
+# Recompute is what digest() does whenever the key it is keyed on no
+# longer matches the file (an append, e.g. an answer landing, always
+# changes it — the trap is a second write inside the same tie window,
+# not modeled here since the fix is to key on more than mtime, not to
+# accept the tie).
+#
+# Finding to check against code: askOpen is what the transcript says
+# right now (an ask still open, or already answered); digestAskOpen is
+# what the last computed digest says. A served row must never show an
+# ask as still open once the transcript has resolved it, whatever live
+# is doing — that is the "ask shown as pending on a session whose
+# transcript already resolved it" case the flow is named for.
+
+role Session:
+    action Init:
+        self.askOpen = True
+        self.live = True
+        self.cacheKey = 0
+        self.digestKey = 0
+        self.digestAskOpen = True
+
+    # The transcript resolves the open ask (an answer lands, or it times
+    # out). Appending to the history file always changes its (size,
+    # mtime) identity, so the row's cache key advances with it.
+    atomic action Resolve:
+        require self.askOpen
+        self.askOpen = False
+        self.cacheKey = self.cacheKey + 1
+
+    # api.digest() rebuilds the cached digest from the transcript once
+    # the key it was cached under no longer matches the file.
+    atomic fair action Recompute:
+        require self.digestKey != self.cacheKey
+        self.digestKey = self.cacheKey
+        self.digestAskOpen = self.askOpen
+
+    # The child exits, or a new one takes the session: sup.Live() is
+    # read fresh on every request and never depends on the digest cache.
+    atomic action Die:
+        require self.live
+        self.live = False
+
+    atomic action Revive:
+        require not self.live
+        self.live = True
+
+action Init:
+    session = Session()
+
+# A digest that is caught up with the transcript it claims to describe
+# must agree with it. Read together with DigestNeverAheadOfTruth, the
+# only thing a stale digest is allowed to do is lag one Resolve behind
+# — never show a resolution that has not happened, and never disagree
+# once it says it is current.
+always assertion FreshDigestMatchesTranscript:
+    return session.digestKey != session.cacheKey or session.digestAskOpen == session.askOpen
+
+# StatusOf only ever reports what the entries hold: the digest can lag
+# the transcript, but it can never say resolved before the transcript
+# does (that would be inventing an answer nobody gave).
+always assertion DigestNeverAheadOfTruth:
+    return not (session.digestAskOpen == False and session.askOpen == True)
+
+# Staleness is always transient: a resolved transcript's digest catches
+# up (this is what makes "combining a stale digest with fresh liveness"
+# a passing race rather than a stuck one).
+always eventually assertion DigestCatchesUp:
+    return session.digestKey == session.cacheKey
