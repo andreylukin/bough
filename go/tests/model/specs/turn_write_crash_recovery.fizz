@@ -1,0 +1,39 @@
+# turn_write_crash_recovery (go/tests/model/README.md): a session's
+# history.jsonl gets killed mid-append, leaving a torn last line with no
+# trailing newline. OpenExisting must recover the file rather than fail
+# the whole session: readEntries skips the unparsable partial record and
+# dropTornTail truncates the file back to its last newline so the next
+# Append does not get appended after garbage. This is distinct from
+# history_io_failure, which is a whole-file I/O error (missing file,
+# permission denial) that OpenExisting must still surface as an error.
+#
+# State lives in a role because fizzbee-mbt compares state per role: the
+# adapter's GetState is the HistoryFile role's. `loaded` is the store
+# being open in the current process; a crash mid-append drops it without
+# losing the session, and Reopen (OpenExisting) is what brings it back.
+
+role HistoryFile:
+    action Init:
+        self.entries = 0
+        self.torn = False
+        self.loaded = True
+
+    atomic action Append:
+        require self.loaded and not self.torn
+        self.entries = self.entries + 1
+
+    atomic action CrashMidAppend:
+        require self.loaded and not self.torn
+        self.torn = True
+        self.loaded = False
+
+    atomic action Reopen:
+        require not self.loaded
+        self.torn = False
+        self.loaded = True
+
+action Init:
+    file = HistoryFile()
+
+always assertion NoAppendWhileTorn:
+    return not file.torn or not file.loaded
