@@ -1,0 +1,72 @@
+# One orb session's checkout setup. Prepare is synchronous (worktree add +
+# chdir); Start (image, container) is async after it. A prepare that fails
+# midway rolls its worktree back and leaves cwd untouched; a start that
+# fails keeps the worktree so a resume reuses it. Remove deletes worktree
+# and container together, and refuses while the worktree is dirty.
+
+role Orb:
+    action Init:
+        self.status = "new"
+        self.worktree = False
+        self.cwd = "host"
+        self.container = "none"
+        self.dirty = False
+
+    atomic action Prepare:
+        require self.status == "new" or self.status == "failed"
+        self.status = "prepared"
+        self.worktree = True
+        self.cwd = "worktree"
+
+    atomic action PrepareFail:
+        require self.status == "new" or self.status == "failed"
+        self.status = "failed"
+        self.worktree = False
+        self.cwd = "host"
+
+    atomic action Start:
+        require self.status == "prepared" and self.container == "none"
+        self.container = "starting"
+
+    atomic action Ready:
+        require self.container == "starting"
+        self.container = "running"
+
+    atomic action StartFail:
+        require self.container == "starting"
+        self.container = "none"
+
+    atomic action Edit:
+        require self.worktree
+        self.dirty = True
+
+    atomic action Commit:
+        require self.dirty
+        self.dirty = False
+
+    atomic action Remove:
+        require self.status == "prepared" and not self.dirty
+        self.status = "removed"
+        self.worktree = False
+        self.container = "none"
+        self.cwd = "host"
+
+    # A removed session's id can be set up again from scratch.
+    atomic action Recreate:
+        require self.status == "removed"
+        self.status = "new"
+
+action Init:
+    orb = Orb()
+
+always assertion CwdFollowsWorktree:
+    return (orb.cwd == "worktree") == orb.worktree
+
+always assertion ContainerNeedsWorktree:
+    return orb.container == "none" or orb.worktree
+
+always assertion FailedLeavesNothing:
+    return orb.status != "failed" and orb.status != "removed" or (not orb.worktree and orb.container == "none")
+
+always assertion DirtyNeedsWorktree:
+    return not orb.dirty or orb.worktree
