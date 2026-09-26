@@ -72,9 +72,12 @@ role Session:
         self.catalogue = "loading"
 
     # The person picks m in the picker, under whatever epoch is current
-    # right now. Already-current, non-stale m has nothing left to pick.
+    # right now. The picker's Select is a value diff (select.tsx's
+    # pick()): re-choosing the same id it already shows never fires the
+    # POST, staleness or not, so once m is what runs there is nothing
+    # left to pick until something else runs first.
     atomic action PickModel:
-        require self.catalogue == "loaded" and not self.switching and not (self.runs == "m" and not self.stale)
+        require self.catalogue == "loaded" and not self.switching and self.runs != "m"
         self.switching = True
         self.pick_epoch = self.epoch
 
