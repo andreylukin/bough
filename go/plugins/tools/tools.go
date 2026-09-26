@@ -97,6 +97,13 @@ type Stats struct {
 	// is the command's: a policy that asks the person is released by
 	// its end (Stop).
 	policy func(ctx context.Context, cmd string) error
+	// hadPolicy is set the first time a policy ever lands: a rules-row
+	// reload disposes the old one (nil) before Apply installs the new
+	// one, and a bash call landing in that gap must wait for whichever
+	// policy comes next rather than run unchecked, permanently, as if
+	// no rule had ever matched. A session that never mounts rules at
+	// all never sets this, so its bash calls never pay the wait.
+	hadPolicy bool
 	// afterEdit, when set, is asked after every write and patch; what it
 	// returns is appended to the tool's result (the lsp row's
 	// diagnostics). bashNote does the same for a bash command's output.
@@ -324,6 +331,33 @@ func (s *Stats) SetPolicyContext(fn func(ctx context.Context, cmd string) error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.policy = fn
+	if fn != nil {
+		s.hadPolicy = true
+	}
+}
+
+// policyGrace bounds how long a bash call waits for a policy to
+// reappear after a reload cleared it; a var so tests can shorten it.
+var policyGrace = 3 * time.Second
+
+// awaitPolicy polls for a policy to land, up to policyGrace or ctx's
+// own cancellation, and gives up to nil (run unchecked) past either.
+func (s *Stats) awaitPolicy(ctx context.Context) func(ctx context.Context, cmd string) error {
+	deadline := time.Now().Add(policyGrace)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		p := s.policy
+		s.mu.Unlock()
+		if p != nil {
+			return p
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	return nil
 }
 
 // SetAfterEdit sets (nil clears) the hook whose text follows every
@@ -589,7 +623,11 @@ func (s *Stats) bashRun(cmd string, opts ...any) (string, error) {
 	}
 	s.mu.Lock()
 	policy := s.policy
+	had := s.hadPolicy
 	s.mu.Unlock()
+	if policy == nil && had {
+		policy = s.awaitPolicy(parent)
+	}
 	if policy != nil {
 		if err := policy(parent, cmd); err != nil {
 			return "", err
