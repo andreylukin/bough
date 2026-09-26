@@ -5,20 +5,89 @@ package vtreal
 // instead of bough: the child's output timing is then exact.
 
 import (
+	"bufio"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
 
-// settleApp runs sh -c script on a fresh terminal.
-func settleApp(t *testing.T, script string) *app {
+// settleChildEnv names, in a re-exec'd test binary, the settleChildren
+// entry to run instead of the tests.
+const settleChildEnv = "VTREAL_SETTLE_CHILD"
+
+// settleChildren are the scripted children, one per test by its name.
+// They were sh scripts once, and each `sleep` between two writes was a
+// fork+exec: on the macOS CI runner one of those stalled past settled's
+// 120ms quiet window often enough that settled rightly returned the
+// half-written screen, and the test blamed settled. A Go child's delays
+// are timers, so the only gaps in its output are the ones written here.
+var settleChildren = map[string]func(){
+	"TestSettledWaitsOutAShortPause": func() {
+		fmt.Print("FIRST")
+		time.Sleep(80 * time.Millisecond)
+		fmt.Print("SECOND")
+		time.Sleep(30 * time.Second)
+	},
+	"TestSettledIgnoresOutputThatChangesNoText": func() {
+		fmt.Print("STEADY")
+		for {
+			fmt.Print("\033[?25l")
+			time.Sleep(10 * time.Millisecond)
+		}
+	},
+	"TestSettledWaitsForTheReplyToInput":    replyAfter50ms,
+	"TestSettledWaitsForTheReplyToRawInput": replyAfter50ms,
+	"TestSettledReturnsAtOnceOnAQuietScreen": func() {
+		fmt.Print("STEADY")
+		time.Sleep(30 * time.Second)
+	},
+	"TestSettledSeesPastTickingChrome": func() {
+		for i := 0; ; i++ {
+			fmt.Printf("\r%c job 1 · %ds STEADY", []rune("⠋⠙⠹⠸")[i%4], i/20)
+			time.Sleep(50 * time.Millisecond)
+		}
+	},
+	"TestSettledWaitsOutChangingText": func() {
+		for i := range 30 {
+			fmt.Printf("\rcount %d", i)
+			time.Sleep(50 * time.Millisecond)
+		}
+		time.Sleep(30 * time.Second)
+	},
+}
+
+// replyAfter50ms echoes a line back only 50ms after it arrives.
+func replyAfter50ms() {
+	stty := exec.Command("stty", "-echo")
+	stty.Stdin = os.Stdin
+	_ = stty.Run() // before READY, so its fork is outside every timed window
+	fmt.Print("READY")
+	l, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	time.Sleep(50 * time.Millisecond)
+	fmt.Printf("GOT:%s", strings.TrimRight(l, "\r\n"))
+	time.Sleep(30 * time.Second)
+}
+
+// settleApp runs this test's settleChildren entry, in a re-exec of the
+// test binary, on a fresh terminal.
+func settleApp(t *testing.T) *app {
 	t.Helper()
+	if settleChildren[t.Name()] == nil {
+		t.Fatalf("no settle child for %s", t.Name())
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	term, err := NewTerminal(t, 40, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sh", "-c", script)
+	cmd := exec.Command(self)
+	cmd.Env = append(os.Environ(), settleChildEnv+"="+t.Name())
 	if err := term.Start(cmd); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +128,7 @@ func TestSettledWaitsForASlowDrain(t *testing.T) {
 // the renderer can stall between painting two halves of one screen.
 func TestSettledWaitsOutAShortPause(t *testing.T) {
 	t.Parallel()
-	a := settleApp(t, "printf FIRST; sleep 0.08; printf SECOND; exec sleep 30")
+	a := settleApp(t)
 	a.waitFor("FIRST")
 	if s := a.settled(); !strings.Contains(s, "FIRSTSECOND") {
 		t.Fatalf("settled returned mid-frame, before a write 80ms later:\n%s", s)
@@ -72,7 +141,7 @@ func TestSettledWaitsOutAShortPause(t *testing.T) {
 // about.
 func TestSettledIgnoresOutputThatChangesNoText(t *testing.T) {
 	t.Parallel()
-	a := settleApp(t, `printf STEADY; while :; do printf '\033[?25l'; sleep 0.01; done`)
+	a := settleApp(t)
 	a.waitFor("STEADY")
 	began := time.Now()
 	s := a.settled()
@@ -88,8 +157,7 @@ func TestSettledIgnoresOutputThatChangesNoText(t *testing.T) {
 // returns: the quiet window starts at the call, not at the last output.
 func TestSettledWaitsForTheReplyToInput(t *testing.T) {
 	t.Parallel()
-	// The child echoes a line back only after 50ms.
-	a := settleApp(t, `stty -echo; printf READY; read l; sleep 0.05; printf "GOT:%s" "$l"; exec sleep 30`)
+	a := settleApp(t) // replyAfter50ms
 	a.waitFor("READY")
 	time.Sleep(200 * time.Millisecond) // the screen has been quiet for longer than a window
 	a.typeText("ping\r")
@@ -103,7 +171,7 @@ func TestSettledWaitsForTheReplyToInput(t *testing.T) {
 // cost a third of the package's ~1500 settles 120ms each for nothing.
 func TestSettledReturnsAtOnceOnAQuietScreen(t *testing.T) {
 	t.Parallel()
-	a := settleApp(t, `printf STEADY; exec sleep 30`)
+	a := settleApp(t)
 	a.waitFor("STEADY")
 	time.Sleep(200 * time.Millisecond) // quiet for longer than a window, no input
 	began := time.Now()
@@ -120,7 +188,7 @@ func TestSettledReturnsAtOnceOnAQuietScreen(t *testing.T) {
 // waited for like the reply to a key.
 func TestSettledWaitsForTheReplyToRawInput(t *testing.T) {
 	t.Parallel()
-	a := settleApp(t, `stty -echo; printf READY; read l; sleep 0.05; printf "GOT:%s" "$l"; exec sleep 30`)
+	a := settleApp(t)
 	a.waitFor("READY")
 	time.Sleep(200 * time.Millisecond)
 	if _, err := a.term.WriteInput([]byte("ping\r")); err != nil {
@@ -137,7 +205,7 @@ func TestSettledWaitsForTheReplyToRawInput(t *testing.T) {
 // running to its 3.6 s cap.
 func TestSettledSeesPastTickingChrome(t *testing.T) {
 	t.Parallel()
-	a := settleApp(t, `i=0; while :; do for c in ⠋ ⠙ ⠹ ⠸; do printf '\r%s job 1 · %ds STEADY' $c $((i/20)); i=$((i+1)); sleep 0.05; done; done`)
+	a := settleApp(t)
 	a.waitFor("STEADY")
 	began := time.Now()
 	s := a.settled()
@@ -153,7 +221,7 @@ func TestSettledSeesPastTickingChrome(t *testing.T) {
 // 1.5 s holds settled until it stops.
 func TestSettledWaitsOutChangingText(t *testing.T) {
 	t.Parallel()
-	a := settleApp(t, `i=0; while [ $i -lt 30 ]; do printf '\rcount %d' $i; i=$((i+1)); sleep 0.05; done; exec sleep 30`)
+	a := settleApp(t)
 	a.waitFor("count 1")
 	if s := a.settled(); !strings.Contains(s, "count 29") {
 		t.Fatalf("settled returned while the text was still changing:\n%s", s)

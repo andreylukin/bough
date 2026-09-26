@@ -37,6 +37,11 @@ var bin string // testbin.Path, resolved once in TestMain
 var prebuilds = map[string]func(){}
 
 func TestMain(m *testing.M) {
+	// A re-exec of this binary as settle_test.go's scripted child.
+	if name := os.Getenv(settleChildEnv); name != "" {
+		settleChildren[name]()
+		os.Exit(0)
+	}
 	// Every child inherits this: none may take the user's page server
 	// port (localhost:7683) and serve this build's pages from a temp HOME.
 	os.Setenv("BOUGH_WEB_ADDR", "127.0.0.1:0")
