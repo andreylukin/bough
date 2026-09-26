@@ -1,0 +1,162 @@
+---
+# One call, resolved (denied or ended) and caught up by the page: that
+# is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# A native call's hook boundary (internal/unreal/hookbridge/hookbridge.go
+# PreTool/PostTool, fired from boughcall.go's call) against the call row
+# the page already started rendering (call_row_rendering.fizz).
+#
+# Checked against the code (2026-09-25, main c49077097):
+#
+# AddRemoteJob pushes the op as StatusAwaiting and returns; only then
+# does it start execute() in its own goroutine (boughcall.go
+# AddRemoteJob -> h.push(awaiting); h.wake(); go h.execute(...)). The
+# page renders that awaiting push as the call's row going live (args
+# shown, running) before anything in execute() has run. PreTool then
+# fires inside execute(), on its own schedule, and only after it
+# resolves does the tool itself run (h.call: PreTool -> safeCall ->
+# PostTool). So a deny can only land after the row is already live; the
+# tool itself never runs when PreTool denies (safeCall is never
+# reached), so a denied call can never have streamed progress. A rewrite
+# of args (PreTool's "args" key) similarly lands after the row is live,
+# before the tool sees the (possibly different) arguments it renders.
+#
+# PostTool fires after the tool returns, so any progress the tool sent
+# while its row was live already reached the page before PostTool's
+# rewrite of the recorded result is possible; the row's live tail and
+# the eventual record can disagree in wording, but the row's terminal
+# state (denied vs ok) is what this flow's invariants pin down: a
+# denied call is only ever shown denied, and never carries a live tail
+# once it is.
+#
+# Not modeled: native_call_adoption.fizz (the call outliving the turn
+# via settle/adoption); this flow ends every call inside one turn's
+# window, denied or not.
+#
+# Fields (Session role):
+#   call       none | awaiting | running | denied | ended
+#   pre_fired  PreTool has fired for this call
+#   denied     PreTool's fire returned a deny
+#   rewrote_args  PreTool's fire returned a rewritten "args"
+#   progressed the tool sent at least one progress chunk while running
+#   post_fired PostTool has fired for this call
+#   rewrote_result  PostTool's fire returned a rewritten "result"
+#   record     what boughcall's terminal push says: none | denied | ok
+#   behind     something was pushed the page has not fetched yet
+#   row        the page's rendering of the call row: none | live | denied | ok
+#   tail       the row is showing streamed output right now
+
+role Session:
+    action Init:
+        self.call = "none"
+        self.pre_fired = False
+        self.denied = False
+        self.rewrote_args = False
+        self.progressed = False
+        self.post_fired = False
+        self.rewrote_result = False
+        self.record = "none"
+        self.behind = False
+        self.row = "none"
+        self.tail = False
+
+    # AddRemoteJob: the awaiting op is pushed; the page can render the
+    # row live from this alone, before PreTool has even fired.
+    atomic action CallStart:
+        require self.call == "none"
+        self.call = "awaiting"
+        self.behind = True
+
+    # execute() -> h.call: PreTool fires.
+    atomic fair action PreFires:
+        require self.call == "awaiting" and not self.pre_fired
+        self.pre_fired = True
+
+    # A deny: h.call returns before safeCall ever runs the tool.
+    atomic fair action PreDeny:
+        require self.pre_fired and self.call == "awaiting" and not self.denied
+        self.denied = True
+        self.call = "denied"
+        self.record = "denied"
+        self.behind = True
+
+    # Allowed, with or without a rewritten "args": safeCall runs next.
+    atomic fair action PreAllow:
+        require self.pre_fired and self.call == "awaiting" and not self.denied
+        self.call = "running"
+
+    atomic action PreAllowRewrite:
+        require self.pre_fired and self.call == "awaiting" and not self.denied
+        self.rewrote_args = True
+        self.call = "running"
+
+    # c.Progress: the tool streams a chunk while it runs, and the row
+    # is live for it. Not every call streams, so it is not fair.
+    atomic action Progress:
+        require self.call == "running" and not self.progressed
+        self.progressed = True
+        self.behind = True
+
+    # safeCall returned; PostTool fires.
+    atomic fair action PostFires:
+        require self.call == "running" and not self.post_fired
+        self.post_fired = True
+
+    atomic action PostRewrite:
+        require self.post_fired and self.call == "running" and not self.rewrote_result
+        self.rewrote_result = True
+
+    # The terminal op is pushed.
+    atomic fair action CallEnd:
+        require self.call == "running" and self.post_fired
+        self.call = "ended"
+        self.record = "ok"
+        self.behind = True
+
+    # The page fetches: the row follows the freshest thing it was told.
+    atomic fair action CatchUp:
+        require self.behind
+        self.behind = False
+        if self.record == "denied":
+            self.row = "denied"
+        elif self.record == "ok":
+            self.row = "ok"
+        elif self.call in ("awaiting", "running"):
+            self.row = "live"
+        self.tail = self.progressed and self.row != "denied"
+
+action Init:
+    session = Session()
+
+# The tool never runs on a denied call: PreDeny requires "awaiting",
+# Progress requires "running", so a denied call is never progressed.
+always assertion NoOutputOnDeny:
+    return not (session.denied and session.progressed)
+
+# Nothing PostTool touches happens on a denied call: safeCall was
+# never reached.
+always assertion PostNeverFiresOnDeny:
+    return not (session.denied and (session.post_fired or session.rewrote_result))
+
+# Once the page has caught up, its row agrees with the terminal record.
+always assertion RowMatchesRecordOnceCaughtUp:
+    return session.behind or session.record == "none" or session.row == session.record
+
+# A row the page shows as denied never shows a live tail: the late
+# deny effect must not leave the page still rendering the partial
+# output the (never-run) call could not have produced.
+always assertion DeniedRowHasNoTail:
+    return not (session.row == "denied" and session.tail)
+
+# Once the page has caught up, a live row means the call is still
+# open (awaiting or running); a resolved call is never shown live.
+always assertion LiveRowOnlyWhileOpen:
+    return session.behind or session.row != "live" or session.call in ("awaiting", "running")
+
+always eventually assertion CallResolves:
+    return session.call == "none" or session.record != "none"
+
+always eventually assertion PageCatchesUp:
+    return not session.behind
