@@ -1,0 +1,58 @@
+# Wiki ingest tick: a session is ingested only after it has been quiet
+# (30 min), under the single .ingest.lock, and a turn that lands after
+# the claim leaves the session pending again instead of being marked
+# ingested. seq is the session's last turn; logged is the highest seq
+# the log cites (id#seq); claimed is the seq the lock holder took.
+
+role Wiki:
+    action Init:
+        self.seq = 1
+        self.logged = 0
+        self.quiet = False
+        self.lock = "free"
+        self.claimed = 0
+        self.dup = False
+
+    atomic action GoQuiet:
+        require not self.quiet
+        self.quiet = True
+
+    atomic action Resume:
+        require self.seq < 2
+        self.seq = self.seq + 1
+        self.quiet = False
+
+    atomic action Tick:
+        require self.lock == "free" and self.quiet and self.logged < self.seq
+        self.lock = "tick"
+        self.claimed = self.seq
+
+    atomic action Manual:
+        require self.lock == "free" and self.quiet and self.logged < self.seq
+        self.lock = "manual"
+        self.claimed = self.seq
+
+    # A tick that finds the lock held or nothing pending returns at once.
+    atomic action SkipTick:
+        require self.lock != "free" or not self.quiet or self.logged >= self.seq
+        pass
+
+    atomic action Finish:
+        require self.lock != "free"
+        if self.logged >= self.claimed:
+            self.dup = True
+        self.logged = self.claimed
+        self.lock = "free"
+        self.claimed = 0
+
+action Init:
+    wiki = Wiki()
+
+always assertion NoDoubleIngest:
+    return not wiki.dup
+
+always assertion CitationsNeverAhead:
+    return wiki.logged <= wiki.seq
+
+always assertion ClaimOnlyUnderLock:
+    return (wiki.lock == "free") == (wiki.claimed == 0)
