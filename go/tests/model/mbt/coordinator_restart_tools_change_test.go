@@ -92,6 +92,13 @@ type crAdapter struct {
 	models    int             // model swaps this walk
 	stop      string          // what the restart in progress did: built | refused | none
 
+	// finishing: a Reply left the turn quiescent with no foreground
+	// call, so evaluate closes it in the same breath (Finish is the only
+	// next step, crDrivable). closesAt is the done count before the
+	// reply; GetState reads the one done past it as that Finish.
+	finishing bool
+	closesAt  int
+
 	// The actor's private state, kept from the adapter's own steps.
 	run, down, call                        string
 	inflight, unobserved, restart, changed bool
@@ -162,6 +169,7 @@ func (a *crAdapter) Init() error {
 	a.id, a.ids = row.ID, append(a.ids, row.ID)
 	a.queued, a.takenL, a.released = nil, nil, map[string]bool{}
 	a.gateF, a.startF, a.builds, a.refusals, a.models, a.stop = "", "", 0, 0, 0, ""
+	a.finishing, a.closesAt = false, 0
 	a.run, a.down, a.call, a.store = "none", "", "none", "ok"
 	a.inflight, a.unobserved, a.restart, a.changed, a.uncounted = false, false, false, false, false
 	a.rebuilds = 0
@@ -197,6 +205,7 @@ func (a *crAdapter) GetRoles() (map[fmbt.RoleId]fmbt.Role, error) {
 type crView struct {
 	open             bool
 	dones, errs      int
+	closes           int // done entries in the whole transcript
 	crashed          bool
 	crashes, builds  int
 	lastSeq          int64
@@ -230,6 +239,7 @@ func crObserve(es []history.Entry) crView {
 			}
 		case "done":
 			v.dones++
+			v.closes++
 			v.open = false
 			n, _ := toCount(e.Data["running"])
 			v.doneRunning = n
@@ -313,6 +323,13 @@ func (a *crAdapter) GetState() (map[string]any, error) {
 	}
 	if !slack(v.refusals, a.refusals) || v.refusals != a.refusals && a.store == "ok" {
 		return nil, fmt.Errorf("the session refused %d builds; the steps so far refuse %d", v.refusals, a.refusals)
+	}
+	// After a Reply the spec's turn is open until Finish, but the actor
+	// closes it as soon as the response is recorded: a history read that
+	// lands after that sees the done already. Only that one done is read
+	// as not yet written; any other close is still a mismatch.
+	if a.finishing && !v.open && v.closes == a.closesAt+1 {
+		v.open, v.dones = true, v.dones-1
 	}
 	return map[string]any{
 		"open": v.open, "run": a.run, "down": a.down, "inflight": a.inflight,
@@ -667,6 +684,7 @@ func (a *crAdapter) Reply() error {
 		return err
 	}
 	a.inflight = false
+	a.finishing, a.closesAt = !a.unobserved && a.call != "fg", before.closes
 	if !before.open {
 		if _, err := a.await("the reply's wake turn", func(v crView) bool { return v.wakes > before.wakes }); err != nil {
 			return err
@@ -748,6 +766,7 @@ func (a *crAdapter) Finish() error {
 		return nil
 	}
 	_, err := a.await("the turn's done", func(v crView) bool { return !v.open })
+	a.finishing = false
 	return err
 }
 
