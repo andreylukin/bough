@@ -9,7 +9,8 @@
 // topics/me/triage.json" does, and GatherWrite rewrites signals.json,
 // filtered by that stale snapshot rather than by triage.json as it now
 // stands. Dismiss, Pin and Unpin go through the real page (the only UI a
-// person has for them); Undismiss has no UI (a dismissed row offers no
+// person has for them) whenever the signal has a row, and through the API
+// when the last regenerate left it out; Undismiss has no UI (a dismissed row offers no
 // restore control) and goes through the API a person cannot otherwise
 // reach, followed by a reload so the page's own sticky triage override
 // (me.tsx's `onTriage` sets `triage` in state once and keeps it until the
@@ -54,28 +55,55 @@ function writeSignals(c: Ctx, present: boolean): void {
 
 const primary = (c: Ctx) => c.page.locator('.me-bar, .me-loading');
 
-// The page's abstract state: dismissed and pinned come from triage.json
-// through the DOM (the Pin/Unpin button's own label, the dismissed-count
-// line — a dismissed row's Pin/Dismiss buttons are gone, so dismissed and
-// present are both readable only through their combination: a shown row
-// (present, not dismissed), a counted-but-hidden row (present, dismissed),
-// or neither (not present, whichever way triage.json currently has it —
-// the one combination the page truly cannot distinguish, same as the Go
-// adapter's own read of GET /api/me, which is fresh every time but still
-// only ever sees present && !dismissed as a row and present && dismissed
-// as a count). gathering and snap_dismissed are the walk's own state, the
-// same "tracked by the adapter" case the recipe allows for the client's
-// own state.
+// The page's abstract state: present, dismissed and pinned come through
+// the DOM while the row is on screen (the Pin/Unpin button's own label,
+// the dismissed-count line — a dismissed row's Pin/Dismiss buttons are
+// gone, so a shown row is present && !dismissed and a counted-but-hidden
+// row is present && dismissed). A signal the last regenerate left out of
+// signals.json (present == False, reachable whenever a GatherStart read
+// a dismissal) has neither a row nor a count, so the page shows nothing
+// of its triage at all: dismissed and pinned are then read from GET
+// /api/me, the same triage.json the page renders from and the same read
+// the Go adapter makes. Reading them off the DOM there reported
+// dismissed=false for a signal triage.json still dismisses.
+// gathering and snap_dismissed are the walk's own state, the same
+// "tracked by the adapter" case the recipe allows for the client's own
+// state.
+async function shownRow(c: Ctx): Promise<boolean> {
+  const p = c.page;
+  return (await p.getByRole('button', { name: `Pin ${TITLE}`, exact: true }).count()) > 0
+    || (await p.getByRole('button', { name: `Unpin ${TITLE}`, exact: true }).count()) > 0;
+}
+
+// A triage with no UI to reach it: the same POST /api/me/triage the
+// page's own controls send, then a reload so the page's own sticky
+// triage override (set by the last UI triage's answer, and otherwise
+// never refreshed from the server) does not mask a change it never made.
+async function mark(c: Ctx, action: string): Promise<void> {
+  const res = await c.serve.api.post('/api/me/triage', { data: { action, key: CITE } });
+  if (!res.ok()) throw new Error(`${action}: ${res.status()} ${await res.text()}`);
+  await c.page.reload();
+  await primary(c).first().waitFor();
+}
+
 async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
   const p = c.page;
-  const shown = (await p.getByRole('button', { name: `Pin ${TITLE}`, exact: true }).count()) > 0
-    || (await p.getByRole('button', { name: `Unpin ${TITLE}`, exact: true }).count()) > 0;
+  const shown = await shownRow(c);
   const pinned = (await p.getByRole('button', { name: `Unpin ${TITLE}`, exact: true }).count()) > 0;
   const dismissedShown = (await p.locator('.me-dismissed').count()) > 0;
+  let dismissed = dismissedShown;
+  let pinnedNow = pinned;
+  if (!shown && !dismissedShown) {
+    const res = await c.serve.api.get('/api/me');
+    if (!res.ok()) throw new Error(`GET /api/me: ${res.status()} ${await res.text()}`);
+    const t: TriageWire = (await res.json()).triage ?? {};
+    dismissed = CITE in (t.dismissed ?? {});
+    pinnedNow = (t.pinned ?? []).includes(CITE);
+  }
   return {
     present: shown || dismissedShown,
-    dismissed: dismissedShown,
-    pinned,
+    dismissed,
+    pinned: pinnedNow,
     gathering: c.gathering,
     snap_dismissed: c.snapDismissed,
   };
@@ -116,24 +144,25 @@ modelTests<Ctx>({
     },
     // The menu's dismiss action. The fixture signal has no repo or author,
     // so the menu offers only "Just this one" (no rule); the rule half is
-    // exercised by ui_me and me_page.
+    // exercised by ui_me and me_page. The spec lets Dismiss, Pin and
+    // Unpin land while the last regenerate left the signal out
+    // (present == False); the page then has no row to triage from, so
+    // those go through the API like Undismiss.
     async Dismiss(c) {
+      if (!(await shownRow(c))) return mark(c, 'dismiss');
       await c.page.getByRole('button', { name: `Dismiss ${TITLE}`, exact: true }).click();
       await c.page.getByRole('menuitem', { name: 'Just this one', exact: true }).click();
     },
-    // No UI: a dismissed row offers no restore control. Goes through the
-    // same POST /api/me/triage a person's undo would reach some other
-    // way, then reloads so the page's own sticky triage override (set by
-    // the last UI triage's answer, and otherwise never refreshed from the
-    // server) does not keep showing the old dismissal.
-    async Undismiss(c) {
-      const res = await c.serve.api.post('/api/me/triage', { data: { action: 'undismiss', key: CITE } });
-      if (!res.ok()) throw new Error(`undismiss: ${res.status()} ${await res.text()}`);
-      await c.page.reload();
-      await primary(c).first().waitFor();
+    // No UI: a dismissed row offers no restore control.
+    Undismiss: (c) => mark(c, 'undismiss'),
+    async Pin(c) {
+      if (!(await shownRow(c))) return mark(c, 'pin');
+      await c.page.getByRole('button', { name: `Pin ${TITLE}`, exact: true }).click();
     },
-    Pin: (c) => c.page.getByRole('button', { name: `Pin ${TITLE}`, exact: true }).click(),
-    Unpin: (c) => c.page.getByRole('button', { name: `Unpin ${TITLE}`, exact: true }).click(),
+    async Unpin(c) {
+      if (!(await shownRow(c))) return mark(c, 'unpin');
+      await c.page.getByRole('button', { name: `Unpin ${TITLE}`, exact: true }).click();
+    },
   },
 
   read: readUiState,
