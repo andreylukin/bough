@@ -1,0 +1,138 @@
+# The model/effort picker (mode.tsx) racing a provider change underneath
+# it: a config hot reload that remounts the llm row, or a resume that
+# hands the session a different provider. Neither invalidates a pick
+# already in flight — the POST still lands — but the picker must never
+# present that landed pick as if it came from the *current* catalogue.
+#
+# Modeled with an epoch instead of real provider ids: epoch flips each
+# time the provider changes underneath the session. A PickModel captures
+# the epoch it was issued under; if Land's epoch has since moved, the
+# picked model is real (runs becomes "m") but stale: it must show under
+# "in use", never under "catalogue", and never grant the model's own
+# effort levels, until the person picks again under the new epoch.
+#
+# Fields the adapter and the page both read:
+#   catalogue  GET /api/models: loading | loaded | stale (a provider
+#              change invalidates a loaded catalogue until it reloads)
+#   runs       what the next turn runs: cfg | m | x
+#   shown      the model picker's value, "" while it names nothing
+#   group      the picked option's group: configured | catalogue |
+#              inuse | none
+#   offers_default  the Configured option is in the list
+#   efforts    the effort select's levels: none | all | own (m's)
+#   effort     meta.Effort, the effort select's value ("" = default)
+#   switching  a POST /model from the picker is in flight
+#   stale      the model currently running was landed under a provider
+#              epoch that is no longer current
+
+role Session:
+    action Init:
+        self.catalogue = "loading"
+        self.runs = "cfg"
+        self.effort = ""
+        self.switching = False
+        self.epoch = False
+        self.pick_epoch = False
+        self.stale = False
+        self.view()
+
+    atomic func view():
+        if self.catalogue != "loaded":
+            self.shown = ""
+            self.group = "none"
+            self.offers_default = False
+            self.efforts = "none"
+            return
+        self.shown = self.runs
+        self.offers_default = self.runs == "cfg"
+        if self.runs == "cfg":
+            self.group = "configured"
+        elif self.runs == "m" and not self.stale:
+            self.group = "catalogue"
+        else:
+            self.group = "inuse"
+        self.efforts = "own" if (self.runs == "m" and not self.stale) else "all"
+
+    atomic fair action CatalogueLoads:
+        require self.catalogue == "loading"
+        self.catalogue = "loaded"
+        self.view()
+
+    # The provider row remounts (config hot reload) or a resume hands
+    # the session a different provider: the old catalogue no longer
+    # describes what runs next.
+    atomic action ProviderChanges:
+        require self.catalogue == "loaded"
+        self.epoch = not self.epoch
+        self.catalogue = "stale"
+        self.view()
+
+    atomic fair action CatalogueReload:
+        require self.catalogue == "stale"
+        self.catalogue = "loading"
+
+    # The person picks m in the picker, under whatever epoch is current
+    # right now. The picker's Select is a value diff (select.tsx's
+    # pick()): re-choosing the same id it already shows never fires the
+    # POST, staleness or not, so once m is what runs there is nothing
+    # left to pick until something else runs first.
+    atomic action PickModel:
+        require self.catalogue == "loaded" and not self.switching and self.runs != "m"
+        self.switching = True
+        self.pick_epoch = self.epoch
+
+    # POST /model answers. The pick lands regardless of a provider
+    # change meanwhile; whether it counts as the current catalogue's
+    # pick depends on the epoch it was issued under.
+    atomic fair action Land:
+        require self.switching
+        self.switching = False
+        self.runs = "m"
+        self.stale = self.pick_epoch != self.epoch
+        self.view()
+
+    # Another client sets an id no provider lists (POST /model from
+    # outside the picker). Never "catalogue", regardless of epoch.
+    atomic action SetUnlistedModel:
+        require self.catalogue == "loaded" and not self.switching and self.runs != "x"
+        self.runs = "x"
+        self.view()
+
+    atomic action PickEffort:
+        require self.catalogue == "loaded" and not self.switching and self.effort == ""
+        self.effort = "high"
+
+action Init:
+    session = Session()
+
+# The picker names what the next turn runs, once it names anything.
+always assertion PickerNamesWhatRuns:
+    return session.shown == session.runs or (session.catalogue != "loaded" and session.shown == "")
+
+# Default is offered only while no model was ever set.
+always assertion DefaultOnlyBeforeAnySet:
+    return session.offers_default == (session.catalogue == "loaded" and session.runs == "cfg")
+
+# A pick that landed under an epoch that has since moved on must never
+# be shown as a live catalogue pick: this is the race the flow exists
+# to catch.
+always assertion CatalogueGroupOnlyForCurrentEpoch:
+    return session.group != "catalogue" or (session.runs == "m" and not session.stale)
+
+# A stale landed model gets every effort level, same as an unlisted one
+# — never the model's own restricted list, which belongs to a live pick.
+always assertion EffortsMatchModel:
+    if session.catalogue != "loaded":
+        return session.efforts == "none"
+    if session.runs == "m" and not session.stale:
+        return session.efforts == "own"
+    return session.efforts == "all"
+
+# A pick always lands: the picker does not stay mid-switch forever, even
+# across a provider change.
+always eventually assertion SwitchLands:
+    return not session.switching
+
+# The catalogue always recovers from a provider change.
+always eventually assertion CatalogueSettles:
+    return session.catalogue == "loaded"
