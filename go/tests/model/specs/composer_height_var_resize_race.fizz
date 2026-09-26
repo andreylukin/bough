@@ -1,0 +1,53 @@
+# composer_height_var_resize_race (go/tests/model/README.md): the
+# --composer-h CSS variable that the transcript's bottom padding reads.
+# A ResizeObserver on the composer writes its measured height into that
+# variable; adding or removing an attachment changes the composer's own
+# height through its own layout effect at the same time. The two can
+# interleave: a resize notification already queued from one attachment
+# change can still be in flight when a second attachment change commits,
+# so the browser coalesces both size changes into the one callback
+# already scheduled instead of queuing a fresh one for the second change.
+#
+# State lives in a role because fizzbee-mbt compares state per role: the
+# adapter's GetState is the Composer role's. `tall` mirrors whether an
+# attachment is present (its own effect sets the DOM height immediately);
+# `cssVar` is what got written to --composer-h; `pendingResize` is a
+# ResizeObserver callback queued for the next frame and not yet run.
+role Composer:
+    action Init:
+        self.attached = False
+        self.tall = False
+        self.cssVar = False
+        self.pendingResize = False
+
+    atomic action AddAttachment:
+        require not self.attached
+        self.attached = True
+        self.tall = True
+        self.pendingResize = True
+
+    atomic action RemoveAttachment:
+        require self.attached
+        self.attached = False
+        self.tall = False
+        self.pendingResize = True
+
+    # The queued callback measures the composer's height live, at fire
+    # time, so it always writes whatever `tall` is *now* — never a value
+    # snapshotted when it was scheduled.
+    atomic action FireObserver:
+        require self.pendingResize
+        self.cssVar = self.tall
+        self.pendingResize = False
+
+action Init:
+    composer = Composer()
+
+# The padding is allowed to lag one attachment change behind while a
+# resize notification is still in flight (pendingResize); it must never
+# stay wrong once that notification has landed.
+always assertion PaddingMatchesHeightWhenSettled:
+    return composer.pendingResize or composer.cssVar == composer.tall
+
+always assertion NoResizeQueuedWithNothingChanged:
+    return composer.pendingResize or composer.cssVar == composer.attached
