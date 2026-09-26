@@ -1,0 +1,110 @@
+# useThinPop (app.tsx, ~2041-2119): hovering a thin transcript line
+# shows its detail popover after a 300ms show timer, keyed to the
+# hovered anchor; leaving it schedules a 150ms hide. Two adjacent call
+# rows in the transcript each own one of these timers independently.
+# Modelled here is the single popover slot a person actually sees as
+# they move the pointer rapidly between two adjacent rows: which row
+# (if any) owns a pending show/hide timer, and which row's popover, if
+# any, is on screen.
+#
+# The spec models the CORRECT contract a person expects: a show timer
+# that fires after its row lost the hover to the other row is stale and
+# must not reveal anything (a person watching the transcript never sees
+# row A's popover pop up while the pointer sits on row B). A hide timer
+# still runs to completion once scheduled, since leaving the popover
+# itself before it fires cancels it (mouseleave on the pop -> keep()),
+# not modelled here as a separate row.
+
+NONE = "none"
+
+role Popover:
+    action Init:
+        self.hovered = NONE     # 0 | 1 | none: which row the pointer is over
+        self.pendingShow = NONE # 0 | 1 | none: a row's show timer is running
+        self.pendingHide = NONE # 0 | 1 | none: a row's hide timer is running
+        self.visible = NONE     # 0 | 1 | none: whose popover is on screen
+
+    # --- row 0 ---
+
+    # A row's mouseenter only ever fires once the pointer has left
+    # whatever it was over (the DOM delivers mouseleave before the next
+    # row's mouseenter), so entering requires nothing currently hovered.
+    atomic action Enter0:
+        require self.hovered == NONE
+        self.enter(0)
+
+    atomic action Leave0:
+        require self.hovered == 0
+        self.leave(0)
+
+    # --- row 1 ---
+
+    atomic action Enter1:
+        require self.hovered == NONE
+        self.enter(1)
+
+    atomic action Leave1:
+        require self.hovered == 1
+        self.leave(1)
+
+    atomic func enter(row):
+        self.hovered = row
+        if self.pendingHide == row:
+            self.pendingHide = NONE
+        if self.visible != row:
+            self.pendingShow = row
+
+    atomic func leave(row):
+        self.hovered = NONE
+        if self.pendingShow == row:
+            self.pendingShow = NONE
+        if self.visible == row:
+            self.pendingHide = row
+
+    # --- timers, fired independently of the hover actions above ---
+
+    # The show timer fires while the pointer is still on the row it was
+    # armed for: the popover it was scheduled for is the one shown.
+    atomic fair action ShowFire:
+        require self.pendingShow != NONE and self.hovered == self.pendingShow
+        self.visible = self.pendingShow
+        self.pendingShow = NONE
+
+    # The pointer moved to the other row (or off both) before the timer
+    # fired: the timer is stale and must not show anything.
+    atomic fair action ShowFireStale:
+        require self.pendingShow != NONE and self.hovered != self.pendingShow
+        self.pendingShow = NONE
+
+    atomic fair action HideFire:
+        require self.pendingHide != NONE
+        if self.visible == self.pendingHide:
+            self.visible = NONE
+        self.pendingHide = NONE
+
+action Init:
+    popover = Popover()
+
+# At most one row's popover is ever on screen.
+always assertion AtMostOneVisible:
+    return popover.visible == NONE or popover.visible in (0, 1)
+
+# A stale show timer (the pointer left before it fired) never reveals a
+# popover for the row it was armed for.
+always assertion StaleShowNeverReveals:
+    return popover.pendingShow == NONE or popover.hovered == popover.pendingShow or popover.visible != popover.pendingShow
+
+# A visible popover belongs to the row still hovered, or is only there
+# because its hide timer has not fired yet.
+always assertion VisibleOnlyWhileRelevant:
+    return (popover.visible == NONE or popover.visible == popover.hovered
+            or popover.pendingHide == popover.visible)
+
+# Every armed timer eventually fires: nothing is left hanging forever.
+always eventually assertion TimersResolve:
+    return popover.pendingShow == NONE and popover.pendingHide == NONE
+
+# The popover a person is left looking at, once timers settle, matches
+# whichever row (if any) they are still hovering.
+always eventually assertion SettlesOnHovered:
+    return popover.visible == popover.hovered
