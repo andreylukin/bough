@@ -1,0 +1,110 @@
+# A resumed session's model, versus bough.yml's, when the config changed
+# between the session's last run and the resume (or while it is live).
+#
+#   go/cmd/bough/modelresume.go   resumedModelSets: a session's recorded
+#                                 /model switches, replayed as
+#                                 "llm.model=<value>"-shaped --set
+#                                 overrides
+#   go/cmd/bough/main.go          resolveSession + resumedModelSets is
+#                                 prepended to the explicit --set flags
+#                                 (comment: "Explicit --set flags still
+#                                 beat a recorded /model swap"); the
+#                                 overrides struct (ov) keeps that same
+#                                 combined list for the life of the
+#                                 process; every reload — the first
+#                                 load at start, and each later
+#                                 runtimeSet from watchConfig's debounce
+#                                 — re-parses bough.yml from disk fresh
+#                                 and reapplies applyOverrides(rows,
+#                                 ov.all()) in that fixed order, last
+#                                 write per key winning
+#   go/cmd/bough/main.go          applyOverrides: later entries for the
+#                                 same id.key overwrite earlier ones
+#
+# Three inputs feed the row's effective model. Two are fixed once the
+# process starts, because they are read once and never again: whether
+# an explicit --set for this row's key was on the command line
+# (explicitSet), and whether the session's history has a recorded
+# /model switch (resumedOverride) — resumedModelSets reads the resume
+# file once, at resolveSession, not on every reload. The third,
+# configVal, is whatever bough.yml currently says for the row, and it
+# can change at any time: by hand before the resume even happens, or by
+# a hot reload while the session is already running.
+#
+# effective is recomputed fresh at every reload (Resume the first time,
+# HotReload after) from the CURRENT configVal, never cached from an
+# earlier reload — so an edit made between reloads is picked up at the
+# next one, but explicitSet and resumedOverride, once present, never
+# stop outranking it.
+
+def effectiveVal(s):
+    if s.explicitSet != 0:
+        return s.explicitSet
+    if s.resumedOverride != 0:
+        return s.resumedOverride
+    return s.configVal
+
+role Session:
+    action Init:
+        self.configVal = 0
+        self.explicitSet = 0
+        self.resumedOverride = 0
+        self.resumed = False
+        self.effective = -1
+
+    # bough.yml edited by hand, or by another tool, at any time: before
+    # the resume (the scenario in question) or while the session runs.
+    atomic action EditConfig:
+        require self.configVal < 2
+        self.configVal = self.configVal + 1
+
+    # An explicit `--set <row>.<key>=` on the resume's command line.
+    # Fixed for the process's life: only meaningful before Resume.
+    atomic action SetExplicitFlag:
+        require not self.resumed and self.explicitSet == 0
+        self.explicitSet = 9
+
+    # The session's history has a recorded /model switch for this row.
+    # resumedModelSets reads this once, at resolveSession, before
+    # anything mounts.
+    atomic action RecordedOverridePresent:
+        require not self.resumed and self.resumedOverride == 0
+        self.resumedOverride = 7
+
+    # The resume's first load: fresh config, then applyOverrides.
+    atomic action Resume:
+        require not self.resumed
+        self.resumed = True
+        self.effective = effectiveVal(self)
+
+    # A later hot reload (watchConfig's debounce firing runtimeSet):
+    # fresh config again, ov.all() reapplied in the same fixed order.
+    # Fair: the debounce always eventually fires once something is
+    # dirty, and firing is otherwise a harmless no-op.
+    atomic fair action HotReload:
+        require self.resumed
+        self.effective = effectiveVal(self)
+
+
+action Init:
+    session = Session()
+
+# An explicit --set on the resume always wins, no matter what the
+# config says or when it last changed.
+always assertion ExplicitFlagAlwaysWins:
+    return (session.explicitSet == 0 or not session.resumed
+            or session.effective == session.explicitSet)
+
+# Without an explicit --set, a recorded /model switch beats whatever
+# bough.yml currently says — even a value it was edited to AFTER the
+# session's last run, before or after this resume.
+always assertion RecordedOverrideBeatsConfigWithoutExplicit:
+    return (session.explicitSet != 0 or session.resumedOverride == 0
+            or not session.resumed or session.effective == session.resumedOverride)
+
+# With neither override, the row eventually reflects the latest
+# bough.yml — a reload always catches up to an edit, it just is not
+# required to be instantaneous.
+always eventually assertion FallsBackToLatestConfigWhenNoOverrides:
+    return (session.explicitSet != 0 or session.resumedOverride != 0
+            or not session.resumed or session.effective == session.configVal)
