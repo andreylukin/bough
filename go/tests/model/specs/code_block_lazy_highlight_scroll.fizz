@@ -1,0 +1,83 @@
+# A transcript code block (go/internal/serve/web/src/code.tsx) is
+# highlighted with a small, eagerly-registered subset of highlight.js
+# languages (BY_EXT / hljs.getLanguage). A block for an extension outside
+# that subset — or one whose extension maps to a name hljs never
+# registered — must still render: `highlight()` returns null and `Code`
+# falls back to a plain `<pre>`, never a crash. Scrolling a block into
+# view (mounting it, in a virtualized transcript) is the only trigger
+# that resolves it one way or the other, and two blocks of different
+# languages can mount at the same time while a turn is still streaming —
+# each is independent per-block state, so two role instances (as
+# CodeBlock#0/#1) is how fizzbee-mbt walks that concurrency.
+#
+# "lang" is what langForPath (or an explicit fence language) resolved
+# to before mounting: "known" (registered, e.g. "go", "python") or
+# "unknown" (unregistered or empty, e.g. a ".rs" file or a bare fence).
+# "rendered" is what the DOM actually shows once the block has been
+# scrolled into view.
+
+role CodeBlock:
+    action Init:
+        self.mounted = False
+        self.visible = False
+        self.lang = "known"
+        self.rendered = "none"
+
+    atomic action MountKnown:
+        require not self.mounted
+        self.mounted = True
+        self.visible = False
+        self.lang = "known"
+        self.rendered = "none"
+
+    atomic action MountUnknown:
+        require not self.mounted
+        self.mounted = True
+        self.visible = False
+        self.lang = "unknown"
+        self.rendered = "none"
+
+    # Scrolling the block into view is what a virtualized transcript
+    # defers until now: this is where `highlight()` actually runs.
+    atomic action ScrollIntoView:
+        require self.mounted and not self.visible
+        self.visible = True
+        if self.lang == "known":
+            self.rendered = "highlighted"
+        else:
+            self.rendered = "plain"
+
+    # Scrolled back out of the virtualized window: unmounted, exactly
+    # like a fresh block when it next scrolls in.
+    atomic action ScrollAway:
+        require self.mounted and self.visible
+        self.mounted = False
+        self.visible = False
+        self.rendered = "none"
+
+action Init:
+    blockA = CodeBlock()
+    blockB = CodeBlock()
+
+# Never rendered before it is visible: no block shows highlighted or
+# plain markup before it has actually mounted into view.
+always assertion RenderedOnlyWhenVisible:
+    a_ok = blockA.visible or blockA.rendered == "none"
+    b_ok = blockB.visible or blockB.rendered == "none"
+    return a_ok and b_ok
+
+# The fallback never fires for a known language, and a known language
+# never falls back to plain once it is visible: `rendered` always
+# reflects `lang` exactly, for both concurrently-mounting blocks.
+always assertion RenderedMatchesLang:
+    a_ok = (not blockA.visible) or ((blockA.lang == "known") == (blockA.rendered == "highlighted"))
+    b_ok = (not blockB.visible) or ((blockB.lang == "known") == (blockB.rendered == "highlighted"))
+    return a_ok and b_ok
+
+# An unknown language never crashes into anything but the plain
+# fallback — it is never left in "none" once visible, and never
+# mislabeled "highlighted".
+always assertion UnknownFallsBackToPlain:
+    a_ok = (not blockA.visible) or (blockA.lang != "unknown") or (blockA.rendered == "plain")
+    b_ok = (not blockB.visible) or (blockB.lang != "unknown") or (blockB.rendered == "plain")
+    return a_ok and b_ok

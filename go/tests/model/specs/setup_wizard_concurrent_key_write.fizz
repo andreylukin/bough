@@ -1,0 +1,129 @@
+# Two processes save a key into ~/.bough/env at once: the welcome
+# wizard's key prompt (POST /api/setup/key, one provider) and a
+# concurrent `bough setup` invocation in a terminal (another provider).
+# Both go through connect.WriteKey, which reads the whole file, replaces
+# only its own provider's line and rewrites the file whole. A naive
+# read-modify-write would have the second writer's read miss the first
+# writer's still-unwritten line, so its write drops that provider's key
+# even though both callers see success.
+#
+# Code this is checked against:
+#   go/plugins/connect/connect.go  writeKey: writeMu (in-process) then
+#     lockFile (cross-process flock on <path>.lock) held for the whole
+#     read, rewrite, rename — so a second writer's read only starts once
+#     the first writer's rename has landed. setup_key_env_precedence.fizz
+#     covers one provider's own version history (SaveKeyLands) and a
+#     second writer as a bare flag (ConcurrentSaveKey/Lands); this spec
+#     is the two writers' internal read/write steps, split so the
+#     model checker can try interleaving them without the lock's
+#     ordering and show the lock is what rules that out.
+#   go/internal/serve/setup.go  setKey calls WriteKey then os.Setenv;
+#     the wizard and `bough setup` both reach WriteKey this way (welcome
+#     via the web API, `bough setup` via the same connect package).
+#
+# fileHasA / fileHasB: whether provider A's / B's line is present in
+# ~/.bough/env. Each writer only ever intends to add its own provider's
+# line; a dropped OTHER line is the corruption this spec is about. A
+# writer's Read step snapshots the other provider's line as it stood at
+# that moment; its Write step writes its own line plus whatever it saw
+# for the other, exactly like writeKey rebuilding the file from its
+# `kept` slice plus one new line.
+#
+# lock: "none", or the writer currently between Acquire and Write
+# (inclusive) — flock is held for exactly that span.
+
+role Env:
+    action Init:
+        self.lock = "none"
+        self.fileHasA = False
+        self.fileHasB = False
+        self.welcomePhase = "idle"
+        self.welcomeSeenB = False
+        self.cliPhase = "idle"
+        self.cliSeenA = False
+        self.reloadedA = False
+        self.reloadedB = False
+
+    # --- the welcome wizard's save (provider A) ---------------------------
+
+    atomic fair action WelcomeAcquire:
+        require self.welcomePhase == "idle" and self.lock == "none"
+        self.lock = "welcome"
+        self.welcomePhase = "reading"
+
+    atomic fair action WelcomeRead:
+        require self.welcomePhase == "reading"
+        self.welcomeSeenB = self.fileHasB
+        self.welcomePhase = "writing"
+
+    atomic fair action WelcomeWrite:
+        require self.welcomePhase == "writing"
+        self.fileHasA = True
+        self.fileHasB = self.welcomeSeenB
+        self.welcomePhase = "done"
+        self.lock = "none"
+
+    # --- `bough setup` in a terminal (provider B), the same shape --------
+
+    atomic fair action CliAcquire:
+        require self.cliPhase == "idle" and self.lock == "none"
+        self.lock = "cli"
+        self.cliPhase = "reading"
+
+    atomic fair action CliRead:
+        require self.cliPhase == "reading"
+        self.cliSeenA = self.fileHasA
+        self.cliPhase = "writing"
+
+    atomic fair action CliWrite:
+        require self.cliPhase == "writing"
+        self.fileHasB = True
+        self.fileHasA = self.cliSeenA
+        self.cliPhase = "done"
+        self.lock = "none"
+
+    # --- a hot env-file reload, unsynchronized with either writer --------
+
+    # writeKey writes a temp file and renames over the real path, so a
+    # reload never observes a half-written file: whatever it reads is
+    # some completed write's result, not a torn one.
+    atomic action Reload:
+        self.reloadedA = self.fileHasA
+        self.reloadedB = self.fileHasB
+
+action Init:
+    env = Env()
+
+# Neither writer's own line ever regresses to absent once it wrote it:
+# a writer only ever sets its own flag True and only ever copies the
+# other's flag from what it saw, never clears it.
+always assertion OwnLineNeverRegresses:
+    a_ok = env.welcomePhase != "done" or env.fileHasA
+    b_ok = env.cliPhase != "done" or env.fileHasB
+    return a_ok and b_ok
+
+# The two writers never both hold the lock: it is exactly what serializes
+# their read..write spans and is what this spec claims prevents the drop.
+always assertion MutualExclusion:
+    return not (env.welcomePhase in ("reading", "writing") and env.cliPhase in ("reading", "writing"))
+
+# Once both writers have finished, both provider lines survive: the lock
+# ordering their read..write spans means the second writer's Read always
+# sees the first writer's completed Write, so its own Write's copy of the
+# other flag carries it forward instead of dropping it.
+always assertion NoKeyDroppedOnceBothDone:
+    if env.welcomePhase != "done" or env.cliPhase != "done":
+        return True
+    return env.fileHasA and env.fileHasB
+
+# A reload never sees a line vanish that a finished write already put in
+# the file: it can only lag a write in flight, never regress one that
+# landed.
+always assertion ReloadNeverRegresses:
+    a_ok = not env.reloadedA or env.fileHasA
+    b_ok = not env.reloadedB or env.fileHasB
+    return a_ok and b_ok
+
+# Liveness: both saves finish; the lock is not a stall.
+always eventually assertion BothWritersFinish:
+    return env.welcomePhase == "done" and env.cliPhase == "done"
