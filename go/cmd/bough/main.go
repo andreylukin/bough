@@ -399,6 +399,14 @@ func main() {
 		sets = append(setFlags(resumedModelSets(resumePath)), sets...)
 	}
 
+	// Watched before it is read: an edit that landed after the read and
+	// before the watch (serve's create returns once the history file
+	// exists, mid-mount) was lost, and the session ran on the tree it
+	// read until the next edit.
+	cfgWatch, err := armConfigWatch(src)
+	if err != nil {
+		fatal(err)
+	}
 	rows, err := src.load()
 	if err != nil {
 		fatal(err)
@@ -545,7 +553,7 @@ func main() {
 		}
 	}
 
-	stopWatch, err := watchConfig(ctx, src, ov, mode == "headless")
+	stopWatch, err := watchConfig(ctx, cfgWatch, src, ov, mode == "headless")
 	if err != nil {
 		fatal(err)
 	}
@@ -612,10 +620,11 @@ func sessionOrigin(mode string) string {
 	return mode
 }
 
-func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless bool) (func(), error) {
+// armConfigWatch starts watching the config file's directory; nil
+// when there is no file. The events queue until watchConfig reads them.
+func armConfigWatch(src configSource) (*fsnotify.Watcher, error) {
 	if src.path == "" {
-		kernel.Logf("bough: embedded config has no file; hot reload disabled\n")
-		return func() {}, nil
+		return nil, nil
 	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -623,11 +632,27 @@ func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless 
 	}
 	abs, err := filepath.Abs(src.path)
 	if err != nil {
+		w.Close()
 		return nil, fmt.Errorf("watch config: %w", err)
 	}
 	if err := watchDir(w, filepath.Dir(abs)); err != nil {
+		w.Close()
 		return nil, fmt.Errorf("watch config: %w", err)
 	}
+	return w, nil
+}
+
+func watchConfig(ctx *kernel.Context, w *fsnotify.Watcher, src configSource, ov *overrides, headless bool) (func(), error) {
+	if w == nil {
+		kernel.Logf("bough: embedded config has no file; hot reload disabled\n")
+		return func() {}, nil
+	}
+	abs, err := filepath.Abs(src.path)
+	if err != nil {
+		return nil, fmt.Errorf("watch config: %w", err)
+	}
+	// The init.js directories are added here, after the mount: the orb
+	// row chdirs into its worktree, which moves ./.bough.
 	// The init-js row reads ~/.bough/init.js and ./.bough/init.js at
 	// Apply, outside the config: an edit to either remounts that row.
 	// A missing directory is not watched.
