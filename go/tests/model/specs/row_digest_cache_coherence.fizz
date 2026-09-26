@@ -36,10 +36,14 @@ role Session:
         self.digestAskOpen = True
 
     # The transcript resolves the open ask (an answer lands, or it times
-    # out). Appending to the history file always changes its (size,
-    # mtime) identity, so the row's cache key advances with it.
+    # out). Both need a live child to act on: the timeout is a poll the
+    # child itself runs (plugins/ask/ask.go), and Supervisor.Answer
+    # refuses once its child is gone (internal/serve/supervisor.go
+    # Answer: "nothing can read the answer"). Appending to the history
+    # file always changes its (size, mtime) identity, so the row's cache
+    # key advances with it.
     atomic action Resolve:
-        require self.askOpen
+        require self.askOpen and self.live
         self.askOpen = False
         self.cacheKey = self.cacheKey + 1
 
