@@ -1,0 +1,106 @@
+# The orb Restarter (go/plugins/orb/restart.go): requests coalesce into one
+# pending request (Fresh ORed), a build runs for the taken request, and a
+# request arriving mid-build makes that build stale: its result is dropped
+# and the taken request's Fresh is folded back into pending. The swap waits
+# for turn idle and is skipped when stale. Failure ends in a notice and the
+# old orb keeps running.
+#
+# pending: none | plain | fresh    taken: the request the build/swap serves
+# phase:   idle | building | built | swapping
+# notice:  none | ok | fail        the last notice posted
+
+role Restarter:
+    action Init:
+        self.phase = "idle"
+        self.pending = "none"
+        self.taken = "none"
+        self.stale = False
+        self.turn = False
+        self.notice = "none"
+
+    atomic action RequestPlain:
+        self.pending = "fresh" if self.pending == "fresh" else "plain"
+        self.stale = self.phase in ("building", "built")
+
+    atomic action RequestFresh:
+        self.pending = "fresh"
+        self.stale = self.phase in ("building", "built")
+
+    atomic action Start:
+        require self.phase == "idle" and self.pending != "none"
+        self.phase = "building"
+        self.taken = self.pending
+        self.pending = "none"
+        self.stale = False
+
+    atomic action BuildDone:
+        require self.phase == "building"
+        if self.stale:
+            if self.taken == "fresh":
+                self.pending = "fresh"
+            self.taken = "none"
+            self.stale = False
+            self.phase = "idle"
+        else:
+            self.phase = "built"
+
+    atomic action BuildFail:
+        require self.phase == "building"
+        if self.stale:
+            if self.taken == "fresh":
+                self.pending = "fresh"
+            self.stale = False
+        else:
+            self.notice = "fail"
+        self.taken = "none"
+        self.phase = "idle"
+
+    atomic action Requeue:
+        require self.phase == "built" and self.stale
+        if self.taken == "fresh":
+            self.pending = "fresh"
+        self.taken = "none"
+        self.stale = False
+        self.phase = "idle"
+
+    atomic action Swap:
+        require self.phase == "built" and not self.stale and not self.turn
+        self.phase = "swapping"
+
+    atomic action SwapDone:
+        require self.phase == "swapping"
+        self.phase = "idle"
+        self.taken = "none"
+        self.notice = "ok"
+
+    atomic action SwapFail:
+        require self.phase == "swapping"
+        self.phase = "idle"
+        self.taken = "none"
+        self.notice = "fail"
+
+    atomic action StartTurn:
+        require not self.turn and self.phase != "swapping"
+        self.turn = True
+
+    atomic action EndTurn:
+        require self.turn
+        self.turn = False
+
+action Init:
+    r = Restarter()
+
+always assertion TakenOnlyWhileWorking:
+    return (r.phase == "idle") == (r.taken == "none")
+
+always assertion StaleOnlyWhileWorking:
+    return not r.stale or r.phase in ("building", "built")
+
+always assertion SwapNeverDuringTurn:
+    return not (r.phase == "swapping" and r.turn)
+
+always assertion SwapNeverStale:
+    return not (r.phase == "swapping" and r.stale)
+
+always assertion IdleStaleImpliesPending:
+    return not (r.phase == "idle" and r.taken == "none" and r.pending == "none" and r.stale)
