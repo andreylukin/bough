@@ -1,0 +1,93 @@
+---
+deadlock_detection: false
+---
+
+# engine-unreal runs one reply's native tool calls asynchronously and in
+# parallel (go/internal/unreal, go/internal/agenttools, go/plugins/engine).
+# Recipe: go/tests/model/README.md.
+#
+# A reply starts calls a and b together. Each ends on its own clock, in
+# either order, ok or failed. One failing call never cancels or fails the
+# other. The turn drains: the follow-up model request goes out only when
+# every call has ended, and it carries the results in the reply's call
+# order (a then b), not in completion order.
+#
+# Fields:
+#   status  running | done
+#   a, b    idle | running | ok | failed
+#   first   which call ended first: "" | a | b (completion order)
+#   sent    the follow-up request went out (drain finished)
+#   order   the order the results went to the model: "" | ab
+
+role Session:
+    action Init:
+        self.status = "running"
+        self.a = "idle"
+        self.b = "idle"
+        self.first = ""
+        self.sent = False
+        self.order = ""
+
+    # One reply, two calls, started at once.
+    atomic action Reply:
+        require self.status == "running" and self.a == "idle"
+        self.a = "running"
+        self.b = "running"
+
+    atomic action AOk:
+        require self.a == "running"
+        self.a = "ok"
+        if self.first == "":
+            self.first = "a"
+
+    atomic action AFail:
+        require self.a == "running"
+        self.a = "failed"
+        if self.first == "":
+            self.first = "a"
+
+    atomic action BOk:
+        require self.b == "running"
+        self.b = "ok"
+        if self.first == "":
+            self.first = "b"
+
+    atomic action BFail:
+        require self.b == "running"
+        self.b = "failed"
+        if self.first == "":
+            self.first = "b"
+
+    # Drain: only once both calls have ended; results in call order.
+    atomic fair action Drain:
+        require self.a in ("ok", "failed") and self.b in ("ok", "failed") and not self.sent
+        self.sent = True
+        self.order = "ab"
+
+    # The model answers the follow-up; the turn closes.
+    atomic fair action Finish:
+        require self.sent and self.status == "running"
+        self.status = "done"
+
+action Init:
+    session = Session()
+
+# The follow-up never goes out while a call is still running.
+always assertion NoEarlySend:
+    return not session.sent or (session.a in ("ok", "failed") and session.b in ("ok", "failed"))
+
+# Results are always in call order, whatever finished first.
+always assertion CallOrder:
+    return session.order == "" or session.order == "ab"
+
+# A closed turn has drained.
+always assertion DoneMeansDrained:
+    return session.status != "done" or (session.sent and session.order == "ab")
+
+# One call's failure never touches the other: a call only leaves
+# running by its own action, so idle/running calls stay paired.
+always assertion CallsStartTogether:
+    return (session.a == "idle") == (session.b == "idle")
+
+always eventually assertion TurnCloses:
+    return session.status == "done" or session.a == "idle"
