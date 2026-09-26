@@ -31,6 +31,7 @@ role Checkpoint:
         self.author = "none"
         self.pinned = False
         self.dangling_exists = False
+        self.pin_lost = False
 
     atomic action P1Take:
         require self.holder == "none" and not self.p1_dead
@@ -42,18 +43,28 @@ role Checkpoint:
 
     # The holder's process dies (the kernel drops its flock, freeing the
     # lease); whatever it already wrote to disk or the git odb survives it.
+    # If it was the entry's author and hadn't pinned yet, that pin is gone
+    # for good: Pin is only ever called inline, right after Append, by the
+    # same process (loop.go, actor.go) — there is no code path that comes
+    # back and retries it, restarted or not.
     atomic action P1Crash:
         require self.holder == "p1"
         self.holder = "none"
         self.p1_dead = True
+        if self.author == "p1" and self.entry_written and not self.pinned:
+            self.pin_lost = True
 
     atomic action P2Crash:
         require self.holder == "p2"
         self.holder = "none"
         self.p2_dead = True
+        if self.author == "p2" and self.entry_written and not self.pinned:
+            self.pin_lost = True
 
-    # A crashed process can come back (a relaunched CLI, a restarted serve);
-    # it just cannot resume the in-flight Pin it never finished.
+    # A crashed process can come back (a relaunched CLI, a restarted serve),
+    # but as a fresh process with no memory of the turn it was mid-checkpoint
+    # on: it cannot resume the in-flight Pin it never finished (pin_lost, set
+    # above, outlives the restart).
     atomic action P1Restart:
         require self.p1_dead
         self.p1_dead = False
@@ -91,11 +102,11 @@ role Checkpoint:
     # the seq and tree to pin, so a crashed author can never come back and
     # finish this step; nobody else is wired to finish it for them.
     atomic action P1Pin:
-        require self.author == "p1" and not self.p1_dead and self.entry_written and not self.pinned
+        require self.author == "p1" and not self.p1_dead and self.entry_written and not self.pinned and not self.pin_lost
         self.pinned = True
 
     atomic action P2Pin:
-        require self.author == "p2" and not self.p2_dead and self.entry_written and not self.pinned
+        require self.author == "p2" and not self.p2_dead and self.entry_written and not self.pinned and not self.pin_lost
         self.pinned = True
 
     # The next turn's checkpoint starts whenever a (possibly new) holder is
@@ -111,6 +122,7 @@ role Checkpoint:
         self.entry_written = False
         self.author = "none"
         self.pinned = False
+        self.pin_lost = False
 
 action Init:
     checkpoint = Checkpoint()
