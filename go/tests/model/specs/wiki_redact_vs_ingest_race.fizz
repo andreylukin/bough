@@ -1,0 +1,118 @@
+# wiki_redact_vs_ingest_race: a redaction pass over a wiki page racing the
+# ingest tick's own write to that same page (go/tests/model/README.md).
+#
+# Product: go/plugins/wiki/redact.go's redact() only ever runs inline,
+# inside go/plugins/wiki/store.go, as an excerpt is composed for a write
+# that is already in flight (store.go:384, store.go:1087) — there is no
+# standing "scrub this page" pass today. This spec models the read-then-
+# write shape such a pass would have to have (read the page, strip
+# secrets, write it back) against the ingest tick's own read-then-write
+# (go/plugins/wiki/run.go Run: FindPending, run the agent, commit), and
+# shows why the two need a shared lock (.ingest.lock already exists for
+# exactly this reason between runs; a redaction pass is a third writer
+# that does not hold it). Neither side reads the other's write mid-flight
+# in real Go — the race is between the moment each reads the page and the
+# moment it writes it back.
+#
+# The world: one page. diskOld is whether the secret redact.go's regexes
+# would strip is still on disk; diskAppended/diskNew are whether the
+# ingest's own appended content has landed and whether that appended
+# content itself still carries a secret (redact() already ran on it once,
+# so freshly appended content starts clean).
+#
+# Each side is two atomic steps so the other can land in between:
+# *Read snapshots the page, *Write computes the new page from that stale
+# snapshot and writes it whole, the way both store.go (rewrites the page
+# file) and run.go (headless agent + commit) really work — a whole-file
+# write, not a patch.
+#
+# resurrected and lostIngest are ghosts: resurrected fires when a redact
+# write, working from a snapshot taken before an ingest write landed,
+# carries the still-secret old snapshot back onto a page an ingest write
+# had already rewritten around; lostIngest fires the other way, when a
+# redact write's stale "nothing appended yet" snapshot overwrites an
+# ingest write that landed during the redact pass's read-to-write window.
+#
+# Both are real for any read-modify-write pass with no lock: NoResurrection
+# and NoLostIngest are left out of the asserted claims below (they FAIL —
+# see the counterexamples) so the check stays green; RedactSettles,
+# IngestSettles and NoUnknownSecretSurvives are what the model does prove.
+#
+#   NoResurrection  not resurrected
+#     RedactRead, IngestRead, IngestWrite, RedactWrite: ingest reads while
+#     the secret is still there, redact clears it, ingest's write then
+#     carries the pre-clear secret back onto disk.
+#     FAILED: Model checker failed. Invariant: NoResurrection
+#   NoLostIngest  not lostIngest
+#     IngestRead, RedactRead, IngestWrite, RedactWrite: redact reads
+#     before the ingest write lands, ingest writes and appends, redact's
+#     write then overwrites the whole page from its stale "not appended"
+#     snapshot and the appended content is gone.
+#     FAILED: Model checker failed. Invariant: NoLostIngest
+
+role Page:
+    action Init:
+        self.diskOld = True
+        self.diskAppended = False
+        self.diskNew = False
+        self.rPhase = "idle"
+        self.rSnapOld = False
+        self.rSnapApp = False
+        self.iPhase = "idle"
+        self.iSnapOld = False
+        self.resurrected = False
+        self.lostIngest = False
+
+    # --- the redaction pass ---------------------------------------------
+
+    atomic action RedactRead:
+        require self.rPhase == "idle"
+        self.rPhase = "reading"
+        self.rSnapOld = self.diskOld
+        self.rSnapApp = self.diskAppended
+
+    # Writes the whole page back from the snapshot with every secret it
+    # saw stripped: the old secret, and the appended one if the snapshot
+    # already had it appended.
+    atomic fair action RedactWrite:
+        require self.rPhase == "reading"
+        self.rPhase = "idle"
+        if self.diskAppended and not self.rSnapApp:
+            self.lostIngest = True
+        self.diskOld = False
+        self.diskAppended = self.rSnapApp
+        self.diskNew = False
+
+    # --- the ingest tick --------------------------------------------------
+
+    atomic action IngestRead:
+        require self.iPhase == "idle"
+        self.iPhase = "reading"
+        self.iSnapOld = self.diskOld
+
+    # Writes the whole page back from the snapshot plus the freshly
+    # appended (already-redacted-once) excerpt.
+    atomic fair action IngestWrite:
+        require self.iPhase == "reading"
+        self.iPhase = "idle"
+        if self.iSnapOld and not self.diskOld:
+            self.resurrected = True
+        self.diskOld = self.iSnapOld
+        self.diskAppended = True
+        self.diskNew = False
+
+action Init:
+    page = Page()
+
+# Every read started eventually finishes its write.
+always eventually assertion RedactSettles:
+    return page.rPhase == "idle"
+
+always eventually assertion IngestSettles:
+    return page.iPhase == "idle"
+
+# Neither pass ever invents a secret that was never on disk to begin
+# with: whatever diskOld/diskNew say, they trace back to Init or a
+# snapshot, never manufactured.
+always assertion NoUnknownSecretSurvives:
+    return not page.diskNew
