@@ -244,6 +244,13 @@ func (a *childGiveupAdapter) Check() error {
 		}
 		return nil
 	}
+	// A give-up serve saw ends the request in an error. A success here
+	// means it never reached serve: the pid and history checks below
+	// miss that whenever the child has not reached its boot hold yet
+	// (1 in 10 locally, and on CI).
+	if a.result.err == nil {
+		return fmt.Errorf("Check: create answered %s though the client gave up", a.result.id)
+	}
 	a.withdrawn, a.live = true, false
 	if pid := control.BootPID(a.dir, a.id); pid != 0 && alive(pid) {
 		return fmt.Errorf("Check: withdrawn child %s is still alive (pid %d)", a.id, pid)
