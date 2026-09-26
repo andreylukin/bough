@@ -50,6 +50,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/scratch"
 	_ "github.com/andreylukin/bough/plugins/session"
 	_ "github.com/andreylukin/bough/plugins/skills"
+	_ "github.com/andreylukin/bough/plugins/testgate"
 	_ "github.com/andreylukin/bough/plugins/theme"
 	_ "github.com/andreylukin/bough/plugins/title"
 	_ "github.com/andreylukin/bough/plugins/todo"

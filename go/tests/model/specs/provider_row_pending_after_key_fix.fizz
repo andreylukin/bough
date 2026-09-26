@@ -1,0 +1,71 @@
+# A provider row (e.g. an llm-* row) started with a bad or missing key
+# goes Failed and, per go/kernel/reconcile.go, is never retried until its
+# spec changes (settle's pending loop only mounts Pending rows; fail()
+# leaves a Failed row alone forever unless Reconcile sees a different
+# plugin, config or disabled bit). Editing the key — via /connect or a
+# hand edit of ~/.bough/env — does not touch the row's spec, so a plain
+# Reconcile with the same rows is a no-op on it: the person must trigger
+# an explicit Remount (what /connect does after it saves) for the row,
+# and its dependents (e.g. loop/llm-small), to come up. That remount
+# must happen exactly once per key fix, not loop and not skip rows whose
+# provider key never lands.
+#
+# State lives in a role because fizzbee-mbt compares state per role: the
+# adapter's GetState is the Provider role's.
+
+role Provider:
+    action Init:
+        self.status = "failed"
+        self.keyValid = False
+        self.dependentMounted = False
+        self.remounts = 0
+
+    # A Reconcile that carries the same plugin/config as the row (the
+    # case where the key lives outside the row's config, e.g. an env
+    # var) never changes it — settle() is a no-op on a Failed row until
+    # its spec changes, and a no-op on an already-Ready row too. This is
+    # the bug surface the flow is about; it is enabled in every status
+    # so it can fire between any two other actions.
+    atomic action ReconcileSameSpec:
+        self.status = self.status
+
+    # /connect (or a hand edit of ~/.bough/env) fixes the credential.
+    # The row's spec is unchanged, so this alone does not remount it.
+    atomic action FixKey:
+        require self.status == "failed"
+        require not self.keyValid
+        self.keyValid = True
+
+    # kernel.Remount(id): unmounts the row, settles, re-applies. Only
+    # meaningful (and only offered) once the row is actually Failed and
+    # its key now works; it mounts the row and, in the same settle pass,
+    # any dependent whose provider key just landed.
+    atomic action Remount:
+        require self.status == "failed"
+        require self.keyValid
+        self.status = "ready"
+        self.dependentMounted = True
+        self.remounts = self.remounts + 1
+
+action Init:
+    provider = Provider()
+
+# A Failed row's key is fixed but the row itself never silently comes
+# back: only an explicit Remount flips it to ready.
+always assertion NeverReadyWithoutRemount:
+    return provider.status != "ready" or provider.remounts > 0
+
+# The dependent (loop/llm-small) is mounted iff its provider landed.
+always assertion DependentOnlyWhenReady:
+    return not provider.dependentMounted or provider.status == "ready"
+
+# The remount fires exactly once per key fix: nothing in this model can
+# take a ready row back to failed, so a second Remount is never enabled.
+always assertion RemountAtMostOnce:
+    return provider.remounts <= 1
+
+# A same-spec Reconcile never changes a Failed row's key state or
+# status by itself — the key fix and the remount are the only things
+# that move it.
+always assertion ReconcileNeverRetries:
+    return provider.status == "ready" or not provider.dependentMounted
