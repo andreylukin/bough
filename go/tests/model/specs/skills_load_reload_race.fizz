@@ -1,0 +1,46 @@
+# NOTE: the product has no loaded snapshot: skills.Inject rescans the
+# pools on every input, so an invoke sees the file as it is on disk
+# (found by the MBT; the earlier loaded/reload split was wrong).
+# Skills discovered from dirs are hot-reloaded while a session runs
+# (go/plugins/skills). The dir on disk (file) changes independently of
+# what the row has loaded (loaded); a reload copies the one to the other.
+# Invoking a skill appends its loaded body to the session as a
+# <context-update> (invoked, count of updates): the model only ever sees
+# what was loaded at invoke time, never a half-reloaded or missing skill,
+# and the first prompt of the session is never rewritten.
+
+role Skills:
+    action Init:
+        self.file = "absent"
+        self.invoked = "none"
+        self.updates = 0
+
+    atomic action WriteV1:
+        require self.file != "v1"
+        self.file = "v1"
+
+    atomic action WriteV2:
+        require self.file != "v2"
+        self.file = "v2"
+
+    atomic action Remove:
+        require self.file != "absent"
+        self.file = "absent"
+
+    atomic action Invoke:
+        require self.file != "absent"
+        require self.updates < 2
+        self.invoked = self.file
+        self.updates = self.updates + 1
+
+action Init:
+    skills = Skills()
+
+always assertion InvokedWasLoaded:
+    return skills.invoked == "none" or skills.updates > 0
+
+always assertion NoUpdatesWithoutInvoke:
+    return skills.updates == 0 or skills.invoked != "none"
+
+always assertion InvokedNeverAbsent:
+    return skills.invoked != "absent"
