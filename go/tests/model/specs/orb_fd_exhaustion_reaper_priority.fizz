@@ -83,6 +83,7 @@ role Orb:
         self.owner = True
         self.restarting = True
         self.file = "starting"
+        self.ctr = "running"
         self.idle = False
 
     atomic fair action RestartOk:
@@ -90,11 +91,13 @@ role Orb:
         self.restarting = False
         self.ctr = "running"
         self.file = "running"
+        self.idle = False
 
     atomic fair action RestartFails:
         require self.restarting and self.owner
         self.restarting = False
         self.file = "failed"
+        self.idle = False
 
     # reapIdleOrbs' running/failed branch: no owner or container check
     # at all. A restart in flight is never in "running" or "failed" (it
