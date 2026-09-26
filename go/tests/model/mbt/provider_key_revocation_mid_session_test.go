@@ -352,12 +352,27 @@ func pkrOptions() map[string]any {
 // change rowStatus, so when a "/gate-remount provider" command is seen
 // with rowStatus still "ready" a HealthCheckFails step is inserted ahead
 // of it, the way pfrHistory's fragment() reconstructs an implied
-// StreamFragment.
+// StreamFragment. RevokeKey is inserted the same way ahead of the first
+// step that requires it (a revoked failure or HealthCheckFails).
+//
+// A walk writes two transcripts: the turns, and the gate commands, each
+// checked on its own. The gate transcript cannot see the turn failure
+// that moves a failed row back to pending, so a second remount there
+// reads failed -> failed: ReconcileSameSpec, not SettleFailed (which
+// requires pending). Without both, every browser walk failed
+// TestHistoryTraces.
 func pkrHistory(entries []history.Entry) []tracecheck.Step {
 	status := func(s string) map[string]any { return map[string]any{"Provider#0.rowStatus": s} }
 	steps := []tracecheck.Step{{Action: "Init", State: status("ready")}}
 	cur := "ready"
 	open := false
+	revoked := false
+	revoke := func() {
+		if !revoked {
+			revoked = true
+			steps = append(steps, tracecheck.Step{Action: "Provider#0.RevokeKey", State: status(cur)})
+		}
+	}
 	for _, e := range entries {
 		switch e.Kind {
 		case "input":
@@ -372,6 +387,7 @@ func pkrHistory(entries []history.Entry) []tracecheck.Step {
 				continue
 			}
 			open = false
+			revoke()
 			cur = "pending"
 			steps = append(steps, tracecheck.Step{Action: "Provider#0.RequestFailsRevoked", State: status(cur)})
 		case "done":
@@ -384,7 +400,12 @@ func pkrHistory(entries []history.Entry) []tracecheck.Step {
 			text, _ := e.Data["text"].(string)
 			switch text {
 			case "/gate-remount provider":
+				if cur == "failed" {
+					steps = append(steps, tracecheck.Step{Action: "Provider#0.ReconcileSameSpec", State: status(cur)})
+					continue
+				}
 				if cur == "ready" {
+					revoke()
 					cur = "pending"
 					steps = append(steps, tracecheck.Step{Action: "Provider#0.HealthCheckFails", State: status(cur)})
 				}
