@@ -478,6 +478,18 @@ func (s *Server) Effort(ctx context.Context, id, level string) error {
 	return s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/effort", map[string]string{"effort": level}, nil)
 }
 
+// SetModel is POST /api/sessions/{id}/model. race, when non-empty, is
+// the tag Supervisor.pick holds on under BOUGH_TEST_STEP_GATE (see
+// internal/stepgate), so a model test can land two racing calls in
+// whichever order it wants.
+func (s *Server) SetModel(ctx context.Context, id, plugin, model, race string) error {
+	path := "/api/sessions/" + url.PathEscape(id) + "/model"
+	if race != "" {
+		path += "?race=" + url.QueryEscape(race)
+	}
+	return s.do(ctx, http.MethodPost, path, map[string]string{"plugin": plugin, "model": model}, nil)
+}
+
 // PID is the serve process's pid; its session children are its own
 // children, which a test that pauses one finds through it.
 func (s *Server) PID() int { return s.cmd.Process.Pid }

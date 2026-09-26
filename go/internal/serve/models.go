@@ -98,7 +98,10 @@ func (a *API) setModel(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	a.metaVerb(w, id, func() error { return a.sup.SetModel(id, body.Plugin, body.Model) })
+	// race is a model test's tag for BOUGH_TEST_STEP_GATE (see
+	// Supervisor.pick); no production caller sends it.
+	race := r.URL.Query().Get("race")
+	a.metaVerb(w, id, func() error { return a.sup.SetModel(id, body.Plugin, body.Model, race) })
 }
 
 func (a *API) setEffort(w http.ResponseWriter, r *http.Request) {
