@@ -248,7 +248,6 @@ func (a *ossaAdapter) Init() error {
 	}
 	a.h.rs.setNotify(func(string) {})
 	a.h.rs.start()
-	a.t.Cleanup(a.h.close)
 	return nil
 }
 
@@ -461,19 +460,33 @@ func walkOssaPaths(t *testing.T, a *ossaAdapter) error {
 	t.Helper()
 	g := ossaGraph(t)
 	// A walk that returns early (a mismatch, a disabled step) can leave a
-	// hold parked: release it before the next Init, or that session's
-	// h.close (its own t.Cleanup) would wait forever on a goroutine
-	// nothing will ever answer.
+	// hold parked: release it before closing that walk's handle, or
+	// h.close's restarter.stop() would wait forever on a goroutine
+	// nothing will ever answer. Every walk shares one ossaRuntime, so a
+	// still-running restarter from an earlier walk racing a later walk's
+	// hold is a real hazard too — close each walk's handle synchronously
+	// before the next one starts, instead of accumulating them all as
+	// deferred t.Cleanup calls that only run once at test end.
 	drain := func() {
 		a.rt.release("build", errors.New("walk over"))
 		a.rt.release("start", errors.New("walk over"))
 	}
-	defer drain()
-	for wi, w := range g.Walks(tracecheck.CoverTransitions, 0) {
+	var prev *handle
+	closePrev := func() {
+		if prev == nil {
+			return
+		}
 		drain()
+		prev.close()
+		prev = nil
+	}
+	defer closePrev()
+	for wi, w := range g.Walks(tracecheck.CoverTransitions, 0) {
+		closePrev()
 		if err := a.Init(); err != nil {
 			return fmt.Errorf("walk %d: Init: %w", wi, err)
 		}
+		prev = a.h
 		for si, s := range w.Trace {
 			if si > 0 {
 				name := strings.TrimPrefix(s.Action, "Orb#0.")
