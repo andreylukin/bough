@@ -18,8 +18,13 @@ role HistoryFile:
         self.torn = False
         self.loaded = True
 
+    # Capped at 2: entries is otherwise unbounded and the state space
+    # blows up (every reachable entries value is its own state), which
+    # is fine for fizz but turns every generated path's real-serve walk
+    # into that many real turns. What entries reaches is not the point
+    # here; only that it moves and that torn/loaded gate it.
     atomic action Append:
-        require self.loaded and not self.torn
+        require self.loaded and not self.torn and self.entries < 2
         self.entries = self.entries + 1
 
     atomic action CrashMidAppend:
