@@ -1,0 +1,45 @@
+# Per-turn checkpoints (history.Snapshot, refs/bough/turns) in a session
+# worktree. The disk holds v0 or v1; the index cached the stat of v0
+# right after `git worktree add`. A snapshot must record what is on
+# disk even when an edit kept the cached stat (the racy-index bug), and
+# Restore must put a checkpoint's content back and never leave the
+# checkpoint recording something the disk did not hold when taken.
+
+role Checkpoint:
+    action Init:
+        self.disk = "v0"
+        self.stale = True
+        self.taken = "none"
+        self.ref = False
+        self.restored = "none"
+
+    atomic action Edit:
+        require self.disk == "v0"
+        self.disk = "v1"
+
+    atomic action Revert:
+        require self.disk == "v1"
+        self.disk = "v0"
+
+    atomic action Snapshot:
+        self.taken = self.disk
+        self.stale = False
+        self.restored = "none"
+
+    atomic action Pin:
+        require self.taken != "none"
+        self.ref = True
+
+    atomic action Restore:
+        require self.ref
+        self.disk = self.taken
+        self.restored = self.taken
+
+action Init:
+    cp = Checkpoint()
+
+always assertion PinNeedsSnapshot:
+    return not cp.ref or cp.taken != "none"
+
+always assertion RestoreMatchesCheckpoint:
+    return cp.restored == "none" or cp.restored == cp.taken
