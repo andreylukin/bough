@@ -67,10 +67,22 @@ function waitFile(p: string, timeoutMs = 10_000): Promise<void> {
 // returning, and releasePick lets the deliver through.
 interface Pending { tag: string; target: string; done: Promise<void> }
 
+// Global, not per-walk: GATE_DIR is one directory for the whole file
+// (flow.shared), so a tag a later walk reused would find an earlier
+// walk's already-answered pick-<tag>.held/.go still sitting on disk —
+// both waitFile below and the server's own HoldOr treat a stale file as
+// "already parked/already released" and pass straight through, so the
+// delivery races ahead of the walk's own Deliver action entirely.
+let globalSeq = 0;
+
 async function startPick(c: Ctx, target: string): Promise<Pending> {
-  c.seq += 1;
-  const tag = `c${c.seq}`;
-  const done = c.serve.api.post(`/api/sessions/${c.id}/model?race=pick-${tag}`, { data: { model: target } }).then((res) => {
+  globalSeq += 1;
+  const tag = `c${globalSeq}`;
+  // Supervisor.pick (internal/serve/supervisor.go) holds on "pick-<tag>"
+  // itself; the query param is the bare tag, not the already-prefixed
+  // hold name, or the server ends up parking at "pick-pick-<tag>" and
+  // this call times out waiting on a file nothing ever writes.
+  const done = c.serve.api.post(`/api/sessions/${c.id}/model?race=${tag}`, { data: { model: target } }).then((res) => {
     if (!res.ok()) throw new Error(`model race ${tag}: ${res.status()}`);
   });
   await waitFile(path.join(GATE_DIR, `pick-${tag}.held`));
@@ -87,7 +99,6 @@ interface Ctx {
   id: string;
   held: string; // the llm-control turn in flight, '' when none
   turn: number;
-  seq: number; // race tags are unique across a walk
   req1: string; // caller 1's saved-not-yet-delivered choice, '' when none
   req2: string;
   pend1?: Pending;
@@ -108,9 +119,13 @@ async function buttonValue(b: Locator): Promise<string> {
   return name.slice(name.indexOf(': ') + 2);
 }
 
-// The row's status word (example.spec.ts's WORDS): this flow's turns
-// always finish clean, so only Idle/Running appear.
-const WORDS: Record<string, string> = { Idle: 'idle', Running: 'running' };
+// The row's status word (example.spec.ts's WORDS). The Go adapter
+// (model_command_apply_race_test.go) maps every non-running row status
+// to "idle", not only the literal word "Idle" — a session that has run
+// a turn shows "Done" forever after (status.tsx: "a finished turn and
+// a finished session both say Done"), never reverting to "Idle" in the
+// UI even though the spec's own status field is "idle" again.
+const WORDS: Record<string, string> = { Idle: 'idle', Done: 'idle', Running: 'running' };
 
 // The most recent "Model changed" block's detail text is render.tsx's
 // foldModelSwitch output, "<plugin> · <model>" (app.tsx's model-switch
@@ -159,7 +174,7 @@ modelTests<Ctx>({
 
   async init(page, serve) {
     autoReleaseStdin();
-    const c: Ctx = { page, serve, id: await serve.newSession(), held: '', turn: 0, seq: 0, req1: '', req2: '', turnModel: 'm1' };
+    const c: Ctx = { page, serve, id: await serve.newSession(), held: '', turn: 0, req1: '', req2: '', turnModel: 'm1' };
     // An ordinary (untagged) /model m1, same as the Go adapter's Init:
     // the row's own config already answers as "m1", but nothing has told
     // the picker that yet.
@@ -246,7 +261,8 @@ async function expectIdle(c: Ctx): Promise<void> {
   const deadline = Date.now() + 10_000;
   for (;;) {
     const label = (await row(c).getAttribute('aria-label')) ?? '';
-    if (label.split(', ')[1] === 'Idle') return;
+    const word = label.split(', ')[1];
+    if (word === 'Idle' || word === 'Done') return;
     if (Date.now() > deadline) throw new Error(`model_command_apply_race: row never went idle (${label})`);
     await new Promise((r) => setTimeout(r, 20));
   }
