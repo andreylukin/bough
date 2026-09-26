@@ -1,0 +1,64 @@
+# Path-scoped .claude/rules and .codex/rules prefix_rule gating tools.bash
+# (go/plugins/rules). Files are read fresh on every use, so a rule added or
+# removed mid-session counts from the next call; a call already past the
+# gate is never revoked. A scoped rule body is shown to the model once, in
+# the result of the first code block touching a matching path, and never
+# again (Service.shown), even if the file is edited afterwards.
+#
+# scoped:   the scoped .claude/rules file on disk (absent | present)
+# shown:    its body has been injected into a result
+# prefix:   a forbidden prefix_rule for the command on disk (none | forbidden)
+# bash:     the last call: idle | inflight | ran | refused
+# gate:     the prefix state the in-flight/last call was decided under
+
+role Rules:
+    action Init:
+        self.scoped = "absent"
+        self.shown = False
+        self.prefix = "none"
+        self.bash = "idle"
+        self.gate = "none"
+
+    atomic action AddScoped:
+        require self.scoped == "absent"
+        self.scoped = "present"
+
+    atomic action RemoveScoped:
+        require self.scoped == "present"
+        self.scoped = "absent"
+
+    atomic action TouchMatching:
+        require self.scoped == "present" and not self.shown
+        self.shown = True
+
+    atomic action AddForbidden:
+        require self.prefix == "none"
+        self.prefix = "forbidden"
+
+    atomic action RemoveForbidden:
+        require self.prefix == "forbidden"
+        self.prefix = "none"
+
+    atomic action StartBash:
+        require self.bash != "inflight"
+        self.gate = self.prefix
+        if self.prefix == "forbidden":
+            self.bash = "refused"
+        else:
+            self.bash = "inflight"
+
+    atomic action FinishBash:
+        require self.bash == "inflight"
+        self.bash = "ran"
+
+action Init:
+    rules = Rules()
+
+always assertion RefusedOnlyUnderForbidden:
+    return rules.bash != "refused" or rules.gate == "forbidden"
+
+always assertion RanOnlyUnderNoRule:
+    return rules.bash not in ["ran", "inflight"] or rules.gate == "none"
+
+always assertion InflightHasNoRefusal:
+    return rules.bash != "inflight" or rules.gate == "none"
