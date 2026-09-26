@@ -48,7 +48,8 @@ role Tree:
         self.grp = "needs"
 
     atomic action PollClear:
-        require self.grp == "needs"
+        # Send refuses an archived session, so nothing can clear its failure.
+        require not self.archived and self.grp == "needs"
         self.grp = "recent"
 
     atomic action ToggleFold:
