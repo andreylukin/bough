@@ -1,0 +1,89 @@
+# One poller's conditional GET against writeJSONTagged
+# (go/internal/serve/etag.go), racing a concurrent write to the content
+# it serves.
+#
+# The world: a version counter standing in for the session history file's
+# content (Write bumps it, as a turn landing a new message would). A poll
+# is two steps because the real handler is: read the current content,
+# hash it into an ETag, compare against If-None-Match, then answer. A
+# write can land in the gap between the read and the answer being sent —
+# nothing in the handler holds a lock across it — so the ETag a response
+# carries, and whether it is a 304, can already be stale by the time the
+# bytes leave the server.
+#
+# Fields:
+#   version     the content's current revision.
+#   inflight    a poll has read a snapshot and not yet answered.
+#   snapshot    the revision that poll read (only meaningful while
+#               inflight).
+#   client_tag  the revision behind the ETag the client is holding
+#               (-1: no cached tag yet, so nothing can 304).
+#   result      "" | "fresh" | "not_modified": the last poll's answer.
+
+role Poll:
+    action Init:
+        self.version = 0
+        self.inflight = False
+        self.snapshot = -1
+        self.client_tag = -1
+        self.result = ""
+
+    # The handler reads the content and computes its ETag from what it
+    # sees right now.
+    atomic fair action StartPoll:
+        require not self.inflight
+        self.inflight = True
+        self.snapshot = self.version
+
+    # A turn lands: the content changes. This can happen while a poll
+    # already took its snapshot — that gap is the race. Bounded so the
+    # state space stays finite and closes into cycles: an unbounded
+    # counter never revisits a state, which starves the liveness check
+    # below of anything to find a fair infinite path through.
+    atomic action Write:
+        require self.version < 3
+        self.version = self.version + 1
+
+    # The handler compares its snapshot's ETag against If-None-Match and
+    # answers: 304 if the tags match, a fresh body (and a new cached tag)
+    # otherwise. It never re-reads the content at this point, so if a
+    # Write landed since StartPoll, the answer is judged against a
+    # revision that is no longer current.
+    atomic fair action Respond:
+        require self.inflight
+        if self.snapshot == self.client_tag:
+            self.result = "not_modified"
+        else:
+            self.client_tag = self.snapshot
+            self.result = "fresh"
+        self.inflight = False
+
+action Init:
+    poll = Poll()
+
+# The cached tag never runs ahead of the content it describes: it is
+# always some revision the server actually held.
+always assertion ClientTagNeverAheadOfServer:
+    return poll.client_tag <= poll.version
+
+# The race the flow is named for is real: StartPoll, Write, Respond
+# (with client_tag already equal to the pre-write snapshot) sends
+# "not_modified" while poll.client_tag < poll.version — a 304 telling
+# the client it is current when the server has already moved on. Stated
+# as an always assertion this fails, which is the finding; it is not
+# asserted here because it is not a bug on its own (HTTP's conditional
+# GET promises only "matches what you sent", never "matches what I hold
+# now"), and the two assertions below are what make it safe: the client
+# is never ahead, and it never stays behind past its next poll.
+#
+# The mapping that found the counterexample, restorable by turning it
+# back into an assertion:
+#   NotModifiedMeansCurrent (result != "not_modified" or client_tag ==
+#   version): Init, StartPoll, Respond, StartPoll, Write, Respond.
+
+# What keeps the race from leaving a client stuck: every poll reads the
+# version fresh, so as long as writes eventually stop landing, the very
+# next poll after a missed one carries the write forward and the
+# client's tag catches back up to the server's.
+always eventually assertion ClientTagCatchesUpOnceWritesStop:
+    return poll.client_tag == poll.version
