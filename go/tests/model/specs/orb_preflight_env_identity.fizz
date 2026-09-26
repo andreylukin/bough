@@ -1,0 +1,78 @@
+---
+deadlock_detection: false
+---
+# Orb start gate: Preflight (internal/orb/preflight.go: the gh token via
+# identity.go githubTokenNow, secrets), envcheck (plugins/orb/envcheck.go
+# missingEnv, a hint only) and the per-project lock (lock_unix.go lockFile,
+# flock) that concurrent starts contend on. Missing credentials and a
+# held lock end in distinct states; a credential that changes after
+# preflight passed is caught at the exec (token.go / identityEnv reads the
+# token again), not silently accepted.
+#
+# Fields (role Start):
+#   cred    the host credential: ok | missing
+#   other   another start holds the lock
+#   st      idle | checking (preflight passed, lock held by us) | running |
+#           fail_cred (preflight failed) | fail_lock (lock busy) |
+#           fail_exec (credential vanished after preflight)
+#   hint    envcheck reported missing env (warn only, never blocks)
+
+role Start:
+    action Init:
+        self.cred = "ok"
+        self.other = False
+        self.st = "idle"
+        self.hint = False
+
+    atomic action Logout:
+        require self.cred == "ok"
+        self.cred = "missing"
+
+    atomic action Login:
+        require self.cred == "missing"
+        self.cred = "ok"
+
+    atomic action OtherAcquire:
+        require not self.other and self.st not in ("checking", "running")
+        self.other = True
+
+    atomic action OtherRelease:
+        require self.other
+        self.other = False
+
+    atomic action MarkEnvHint:
+        require not self.hint
+        self.hint = True
+
+    atomic action Begin:
+        require self.st == "idle"
+        if self.cred == "missing":
+            self.st = "fail_cred"
+        elif self.other:
+            self.st = "fail_lock"
+        else:
+            self.st = "checking"
+
+    atomic action Exec:
+        require self.st == "checking"
+        if self.cred == "missing":
+            self.st = "fail_exec"
+        else:
+            self.st = "running"
+
+    atomic action Retry:
+        require self.st in ("fail_cred", "fail_lock", "fail_exec")
+        self.st = "idle"
+
+    atomic action Stop:
+        require self.st in ("running", "checking")
+        self.st = "idle"
+
+action Init:
+    start = Start()
+
+always assertion CheckingHoldsLock:
+    return start.st != "checking" or not start.other
+
+always assertion RunningNeedsNoLockHolder:
+    return start.st != "running" or not start.other
