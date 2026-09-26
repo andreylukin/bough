@@ -1,0 +1,149 @@
+# select.tsx's dropdown, opened over a narrow (phone-width) pane, then
+# raced against the two things that move it out from under itself
+# (go/tests/model/README.md).
+#
+# Code this is checked against (go/internal/serve/web/src):
+#   select.tsx  Select: `place()` reads visible() and the button's own
+#             rect, keyed to the CSS breakpoint's pane; `useLayoutEffect`
+#             re-runs it on window "resize" (visualViewport change opens
+#             a keyboard under a searchable field) while `open`; `hide`
+#             optionally refocuses the button (`hide(true)`); a click
+#             away or Escape closes it; `useVisible` also calls `place`.
+#   app.tsx   the phone breakpoint's pane switch (list <-> thread)
+#             unmounts Session settings, which unmounts the Select
+#             inside it — README's "a route change unmounts them all"
+#             (see ui_narrow.fizz), which the popover shares.
+#
+# ui_narrow.fizz already covers Select as one static layer among others
+# (opens with a fit, closes, refocuses) but never fires a resize while
+# it is open, and never interleaves the open picker with the pane
+# switch that unmounts its own parent out from under it. This flow is
+# only that interleaving: Open, then Resize (any number of times, any
+# order) and PaneSwitch racing each other, then Close — the states in
+# between are what a `place()` call mid-resize or mid-unmount must not
+# get wrong (a stale fit, a dangling focus, a picker surviving its
+# parent).
+#
+# Abstractions:
+# - One session's settings dialog, one Select inside it (the
+#   model/effort picker), one narrow pane. Everything else that could
+#   also be open at that breakpoint is out of scope (see ui_narrow.fizz
+#   for the full layer set); this flow only ever has settings, and
+#   inside it, the picker.
+# - "Resize" stands for both a real window resize and the on-screen
+#   keyboard's visualViewport shrink that a searchable field's
+#   autofocus triggers: both fire the same listener and the same
+#   `place()`, so the spec does not distinguish them, only whether the
+#   keyboard is currently up (narrower visible()).
+# - A pane switch away from "thread" is the only unmount modelled; a
+#   switch back always lands on "list" first (Back), matching
+#   ui_narrow's route shape.
+
+role App:
+    action Init:
+        self.route = "thread"
+        self.settings = False
+        self.picker = False
+        # The keyboard is up (a searchable field's autofocus, or an
+        # on-screen IME): visible() is the shrunk viewport.
+        self.keyboard = False
+        # What place() last computed the popover's fit as, "" with no
+        # popover mounted at all.
+        self.fit = ""
+        self.focus = "page"
+
+    # The sliders button: Settings mounts, nothing else moves yet.
+    atomic action OpenSettings:
+        require self.route == "thread" and not self.settings
+        self.settings = True
+        self.focus = "settings"
+
+    # Escape, outside tap, or the sliders button again.
+    atomic action CloseSettings:
+        require self.settings and not self.picker
+        self.settings = False
+        self.focus = "page"
+
+    # The model/effort Select inside Settings: place() runs once at
+    # open against the viewport as it is right now.
+    atomic action OpenPicker:
+        require self.settings and not self.picker
+        self.picker = True
+        self.focus = "picker"
+        self.fit = "short" if self.keyboard else "full"
+
+    # Escape or a pick: hide(true) closes and refocuses the button,
+    # which is still mounted (Settings survives).
+    atomic action ClosePicker:
+        require self.picker
+        self.picker = False
+        self.keyboard = False
+        self.fit = ""
+        self.focus = "settings"
+
+    # The keyboard opens or shuts while the picker is open (its search
+    # field's autofocus, or the OS IME toggling): the resize listener
+    # fires and place() recomputes the fit against the new visible().
+    atomic action Resize:
+        require self.picker
+        self.keyboard = not self.keyboard
+        self.fit = "short" if self.keyboard else "full"
+
+    # The phone breakpoint's Back: a route change away from "thread"
+    # unmounts Settings and, with it, any Select inside — even mid-open,
+    # even mid-keyboard. Nothing refocuses a button that no longer
+    # exists.
+    atomic action PaneSwitch:
+        require self.route == "thread"
+        self.route = "list"
+        self.settings = False
+        self.picker = False
+        self.keyboard = False
+        self.fit = ""
+        self.focus = "page"
+
+    # Back to the thread pane: Settings and the picker stay shut until
+    # opened again (OpenSettings requires route == "thread").
+    atomic action ReturnToThread:
+        require self.route == "list"
+        self.route = "thread"
+
+action Init:
+    app = App()
+
+# ---- what must always be true --------------------------------------------
+
+# The picker only exists inside Settings; Settings only exists in the
+# thread pane. A pane switch cannot leave either standing.
+always assertion Nesting:
+    if app.picker and not app.settings:
+        return False
+    if app.settings and app.route != "thread":
+        return False
+    return True
+
+# The popover's fit always matches what is visible right now: "short"
+# with the keyboard up, "full" without it, "" whenever the picker
+# itself is not mounted — never a value left over from before the last
+# resize or the last unmount.
+always assertion FitMatchesViewport:
+    if not app.picker:
+        return app.fit == ""
+    return app.fit == ("short" if app.keyboard else "full")
+
+# Focus sits on whatever is actually mounted: the picker's own field
+# while it is open, Settings' button once the picker closes onto it,
+# the page once nothing owns focus (including right after a pane
+# switch, which leaves no button to refocus).
+always assertion FocusOnMounted:
+    if app.picker:
+        return app.focus == "picker"
+    if app.settings:
+        return app.focus == "settings"
+    return app.focus == "page"
+
+# The keyboard is only ever up for the picker's own field: closing the
+# picker (by hand or by a pane switch that unmounts it outright) always
+# takes the keyboard down with it.
+always assertion KeyboardOnlyForPicker:
+    return app.picker or not app.keyboard
