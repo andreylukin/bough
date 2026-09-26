@@ -1,0 +1,128 @@
+---
+deadlock_detection: false
+---
+
+# wiki_install_first_run_vs_serve_tick: `bough wiki install` (a person's
+# first-run bootstrap) racing launchd's own first `bough wiki run` tick
+# on a brand-new project, before either has created the wiki directory
+# (go/tests/model/README.md).
+#
+# Product:
+#   go/plugins/wiki/install.go install() calls ensureWiki(p) and
+#     writeSkill(p) directly, taking no lock.
+#   go/plugins/wiki/run.go Run() calls ensureWiki(p) BEFORE it takes
+#     .ingest.lock (tryLock), so the lock never guards ensureWiki
+#     either; it only serialises what comes after (writeSkill, the
+#     ingest, commit).
+#   ensureWiki is a plain check-then-create, `os.Stat ...
+#     errors.Is(ErrNotExist)` then `os.WriteFile`/`git init`, repeated
+#     for three components (ingest.log, the index, `.git`), then
+#     `commit(p, "wiki: initialise")` iff this call created anything.
+#     `commit` stages with `git add -A`, skips when `git diff --cached
+#     --quiet` finds nothing staged, and drops every git error
+#     (`_ = git(...)`).
+#
+# So install() and a concurrent first Run() tick genuinely race
+# ensureWiki with nothing serialising them: each's stat-then-write for
+# a component is its own check-then-act window the other can land in.
+#
+# Abstraction: the three components collapse to one field, `exists`.
+# Each is checked and created the same way, so a race on one is a race
+# on all three; nothing downstream distinguishes them. `commit` is one
+# step: git's own index.lock (an atomic O_EXCL create, not itself
+# modelled) is what actually serialises two concurrent commits, and its
+# content is idempotent — a second `git diff --cached --quiet` after
+# the first's commit landed finds nothing new to stage — so from
+# outside, at most one "wiki: initialise" ever lands even if both
+# callers decide to attempt it.
+#
+# What this checks: not whether the directory ends up right (it always
+# does — whoever loses the stat race still writes the same idempotent
+# content) but whether the race can leave either caller thinking it is
+# done while the component is still missing, or land two "initialise"
+# commits. Both assertions hold on the product as written: the race is
+# real (Seen can be "missing" for both) but benign by construction,
+# because every check is paired with its own unconditional create.
+
+role Wiki:
+    action Init:
+        self.present = False
+        self.i_seen = "unset"
+        self.t_seen = "unset"
+        self.i_done = False
+        self.t_done = False
+        self.committed = False
+        self.commits = 0
+
+    # Installer's os.Stat: a snapshot, racing the Ticker's.
+    atomic fair action ICheck:
+        require self.i_seen == "unset"
+        if self.present:
+            self.i_seen = "present"
+        else:
+            self.i_seen = "missing"
+
+    # Installer's create-if-missing + conditional commit, a separate
+    # step from ICheck so the Ticker's own check/create can land
+    # in between.
+    atomic fair action ICreate:
+        require self.i_seen == "missing" and not self.i_done
+        self.present = True
+        if not self.committed:
+            self.committed = True
+            self.commits += 1
+        self.i_done = True
+
+    atomic fair action ISkip:
+        require self.i_seen == "present" and not self.i_done
+        self.i_done = True
+
+    # The Ticker's first launchd tick, same shape.
+    atomic fair action TCheck:
+        require self.t_seen == "unset"
+        if self.present:
+            self.t_seen = "present"
+        else:
+            self.t_seen = "missing"
+
+    atomic fair action TCreate:
+        require self.t_seen == "missing" and not self.t_done
+        self.present = True
+        if not self.committed:
+            self.committed = True
+            self.commits += 1
+        self.t_done = True
+
+    atomic fair action TSkip:
+        require self.t_seen == "present" and not self.t_done
+        self.t_done = True
+
+action Init:
+    wiki = Wiki()
+
+# Neither caller ever finishes its own ensureWiki call believing the
+# component is there when it is not: each's branch is either "I saw it
+# present" (someone else already created it) or "I create it myself".
+always assertion InstallerNeverFinishesEarly:
+    return not wiki.i_done or wiki.present
+
+always assertion TickerNeverFinishesEarly:
+    return not wiki.t_done or wiki.present
+
+# The two callers racing the same check-then-create can decide to
+# commit at most once between them; git's own idempotent diff, not
+# modelled here, is what a from-scratch rewrite without it would need
+# in its place.
+always assertion AtMostOneInitialiseCommit:
+    return wiki.commits <= 1
+
+# Both callers finish, however the stat race falls.
+always eventually assertion InstallerFinishes:
+    return wiki.i_done
+
+always eventually assertion TickerFinishes:
+    return wiki.t_done
+
+# The directory converges regardless of who wins the race.
+always eventually assertion Converges:
+    return wiki.present
