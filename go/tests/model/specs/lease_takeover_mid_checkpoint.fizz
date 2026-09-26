@@ -1,0 +1,131 @@
+# Lease takeover mid-checkpoint (go/plugins/history/lease.go, lease_unix.go,
+# tree.go): a turn's checkpoint is three separate steps in the holder — an
+# unguarded git write-tree (Snapshot), a lease-protected jsonl append that
+# records the tree hash on the entry (Append), and an unguarded git
+# update-ref that only protects the tree from gc (Pin). The lease is taken
+# once for the process's life (history.go TakeLease at session open), never
+# re-checked per write, so nothing stops a holder from dying between Append
+# and Pin: the entry then names a tree that is never pinned. Unlike
+# history_lease_takeover.fizz (a plain write race on the jsonl bytes
+# themselves), this flow is about that three-step gap: whether the new
+# holder ever reconciles the old holder's half-written ref, and whether its
+# own next turn is blocked by, or corrupts, the one left dangling.
+#
+# The real code has no reconciliation: Pin can only ever be called by the
+# process whose own Append produced the entry, so a crash after Append
+# leaves that turn's checkpoint permanently unpinned (fragile against gc,
+# per tree.go's Checkpoints.Pin) while the new holder proceeds independently
+# with its own turns. /undo (plugins/commands/tree.go) reads the tree hash
+# straight off the entry's "checkpoint" field, not off the ref, so a
+# dangling turn still restores until something reclaims the object — the
+# ref exists only to stop that reclaim.
+
+role Checkpoint:
+    action Init:
+        self.holder = "none"
+        self.p1_dead = False
+        self.p2_dead = False
+        self.seq = 0
+        self.has_tree = False
+        self.entry_written = False
+        self.author = "none"
+        self.pinned = False
+        self.dangling_exists = False
+
+    atomic action P1Take:
+        require self.holder == "none" and not self.p1_dead
+        self.holder = "p1"
+
+    atomic action P2Take:
+        require self.holder == "none" and not self.p2_dead
+        self.holder = "p2"
+
+    # The holder's process dies (the kernel drops its flock, freeing the
+    # lease); whatever it already wrote to disk or the git odb survives it.
+    atomic action P1Crash:
+        require self.holder == "p1"
+        self.holder = "none"
+        self.p1_dead = True
+
+    atomic action P2Crash:
+        require self.holder == "p2"
+        self.holder = "none"
+        self.p2_dead = True
+
+    # A crashed process can come back (a relaunched CLI, a restarted serve);
+    # it just cannot resume the in-flight Pin it never finished.
+    atomic action P1Restart:
+        require self.p1_dead
+        self.p1_dead = False
+
+    atomic action P2Restart:
+        require self.p2_dead
+        self.p2_dead = False
+
+    # Snapshot: `git write-tree` through a temp index. Nothing checks the
+    # lease here — it is a local git call, not a write to shared state.
+    atomic action P1Snapshot:
+        require self.holder == "p1" and not self.p1_dead and not self.has_tree
+        self.has_tree = True
+
+    atomic action P2Snapshot:
+        require self.holder == "p2" and not self.p2_dead and not self.has_tree
+        self.has_tree = True
+
+    # Append: the jsonl input entry, carrying the tree hash as
+    # data["checkpoint"]. This is the step the lease actually protects, but
+    # only via holding the fd since session open — there is no per-call
+    # check, so it is safe here purely because a dead process cannot call it.
+    atomic action P1Append:
+        require self.holder == "p1" and not self.p1_dead and self.has_tree and not self.entry_written
+        self.entry_written = True
+        self.author = "p1"
+
+    atomic action P2Append:
+        require self.holder == "p2" and not self.p2_dead and self.has_tree and not self.entry_written
+        self.entry_written = True
+        self.author = "p2"
+
+    # Pin: `git update-ref` under refs/bough/turns/<session>/<seq>. Also
+    # unguarded by the lease — but only the process that ran Append holds
+    # the seq and tree to pin, so a crashed author can never come back and
+    # finish this step; nobody else is wired to finish it for them.
+    atomic action P1Pin:
+        require self.author == "p1" and not self.p1_dead and self.entry_written and not self.pinned
+        self.pinned = True
+
+    atomic action P2Pin:
+        require self.author == "p2" and not self.p2_dead and self.entry_written and not self.pinned
+        self.pinned = True
+
+    # The next turn's checkpoint starts whenever a (possibly new) holder is
+    # ready — real code never waits for the previous turn's Pin to land, so
+    # a dangling entry from a dead author stays dangling forever while the
+    # session moves on.
+    atomic action NextTurn:
+        require self.entry_written and self.seq < 2
+        if not self.pinned:
+            self.dangling_exists = True
+        self.seq = self.seq + 1
+        self.has_tree = False
+        self.entry_written = False
+        self.author = "none"
+        self.pinned = False
+
+action Init:
+    checkpoint = Checkpoint()
+
+# A dead process is never still the lease holder: crash always frees it in
+# the same step, so the next Take is never blocked on a corpse.
+always assertion DeadNeverHolds:
+    return not ((checkpoint.p1_dead and checkpoint.holder == "p1") or (checkpoint.p2_dead and checkpoint.holder == "p2"))
+
+# The ref is only ever pinned once a matching entry exists: Pin never runs
+# ahead of Append (real code calls them in that order in the same function).
+always assertion PinRequiresEntry:
+    return not checkpoint.pinned or checkpoint.entry_written
+
+# A pinned tree always has a named author: no ref lands without whoever's
+# Append produced the seq it is pinning.
+always assertion NoGhostPin:
+    return not checkpoint.pinned or checkpoint.author != "none"
