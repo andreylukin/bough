@@ -1,0 +1,81 @@
+# Per-viewer seen set (app.tsx readSet/writeSet): finished sessions the
+# viewer has looked at are kept in localStorage, newest last, capped
+# (the page caps at 200; the model at 2 so truncation is reachable with
+# three sessions). A finished session shows an unread dot iff it is not
+# in the set. With storage off the page still renders and the set lives
+# only in memory. Reload re-reads the set from storage.
+# Truncation drops the OLDEST seen id, so its dot legitimately returns;
+# the model states that rather than hiding it.
+
+role Viewer:
+    action Init:
+        self.storage = "on"
+        self.mem = []
+        self.stored = []
+        self.finished = [False, False, False]
+        self.rendered = True
+
+    atomic action Finish0:
+        require not self.finished[0]
+        self.finished[0] = True
+
+    atomic action Finish1:
+        require not self.finished[1]
+        self.finished[1] = True
+
+    atomic action Finish2:
+        require not self.finished[2]
+        self.finished[2] = True
+
+    atomic action See0:
+        require self.finished[0] and 0 not in self.mem
+        m = self.mem + [0]
+        if len(m) > 2:
+            m = m[1:]
+        self.mem = m
+        if self.storage == "on":
+            self.stored = m
+
+    atomic action See1:
+        require self.finished[1] and 1 not in self.mem
+        m = self.mem + [1]
+        if len(m) > 2:
+            m = m[1:]
+        self.mem = m
+        if self.storage == "on":
+            self.stored = m
+
+    atomic action See2:
+        require self.finished[2] and 2 not in self.mem
+        m = self.mem + [2]
+        if len(m) > 2:
+            m = m[1:]
+        self.mem = m
+        if self.storage == "on":
+            self.stored = m
+
+    atomic action StorageOff:
+        require self.storage == "on"
+        self.storage = "off"
+
+    atomic action StorageOn:
+        require self.storage == "off"
+        self.storage = "on"
+
+    atomic action Reload:
+        self.mem = list(self.stored) if self.storage == "on" else []
+
+action Init:
+    viewer = Viewer()
+
+always assertion RenderedAlways:
+    return viewer.rendered
+
+always assertion CapHolds:
+    return len(viewer.mem) <= 2 and len(viewer.stored) <= 2
+
+always assertion StoredOnlyWhatWasSeen:
+    for i in viewer.stored:
+        if not viewer.finished[i]:
+            return False
+    return True
