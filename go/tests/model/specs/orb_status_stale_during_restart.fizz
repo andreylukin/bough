@@ -1,0 +1,66 @@
+# /orb status and /orb logs during a restart (go/tests/model/README.md).
+# orbCommand's "status" case (go/plugins/orb/status.go) reads iorb.State
+# off the handle and formats it; restart.go drives that same state through
+# build, container and resume.sh while the old container keeps serving the
+# session, then swaps. A person or agent running /orb status mid-restart
+# must see one step of that sequence, never a state the swap has already
+# left or has not reached yet — the field a redraw reads must be internally
+# consistent even though the swap runs in a goroutine of its own.
+#
+# restarting mirrors iorb.State.Status vs the restarter's own busy/pending
+# bookkeeping (handle.go's gate, restart.go's SetRestart): true from the
+# moment a restart is requested until the swap lands or fails, at every
+# status in between.
+
+role Orb:
+    action Init:
+        self.status = "running"
+        self.phase = "ready"
+        self.restarting = False
+
+    atomic action RequestRestart:
+        require self.status == "running" or self.status == "failed"
+        self.status = "building"
+        self.phase = "build"
+        self.restarting = True
+
+    atomic action BuildFail:
+        # Only the image build itself can fail here: a late failure
+        # (resume.sh) is SwapFail. Successor failing never touches the
+        # orb that is still serving the session — restart.go clears
+        # Restart and leaves it running, it never marks it failed.
+        require self.phase == "build"
+        self.status = "running"
+        self.phase = "ready"
+        self.restarting = False
+
+    atomic action BuildDone:
+        require self.phase == "build"
+        self.phase = "container"
+
+    atomic action SwapBegin:
+        require self.phase == "container" and self.restarting
+        self.phase = "resume.sh"
+
+    atomic action SwapFail:
+        require self.phase == "resume.sh" and self.restarting
+        self.status = "failed"
+        self.restarting = False
+
+    atomic action SwapDone:
+        require self.phase == "resume.sh" and self.restarting
+        self.status = "running"
+        self.phase = "ready"
+        self.restarting = False
+
+action Init:
+    orb = Orb()
+
+always assertion RestartingImpliesNotReady:
+    return not orb.restarting or orb.phase != "ready"
+
+always assertion ReadyImpliesRunning:
+    return orb.phase != "ready" or orb.status == "running"
+
+always assertion FailedMeansNotRestarting:
+    return orb.status != "failed" or not orb.restarting
