@@ -1,0 +1,58 @@
+# Config hot reload: editing bough.yml re-resolves rows. A good edit
+# remounts the dependents of the changed row to the new version; a bad
+# edit marks only the failing row failed and keeps the rest of the tree
+# (and the in-flight turn) running on the last good version. A second
+# edit landing before the reload runs collapses into the same reload: the
+# reload always reads the file as it is then, never a half-applied mix.
+
+role Config:
+    action Init:
+        self.file = "v1"
+        self.applied = "v1"
+        self.dep = "v1"
+        self.failed = False
+        self.pending = False
+        self.turn = "idle"
+
+    atomic action Edit:
+        require self.file != "v2" or self.pending == False
+        self.file = "v2" if self.file != "v2" else "v1"
+        self.pending = True
+
+    atomic action EditBad:
+        require self.file != "bad"
+        self.file = "bad"
+        self.pending = True
+
+    atomic action Reload:
+        require self.pending
+        self.pending = False
+        if self.file == "bad":
+            self.failed = True
+        else:
+            self.applied = self.file
+            self.dep = self.file
+            self.failed = False
+
+    atomic action StartTurn:
+        require self.turn == "idle"
+        self.turn = "running"
+
+    atomic action EndTurn:
+        require self.turn == "running"
+        self.turn = "idle"
+
+action Init:
+    cfg = Config()
+
+always assertion DependentsFollowApplied:
+    return cfg.dep == cfg.applied
+
+always assertion FailedOnlyForBadFile:
+    return not cfg.failed or cfg.pending or cfg.file == "bad"
+
+always assertion SettledMatchesFile:
+    return cfg.pending or cfg.failed or cfg.file == cfg.applied
+
+always assertion AppliedNeverBad:
+    return cfg.applied != "bad"
