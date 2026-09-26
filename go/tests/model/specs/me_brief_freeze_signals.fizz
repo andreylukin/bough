@@ -41,7 +41,7 @@ role Diary:
         require self.job == "running" and self.signals != "torn"
         self.signals = "torn"
 
-    atomic action Finish:
+    atomic fair action Finish:
         require self.job == "running"
         self.job = "idle"
         self.today = "fresh"
@@ -56,7 +56,7 @@ role Diary:
         self.signals = "valid"
         self.cites = "bad"
 
-    atomic action Fail:
+    atomic fair action Fail:
         require self.job == "running"
         self.job = "idle"
 
