@@ -25,12 +25,17 @@ role Orb:
         self.restarting = True
 
     atomic action BuildFail:
-        require self.status == "building"
-        self.status = "failed"
+        # Only the image build itself can fail here: a late failure
+        # (resume.sh) is SwapFail. Successor failing never touches the
+        # orb that is still serving the session — restart.go clears
+        # Restart and leaves it running, it never marks it failed.
+        require self.phase == "build"
+        self.status = "running"
+        self.phase = "ready"
         self.restarting = False
 
     atomic action BuildDone:
-        require self.status == "building" and self.restarting
+        require self.phase == "build"
         self.phase = "container"
 
     atomic action SwapBegin:

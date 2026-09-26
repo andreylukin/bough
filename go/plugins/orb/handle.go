@@ -217,15 +217,32 @@ func (h *handle) Root() string { return iorb.Dir(h.home, h.session) }
 
 // State is the orb's state; while starting it is what the start has
 // written to state.json so far, phase by phase.
+//
+// While a swap is under way (h.gate open) the orb behind the handle is
+// o, the one BEING REPLACED: beginSwap does not move h.o to the new one
+// until the swap lands or fails, so reading through o here returned it
+// frozen at whatever it was when the swap began (stopped, its last
+// phase, "restart pending" never cleared on the success path) for the
+// whole build-container-resume.sh sequence — a caller polling /orb
+// status mid-swap saw that stale snapshot instead of the swap's own
+// progress. state.json is written by whichever orb is actually doing
+// something (o until the stop, the new one from then on), so reading it
+// instead while the gate is open tracks the real step.
 func (h *handle) State() iorb.State {
-	if o := h.Orb(); o != nil {
+	h.mu.Lock()
+	gate, o := h.gate, h.o
+	h.mu.Unlock()
+	if gate == nil && o != nil {
 		return o.State()
 	}
 	st, err := iorb.ReadState(h.home, h.session)
-	if err != nil || st.Session == "" {
-		return iorb.State{Session: h.session, Project: h.slug, Status: iorb.StatusStarting}
+	if err == nil && st.Session != "" {
+		return st
 	}
-	return st
+	if o != nil {
+		return o.State()
+	}
+	return iorb.State{Session: h.session, Project: h.slug, Status: iorb.StatusStarting}
 }
 
 // Line is the one-line status for the TUI's bar.
