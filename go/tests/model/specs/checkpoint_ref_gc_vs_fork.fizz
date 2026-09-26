@@ -1,0 +1,103 @@
+# A turn checkpoint (plugins/history/tree.go) is pinned under
+# refs/bough/turns/<session>/<seq> so a normal `git gc` in the repo
+# around the working tree keeps its object; Fork copies the ancestor
+# entries of a finished turn into a new session file, and later an
+# /undo on that child reads the same tree back out via Restore. Bough
+# itself never deletes a turns ref today — there is no reaper for them,
+# only whatever a person or an external `git gc` does to the repo — but
+# a future one is a real possibility (see orb_idle_reaper_vs_resume_race
+# for the shape a session reaper takes elsewhere), and Fork's own copy
+# never re-pins the checkpoint for the child: the child rides on the
+# parent's ref for as long as it exists. This spec is the ordering that
+# a reaper (or a person clearing refs for an archived session) has to
+# respect: it may only drop a checkpoint's ref once nothing still
+# depends on it, and gc itself must never collect the underlying object
+# while any ref — parent's or, once one is minted, the child's — still
+# points at it.
+#
+# Fields (role Checkpoint):
+#   ref        the parent session's own pin is still present
+#   pending    number of forks that copied this checkpoint's entry and
+#              have not yet resolved it (via /undo) or been abandoned
+#   collected  the tree object itself is gone (git gc ran with no ref
+#              left pointing at it)
+#   lost       a resolve (the child's /undo, i.e. Restore) ran against a
+#              collected object — the bug this spec exists to forbid
+
+role Checkpoint:
+    action Init:
+        self.ref = True
+        self.pending = 0
+        self.collected = False
+        self.lost = False
+
+    # Fork (history.Fork) copies the ancestor entries that reference
+    # this checkpoint into a brand-new session file. It never calls
+    # PinRef for the child — no new ref is minted here — so this only
+    # records that one more resolve is still owed against the same,
+    # still-parent-owned, ref.
+    atomic action Fork:
+        require self.ref
+        self.pending += 1
+
+    # The child's /undo (history.Restore) reads the tree back out of
+    # git. Whether or not the object survived, the fork this represents
+    # is done: it no longer counts against a future prune.
+    atomic action ResolveFork:
+        require self.pending > 0
+        if self.collected:
+            self.lost = True
+        self.pending -= 1
+
+    # A session is abandoned before anyone ever runs /undo on the
+    # fork (the child is deleted, or nobody ever asks) — the pending
+    # resolve is dropped without touching the object.
+    atomic action AbandonFork:
+        require self.pending > 0
+        self.pending -= 1
+
+    # A reaper (or a person) drops the parent's own ref once the
+    # session it belongs to is done for. Guarded on pending == 0: a
+    # ref may only go once every fork that still needs its tree has
+    # resolved or been abandoned.
+    atomic action DropRef:
+        require self.ref
+        require self.pending == 0
+        self.ref = False
+
+    # git gc only ever collects an object with no reachable ref left;
+    # DropRef already means the child never got a ref of its own, so
+    # once the parent's ref is gone the object is fair game.
+    atomic action GitGC:
+        require not self.ref
+        require not self.collected
+        self.collected = True
+
+    # The session keeps going: its next turn writes a fresh checkpoint
+    # and pins a fresh ref, once the old one is fully wound down (no
+    # ref left dangling, no fork still owed a resolve on it).
+    atomic action NewCheckpoint:
+        require not self.ref
+        require self.pending == 0
+        self.ref = True
+        self.collected = False
+
+action Init:
+    checkpoint = Checkpoint()
+
+# The property the flow is named for: a resolve never lands on a
+# checkpoint gc already collected.
+always assertion ForkNeverResolvesCollectedRef:
+    return not checkpoint.lost
+
+# DropRef's own guard, restated as the invariant it exists to hold:
+# gc can only ever collect a checkpoint once nothing is still counting
+# on its ref.
+always assertion GCNeverRacesALiveFork:
+    return not (checkpoint.collected and checkpoint.pending > 0)
+
+# A dropped ref stays dropped and a collected object stays collected —
+# there is no path back once gc has run, so a later Fork must find a
+# fresh checkpoint (ref True) rather than resurrect this one.
+always assertion RefMonotonic:
+    return checkpoint.ref or checkpoint.pending == 0 or checkpoint.collected
