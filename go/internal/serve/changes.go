@@ -434,6 +434,12 @@ func (a *API) killJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: job id %q is not a number", r.PathValue("job")))
 		return
 	}
+	// Send adopts a session nothing holds, which would respawn a stopped
+	// child just to kill a job it never had and answer ok.
+	if !a.sup.Live(id) {
+		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: session %s has no running child to kill job %d in", id, job))
+		return
+	}
 	if err := a.sup.Send(id, "/jobkill "+strconv.Itoa(job)); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
