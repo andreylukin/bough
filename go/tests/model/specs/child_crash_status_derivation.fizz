@@ -1,0 +1,82 @@
+# A headless child dying mid-turn, as serve reports the session's status.
+# Status is derived, never stored: StatusOf(entries, childAlive) in
+# internal/serve/status.go. An open turn with a live child is running,
+# with no live child it is interrupted; a closed turn reads done or
+# error from history alone. The next Send respawns the child (ensure in
+# supervisor.go): the process comes up first, then the input entry lands,
+# so a crash can fall between the two.
+#
+# Fields:
+#   alive     serve holds a live lease for the child
+#   turn      the last turn as history says: none | open | done | failed
+#   status    what serve reports: idle | running | interrupted | done | error
+#   sent      a Send has spawned the child but its input is not yet written
+
+role Session:
+    action Init:
+        self.alive = False
+        self.turn = "none"
+        self.status = "idle"
+        self.sent = False
+
+    # Status is a pure function of (turn, alive); every action ends by
+    # recomputing it through the same rule the code uses.
+    atomic func Derive():
+        if self.turn == "open" and self.alive:
+            self.status = "running"
+        elif self.turn == "open":
+            self.status = "interrupted"
+        elif self.turn == "failed":
+            self.status = "error"
+        elif self.turn == "done":
+            self.status = "done"
+        else:
+            self.status = "idle"
+
+    # Send spawns the child if there is none; the input is not written yet.
+    atomic action Send:
+        require not self.sent
+        require self.turn != "open" or not self.alive
+        self.alive = True
+        self.sent = True
+        self.Derive()
+
+    # The input entry lands: the turn opens.
+    atomic action WriteInput:
+        require self.sent and self.alive
+        self.sent = False
+        self.turn = "open"
+        self.Derive()
+
+    atomic action Finish:
+        require self.turn == "open" and self.alive
+        self.turn = "done"
+        self.Derive()
+
+    atomic action FailTurn:
+        require self.turn == "open" and self.alive
+        self.turn = "failed"
+        self.Derive()
+
+    # The process dies at any time: mid-turn, idle, or between spawn and
+    # input. Its history is untouched.
+    atomic action Crash:
+        require self.alive
+        self.alive = False
+        self.sent = False
+        self.Derive()
+
+action Init:
+    session = Session()
+
+always assertion InterruptedNeedsDeadChild:
+    return session.status != "interrupted" or (session.turn == "open" and not session.alive)
+
+always assertion RunningNeedsLiveOpenTurn:
+    return session.status != "running" or (session.turn == "open" and session.alive)
+
+always assertion CrashNeverFinishes:
+    return session.turn != "open" or session.status in ["running", "interrupted"]
+
+always assertion ClosedTurnIgnoresChild:
+    return session.turn not in ["done", "failed"] or session.status in ["done", "error"]
