@@ -77,7 +77,15 @@ func longSessionRun(t *testing.T, n int, budget time.Duration) {
 		if !a.waitDone(i, 60*time.Second) {
 			t.Fatalf("%s: turn never finished:\n%s", where, a.text())
 		}
+		// The history "done" lands from its own subscriber, before the
+		// UI has necessarily painted the reply; on a stalled runner the
+		// byte clock then went quiet for settled()'s window with the
+		// turn still reading "waiting for the model". Wait for the
+		// answer itself (inside the same budget) and settle after it.
 		start := time.Now()
+		for time.Since(start) < budget && !strings.Contains(a.text(), longSessionMarker(i)) {
+			time.Sleep(10 * time.Millisecond)
+		}
 		screen := a.settled()
 		took := time.Since(start)
 		if took > worst {
