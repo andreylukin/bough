@@ -1,0 +1,62 @@
+# The thread scroller's follow flag. follow is atBottom (40px slack); a
+# smooth jump-to-latest sets jumping so the scroll events on its way do not
+# drop follow; the reader's wheel/touch ends the jump. away drives the
+# "new below" button; fresh is newest > awayAt (something arrived since
+# the reader left the end). reduced motion makes the jump instant.
+
+role Scroller:
+    action Init:
+        self.follow = True
+        self.jumping = False
+        self.away = False
+        self.fresh = False
+
+    # Reader scrolls off the end: follow drops, jump ends, awayAt is set once.
+    atomic action ScrollUp:
+        require self.follow or self.jumping
+        self.follow = False
+        self.jumping = False
+        if not self.away:
+            self.fresh = False
+        self.away = True
+
+    # A fragment arrives: at the end it is followed, away it is "new below".
+    atomic action Fragment:
+        if not self.follow and not self.jumping:
+            self.fresh = True
+
+    # Jump to latest, smooth: follow is claimed, jumping guards the way.
+    atomic action ToLatestSmooth:
+        require not self.follow or self.away
+        self.follow = True
+        self.away = False
+        self.fresh = False
+        self.jumping = True
+
+    # Jump to latest, instant (reduced motion / explicit).
+    atomic action ToLatestInstant:
+        require not self.follow or self.away
+        self.follow = True
+        self.away = False
+        self.fresh = False
+        self.jumping = False
+
+    # The smooth scroll reaches the end: the guard lifts.
+    atomic action JumpArrives:
+        require self.jumping
+        self.jumping = False
+
+action Init:
+    scroller = Scroller()
+
+always assertion AwayIffNotFollowing:
+    return scroller.away == (not scroller.follow) or scroller.jumping or (scroller.follow and not scroller.away)
+
+always assertion FreshOnlyWhenAway:
+    return not scroller.fresh or scroller.away == True
+
+always assertion JumpingImpliesFollow:
+    return not scroller.jumping or scroller.follow
+
+always assertion FollowingHasNoButton:
+    return not scroller.follow or not scroller.away
