@@ -113,7 +113,7 @@ test.describe('model: orb_delete_project_vs_active_portal', () => {
   loadPaths('orb_delete_project_vs_active_portal').forEach((trace, i) => {
     const walk = trace.slice(1).map((s) => s.action.slice(ROLE.length + 1)).join(' → ');
     test(`path ${i}: ${walk}`, async ({ page, backend }) => {
-      test.setTimeout(60_000 + trace.length * 3_000);
+      test.setTimeout(60_000 + trace.length * 16_000);
       const errors: string[] = [];
       page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
       page.on('pageerror', (e) => errors.push(String(e)));
@@ -129,8 +129,14 @@ test.describe('model: orb_delete_project_vs_active_portal', () => {
           const role = roleState(ROLE, step.state);
           const got = n === 0 ? init.state : await act(c, name);
           expect(got, `${where}: backend state`).toEqual(role);
+          // None of this flow's actions produces a session event (no
+          // model turn ever runs, see odpHistory), so the page only
+          // learns of a change from the open session's own list poll,
+          // which slows to POLL_MS*3 (12s) while a session is selected
+          // (app.tsx's `streaming`): the timeout has to clear that, not
+          // the SSE-driven catch-up other flows' walks can rely on.
           await expect.poll(async () => readUiState(c), {
-            message: `${where}: page`, timeout: 10_000,
+            message: `${where}: page`, timeout: 15_000,
           }).toEqual(view(role));
           await invariants(c, errors, where);
         }
