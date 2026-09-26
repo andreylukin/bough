@@ -1,0 +1,92 @@
+# A `--set id.key=value` CLI flag, a project bough.yml row value, and a
+# home ~/.bough/bough.yml row value for the same key race at startup and
+# again on every hot reload.
+#
+#   go/cmd/bough/main.go configSource.load()   embedded default, then the
+#                                               ONE file resolveConfig
+#                                               picked (./bough.yml wins
+#                                               over ~/.bough/bough.yml;
+#                                               neither is merged with
+#                                               the other — presence, not
+#                                               precedence, decides which
+#                                               file is "the" config for
+#                                               this process's lifetime)
+#   go/cmd/bough/main.go applyOverrides        --set flags are applied
+#                                               to the freshly loaded
+#                                               rows, both at startup
+#                                               (main) and after every
+#                                               reload() the fsnotify
+#                                               watcher fires
+#   go/cmd/bough/main.go watchConfig, reload   a file edit debounces
+#                                               300ms then calls
+#                                               src.load() + the SAME
+#                                               applyOverrides(ov.all())
+#                                               — the recorded --set
+#                                               list, never re-typed
+#
+# Two clocks per file: <file>Val is what is written on disk; loaded<File>
+# is what the last load()+applyOverrides pass actually read off it. A
+# CLI flag has no clock of its own — it never changes while the process
+# runs (main.go parses it once, before any row mounts) and applyOverrides
+# writes it into rows.Config AFTER the file load on every single pass,
+# so it can never be seen, let alone overwritten, by a value the file
+# supplies for the same key.
+#
+# This spec states that pin: no sequence of edits to either file, and no
+# number of hot reloads, ever moves the effective value away from the
+# CLI's, because the CLI value is not a state the file layer can touch.
+
+role Row:
+    action Init:
+        self.cliVal = 1
+        self.projectVal = 0
+        self.homeVal = 0
+        self.loadedProjectVal = 0
+        self.loadedHomeVal = 0
+        # Startup already ran load() then applyOverrides(sets) once
+        # (main.go, before Reconcile), so the CLI value is pinned from
+        # the very first state, not just after a later reload.
+        self.effective = self.cliVal
+
+    # A person or an agent edits the project-local bough.yml on disk.
+    # Not yet visible to the running process — only a reload reads it.
+    atomic action EditProjectConfig:
+        require self.projectVal < 1
+        self.projectVal = self.projectVal + 1
+
+    # Same, for ~/.bough/bough.yml.
+    atomic action EditHomeConfig:
+        require self.homeVal < 1
+        self.homeVal = self.homeVal + 1
+
+    # The fsnotify watcher's debounced reload: src.load() re-reads
+    # whichever one file this process resolved at startup (so both
+    # clocks below always move together with what's on disk — this
+    # spec does not need to pick which file "is" the source, only that
+    # neither one ever reaches effective), then applyOverrides replays
+    # the CLI's recorded --set list on top, unconditionally.
+    atomic fair action HotReload:
+        require self.loadedProjectVal != self.projectVal or self.loadedHomeVal != self.homeVal
+        self.loadedProjectVal = self.projectVal
+        self.loadedHomeVal = self.homeVal
+        self.effective = self.cliVal
+
+    # Always enabled: a terminal state (both files edited and reloaded)
+    # is not a deadlock — the process just sits there, still pinned.
+    atomic action Idle:
+        self.effective = self.cliVal
+
+action Init:
+    row = Row()
+
+# The CLI flag's value is what the row holds, in every reachable state:
+# before any edit, after an edit nobody has reloaded yet, and after a
+# reload that just re-read both files.
+always assertion CLIAlwaysWins:
+    return row.effective == row.cliVal
+
+# A reload is not stuck forever behind an edit: the loaded copies of
+# each file eventually catch up to what is on disk (they just never
+# get to overrule the CLI once they do).
+always eventually assertion ReloadEventuallyPicksUpFileEdits:
+    return row.loadedProjectVal == row.projectVal and row.loadedHomeVal == row.homeVal
