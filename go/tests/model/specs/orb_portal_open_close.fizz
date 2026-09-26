@@ -1,0 +1,55 @@
+# One guest port's portal on a session's orb (plugins/orb/portal.go,
+# internal/orb/portal.go). OpenPortal starts the host listener under the
+# portals lock and records it in the state file afterwards, so there is a
+# window (opening) where the two disagree; ClosePortal drops the listener
+# then forgets the record; an orb exit (CloseSessionPortals) drops both.
+# A swap replaces the container and retargets the listener, so the
+# listener survives it. Outside the opening window the listener and its
+# record must agree: a listener without a record is a leaked forward, a
+# record without a listener is an orphan the UI would show as open.
+
+role Portal:
+    action Init:
+        self.orb = "running"
+        self.listener = False
+        self.recorded = False
+        self.opening = False
+
+    atomic action OpenListen:
+        require self.orb == "running"
+        require not self.listener
+        self.listener = True
+        self.opening = True
+
+    atomic action OpenRecord:
+        require self.opening
+        require self.listener
+        self.recorded = True
+        self.opening = False
+
+    atomic action Close:
+        require not self.opening
+        self.listener = False
+        self.recorded = False
+
+    atomic action Swap:
+        require self.orb == "running"
+
+    atomic action Exit:
+        require not self.opening
+        self.orb = "stopped"
+        self.listener = False
+        self.recorded = False
+
+    atomic action Start:
+        require self.orb == "stopped"
+        self.orb = "running"
+
+action Init:
+    portal = Portal()
+
+always assertion NoLeakOrOrphan:
+    return portal.opening or portal.listener == portal.recorded
+
+always assertion NoListenerOnStoppedOrb:
+    return portal.orb == "running" or not portal.listener
