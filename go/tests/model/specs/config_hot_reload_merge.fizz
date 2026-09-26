@@ -84,11 +84,16 @@ role Config:
 
     # A file edit whose value a's Apply rejects: same drop, but the
     # remount attempt itself fails (only reachable when upstream is met,
-    # or settle never attempts the mount at all).
+    # or settle never attempts the mount at all). In the general
+    # two-row story b would land "pending" (its own Apply never ran),
+    # but this flow's a and b are the same real row (see the adapter's
+    # type comment: no second mandatory-non-core-key row exists to
+    # stand in for a distinct b) — a row can't be Failed for one
+    # observer and Pending for another, so b mirrors a here.
     atomic action EditBadConfig:
         require self.upstream == "ok"
         self.a = "failed"
-        self.b = "pending"
+        self.b = "failed"
 
     # A runtime --set (runtimeSet): recorded so a later file-watch reload
     # replays it too (main.go's ov.all()); otherwise it is the same kind

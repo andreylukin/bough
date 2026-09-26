@@ -85,6 +85,8 @@ type chrAdapter struct {
 	override bool
 	turnOpen bool
 
+	lastTurnVal string // turnVal as of the last write (see applyEdit)
+
 	row     string // cached last-observed state of the loop row
 	lastSeq int64  // events already accounted for, this session
 }
@@ -150,14 +152,30 @@ func (a *chrAdapter) observeLoop() (string, error) {
 
 // applyEdit writes the current config, waits it past the debounce, and
 // refreshes a.row from what the server actually did.
+//
+// observeLoop's "mounted" default reads silence as "it mounted clean",
+// which only holds when this edit could have moved the row: reconcile.go
+// never retries a Failed row until its own spec changes (fail()'s
+// comment), and unlike a Pending row — which settle() logs again on
+// every single reconcile pass, whether or not anything changed — a
+// Failed row is logged once, at the moment Apply errors, and then
+// never again. So a Failed row that this edit's turn_settle value
+// leaves untouched (UpstreamBreaks/Heals, or a repeated EditBadConfig)
+// produces no new line, and silence has to be read as "still failed",
+// not "mounted".
 func (a *chrAdapter) applyEdit() error {
+	specChanged := a.turnVal != a.lastTurnVal
 	if err := a.writeConfig(); err != nil {
 		return err
 	}
+	a.lastTurnVal = a.turnVal
 	time.Sleep(chrSettle)
 	st, err := a.observeLoop()
 	if err != nil {
 		return err
+	}
+	if st == "mounted" && a.row == "failed" && !specChanged {
+		st = "failed"
 	}
 	a.row = st
 	return nil
@@ -170,6 +188,7 @@ func (a *chrAdapter) Init() error {
 	a.work = a.s.Dir(a.t, fmt.Sprintf("chr%04d", a.walks))
 	a.upOK, a.turnVal, a.override, a.turnOpen = true, "5s", false, false
 	a.row, a.lastSeq = "mounted", 0
+	a.lastTurnVal = a.turnVal
 	if err := a.writeConfig(); err != nil {
 		return err
 	}

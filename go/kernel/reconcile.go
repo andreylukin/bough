@@ -232,7 +232,11 @@ func (c *Context) reconcile(newRows []Row, force string) error {
 	// Validate the candidate before touching the tree.
 	seen := map[string]bool{}
 	for i, r := range newRows {
-		if r.ID == "" || r.Plugin == "" {
+		// A disabled row may omit plugin (see loader.go's LoadBytes):
+		// overlay() replaces a base row outright by id, so `disabled:
+		// true` alone — main.go's documented way to drop a default row
+		// — produces exactly this shape.
+		if r.ID == "" || (r.Plugin == "" && !r.Disabled) {
 			return fmt.Errorf("kernel: reconcile: row %d: id and plugin are required", i)
 		}
 		if seen[r.ID] {
