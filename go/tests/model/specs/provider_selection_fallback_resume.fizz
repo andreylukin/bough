@@ -1,0 +1,66 @@
+# Provider resolution at launch (cmd/bough/provider.go pickProvider) and
+# resume (modelresume.go resumedModelSets). Keys come and go in the
+# environment; a launch resolves the default llm row against the keys
+# present at that moment (anthropic preferred, then openrouter, else
+# none: the missing-key notice). A /model swap is recorded in history and
+# a resumed launch replays it over the freshly resolved row, so the swap
+# survives a key change but never makes a keyless row runnable.
+
+role Provider:
+    action Init:
+        self.ant = True
+        self.orr = False
+        self.launchant = True
+        self.launchorr = False
+        self.row = "anthropic"
+        self.model = "default"
+        self.recorded = False
+
+    atomic action ToggleAnt:
+        self.ant = not self.ant
+
+    atomic action ToggleOrr:
+        self.orr = not self.orr
+
+    # Fresh launch: resolve against current keys, no recorded swap.
+    atomic action Launch:
+        self.launchant = self.ant
+        self.launchorr = self.orr
+        if self.ant:
+            self.row = "anthropic"
+        elif self.orr:
+            self.row = "openrouter"
+        else:
+            self.row = "none"
+        self.model = "default"
+        self.recorded = False
+
+    # Resume of a session that recorded a /model swap: re-resolve, then replay.
+    atomic action Resume:
+        self.launchant = self.ant
+        self.launchorr = self.orr
+        if self.ant:
+            self.row = "anthropic"
+        elif self.orr:
+            self.row = "openrouter"
+        else:
+            self.row = "none"
+        if self.recorded:
+            self.model = "switched"
+        else:
+            self.model = "default"
+
+    # /model during a turn: only a runnable row can switch.
+    atomic action SwitchModel:
+        require self.row != "none"
+        self.model = "switched"
+        self.recorded = True
+
+action Init:
+    p = Provider()
+
+always assertion RowMatchesLaunchKeys:
+    return (p.row != "anthropic" or p.launchant) and (p.row != "openrouter" or (p.launchorr and not p.launchant)) and (p.row != "none" or not (p.launchant or p.launchorr))
+
+always assertion SwitchNeedsRow:
+    return p.model == "default" or p.recorded
