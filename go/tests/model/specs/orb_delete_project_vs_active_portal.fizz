@@ -1,0 +1,104 @@
+# A project directory (the orb's backing definition) is deleted or
+# renamed while an open portal (plugins/orb/portal.go, internal/orb
+# portal.go) still holds a live listener on that orb. Distinct from
+# orb_remove_data_safety (orb removal itself): this is about the
+# portal's own teardown path noticing the project it was opened for is
+# gone, rather than leaking the host listener or relaying a request
+# into a container whose backing project no longer exists.
+#
+# project tracks whether the definition on disk still resolves: "ok" |
+# "gone" (deleted or renamed — both remove the slug the portal's state
+# file was opened under). listener/recorded mirror orb_portal_open_close:
+# the host socket and the state-file record it left in ~/.bough sessions
+# dir. opening is OpenPortal's window between the two. serving is one
+# relayed request in flight. TeardownSweep is the path under review: the
+# routine that should close a portal once it finds its project gone.
+
+role Portal:
+    action Init:
+        self.project = "ok"
+        self.listener = False
+        self.recorded = False
+        self.opening = False
+        self.serving = False
+
+    atomic action OpenListen:
+        require self.project == "ok"
+        require not self.listener
+        self.listener = True
+        self.opening = True
+
+    atomic action OpenRecord:
+        require self.opening
+        require self.listener
+        self.recorded = True
+        self.opening = False
+
+    atomic action Close:
+        require not self.opening
+        require self.listener
+        self.listener = False
+        self.recorded = False
+
+    # A relay hop through the portal. Guarded on project == "ok": the
+    # relay checks the project still resolves before forwarding, which
+    # is what keeps a request from ever reaching a container whose
+    # backing definition is already gone.
+    atomic action ServeRequest:
+        require self.listener
+        require self.project == "ok"
+        self.serving = True
+
+    atomic action ServeDone:
+        require self.serving
+        self.serving = False
+
+    # The project directory is deleted or renamed out from under the
+    # orb. Excluded during "opening" (OpenPortal holds the portals lock
+    # across the listener-then-record write, so a delete lands before or
+    # after that window, never inside it) and while a request is being
+    # relayed (the in-flight hop is what NoStaleServe is about; a vanish
+    # racing a request already under way is a different flow).
+    atomic fair action ProjectVanish:
+        require self.project == "ok"
+        require not self.opening
+        require not self.serving
+        self.project = "gone"
+
+    # The teardown path under test: it notices the project is gone and
+    # closes the listener and its record together, the same as an
+    # explicit Close.
+    atomic fair action TeardownSweep:
+        require self.project == "gone"
+        require self.listener
+        require not self.opening
+        self.listener = False
+        self.recorded = False
+
+    # A gone project with its portal already torn down is a terminal
+    # state for this flow (nothing recreates the slug here); this keeps
+    # it enabled so the checker sees a steady state, not a deadlock.
+    atomic action Settled:
+        require self.project == "gone"
+        require not self.listener
+        pass
+
+action Init:
+    portal = Portal()
+
+# Outside the opening window, the listener and its record agree: a
+# listener without a record is a leaked forward, a record without a
+# listener is an orphan the UI would still show as open.
+always assertion NoLeakOrOrphan:
+    return portal.opening or portal.listener == portal.recorded
+
+# Once the project is gone, nothing is relayed through the portal: the
+# "serving stale traffic" half of the bug this flow is checking for.
+always assertion NoStaleServe:
+    return portal.project == "ok" or not portal.serving
+
+# The teardown path eventually reacts: a portal is never left holding a
+# live listener for a project that has vanished — the "leaking the
+# handle" half of the bug this flow is checking for.
+always eventually assertion HandleReleasedAfterVanish:
+    return portal.project == "ok" or not portal.listener

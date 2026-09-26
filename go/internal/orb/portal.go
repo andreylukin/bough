@@ -78,29 +78,49 @@ func RetargetPortals(session, ip string) {
 // the one already there, so an agent asking twice gets one listener and
 // the same URL.
 func OpenPortal(home, session string, guest int, name string) (PortalState, error) {
+	ps, opened, err := OpenPortalListen(home, session, guest, name)
+	if err != nil || !opened {
+		return ps, err
+	}
+	return ps, RecordOpenedPortal(home, session, ps)
+}
+
+// OpenPortalListen is OpenPortal's first half: it validates the orb is up
+// and makes the loopback listener live (in portals.open, its relay
+// goroutine started) without writing state.json. opened is false when a
+// listener for this guest port was already open, the fast path that must
+// not then write a second record for a listener it did not just create.
+//
+// Between this call returning and RecordOpenedPortal running, the portal
+// is real and already relaying but state.json has not caught up — the
+// window specs/orb_delete_project_vs_active_portal.fizz calls "opening".
+// portals.Lock stays held across both halves in OpenPortal itself, so
+// nothing outside this package ever observes it; split out only so a
+// caller (this package's own tests) can hold the window open on purpose.
+func OpenPortalListen(home, session string, guest int, name string) (ps PortalState, opened bool, err error) {
 	if guest < 1 || guest > 65535 {
-		return PortalState{}, fmt.Errorf("orb: portal: port %d is not a port", guest)
+		return PortalState{}, false, fmt.Errorf("orb: portal: port %d is not a port", guest)
 	}
 	st, err := ReadState(home, session)
 	if err != nil || st.Session == "" {
-		return PortalState{}, fmt.Errorf("orb: portal: session %s has no orb", session)
+		return PortalState{}, false, fmt.Errorf("orb: portal: session %s has no orb", session)
 	}
 	if st.Status != StatusRunning {
-		return PortalState{}, fmt.Errorf("orb: portal: the orb is %s, so nothing inside it is listening", statusWord(st.Status))
+		return PortalState{}, false, fmt.Errorf("orb: portal: the orb is %s, so nothing inside it is listening", statusWord(st.Status))
 	}
 	if st.IP == "" {
-		return PortalState{}, errors.New("orb: portal: the orb has no address yet; it may still be starting")
+		return PortalState{}, false, errors.New("orb: portal: the orb has no address yet; it may still be starting")
 	}
 
 	portals.Lock()
 	defer portals.Unlock()
 	if p, ok := portals.open[session][guest]; ok {
-		return PortalState{Guest: guest, Host: hostPort(p.ln), Name: name}, nil
+		return PortalState{Guest: guest, Host: hostPort(p.ln), Name: name}, false, nil
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return PortalState{}, fmt.Errorf("orb: portal: %w", err)
+		return PortalState{}, false, fmt.Errorf("orb: portal: %w", err)
 	}
 	p := newPortal(ln, st.IP, guest)
 	if portals.open == nil {
@@ -112,11 +132,13 @@ func OpenPortal(home, session string, guest int, name string) (PortalState, erro
 	portals.open[session][guest] = p
 	go p.serve()
 
-	ps := PortalState{Guest: guest, Host: hostPort(ln), Name: name}
-	if err := recordPortal(home, session, ps); err != nil {
-		return ps, err
-	}
-	return ps, nil
+	return PortalState{Guest: guest, Host: hostPort(ln), Name: name}, true, nil
+}
+
+// RecordOpenedPortal is OpenPortal's second half: it writes state.json
+// for a listener OpenPortalListen already made live.
+func RecordOpenedPortal(home, session string, ps PortalState) error {
+	return recordPortal(home, session, ps)
 }
 
 // ClosePortal stops the listener and forgets it. Connections already
@@ -135,6 +157,21 @@ func ClosePortal(home, session string, guest int) error {
 		p.ln.Close()
 	}
 	return forgetPortal(home, session, guest)
+}
+
+// CloseIfProjectGone closes every portal of a session whose backing
+// project no longer exists on disk (specs/orb_delete_project_vs_active_portal.fizz,
+// TeardownSweep): DeleteProject tears a project's sessions down before
+// removing its directory, but a definition removed some other way (a
+// manual rm, an agent renaming the directory with the write tools)
+// otherwise leaves the listener running with nothing left to notice it.
+// exists is the caller's own check (this package does not know about
+// project definitions), so a stray call while exists is true is a no-op.
+func CloseIfProjectGone(home, session string, exists bool) {
+	if exists {
+		return
+	}
+	CloseSessionPortals(home, session)
 }
 
 // CloseSessionPortals drops every portal of a session, for its exit.
