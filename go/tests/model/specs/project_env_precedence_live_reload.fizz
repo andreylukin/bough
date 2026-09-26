@@ -38,22 +38,36 @@
 # respawn (kill, then start again) reads the current row.
 
 role Project:
+    # A local session's process is spawned the instant it is created
+    # (internal/serve/supervisor.go createWithID starts the child before
+    # any prompt is sent), so it is already running, at generation 0
+    # (no project assigned yet), before any SpawnSession-shaped action
+    # happens. SpawnSession models a *re*-spawn: it only fires again
+    # after KillSession.
     action Init:
         self.fileVer = 0
         self.rowLoaded = 0
         self.childEnv = 0
         self.orbIdentity = 0
-        self.running = False
+        self.running = True
         self.orbOpen = False
 
     # SetSecret, an identity edit, or a hand edit of the file: a strictly
-    # newer version. Allowed whether or not a session is running.
+    # newer version. Allowed whether or not a session is running. A
+    # local session has no separate cached row in front of this
+    # (supervisor.go's AssignProject writes meta.json and Row.Project
+    # reads it back at once), so fileVer and rowLoaded are the same live
+    # field in the real system: they move together here too.
     atomic action EditProjectFile:
         require self.fileVer < 2
         self.fileVer = self.fileVer + 1
+        self.rowLoaded = self.fileVer
 
     # The kernel notices the file changed and remounts the project row.
-    # Fair: it is not held up by anything a session does.
+    # Fair: it is not held up by anything a session does. For a local
+    # session this never actually fires (EditProjectFile above already
+    # keeps rowLoaded caught up); it is kept for the spec's generality
+    # and RowEventuallyMatchesFile below.
     atomic fair action KernelHotReload:
         require self.rowLoaded != self.fileVer
         self.rowLoaded = self.fileVer
