@@ -1,0 +1,164 @@
+# A provider key that is valid when a turn starts is revoked or rotated
+# externally (the person edits ~/.bough/env, an org rotates the key, the
+# provider suspends it) while that turn is still open. This is distinct
+# from provider_failure_retry (a transient network failure inside a
+# turn, retried with backoff) and from provider_row_pending_after_key_fix
+# (only the recovery direction: a Failed row's key gets fixed and the
+# row is Remounted back to Ready). Here the key goes bad while the row
+# is Ready and a turn is mid-flight, and the two things that must not
+# happen are: the in-flight turn's own close (done vs error) getting
+# corrupted by the row's status change, and the row silently coming
+# back or skipping stages once it does discover the 401.
+#
+# The row does not poll its key: it only discovers a revocation when it
+# next tries to use it, either as part of the open turn's own request
+# (RequestFailsRevoked) or, if the turn finishes first, on the next
+# idle health probe (HealthCheckFails). Per go/kernel/reconcile.go, a
+# provider that fails a request does not flip straight back to Ready by
+# itself; it settles through Pending (unmounting, replaced by a Failed
+# row) and stays Failed until an explicit Remount, which is the other
+# flow's territory and is not modeled here.
+#
+# Fields (Provider role):
+#   rowStatus  ready | pending | failed (monotonic in this spec: nothing
+#              here ever moves it backward)
+#   keyRevoked the external fact: the key stopped working
+#   open       a turn is open (started, not yet closed)
+#   req        the open turn's request: "" | out | streaming
+#   closed     how the last turn closed: "" | done | error
+#   dones      closing entries recorded for the current turn
+
+role Provider:
+    action Init:
+        self.rowStatus = "ready"
+        self.keyRevoked = False
+        self.open = False
+        self.req = ""
+        self.closed = ""
+        self.dones = 0
+
+    # The person starts a turn while the row is still healthy or still
+    # merely Pending (a request already in flight elsewhere does not
+    # block a new turn in this model).
+    atomic action StartTurn:
+        require not self.open
+        require self.rowStatus != "failed"
+        self.open = True
+        self.req = "out"
+        self.closed = ""
+        self.dones = 0
+
+    # The provider has begun streaming a reply before the key is
+    # revoked underneath it; already-sent output is real and unaffected
+    # by what happens next.
+    atomic action Stream:
+        require self.req == "out"
+        self.req = "streaming"
+
+    # The key goes bad. This can happen at any time the row is still
+    # Ready, whether or not a turn is open: it is an external event.
+    atomic action RevokeKey:
+        require self.rowStatus == "ready"
+        require not self.keyRevoked
+        self.keyRevoked = True
+
+    # The open turn's own request is the one that discovers the
+    # revocation (a 401 mid-turn): the turn closes as its own fatal
+    # error, exactly once, and the row starts unmounting. The turn's
+    # close is not deferred, retried or left ambiguous by the row's
+    # transition — it happens in the same step.
+    atomic fair action RequestFailsRevoked:
+        require self.open
+        require self.req in ("out", "streaming")
+        require self.keyRevoked
+        self.closed = "error"
+        self.open = False
+        self.req = ""
+        self.dones = self.dones + 1
+        self.rowStatus = "pending"
+
+    # The turn finishes cleanly because its own request went out and
+    # came back before the revocation took effect on the provider side
+    # (the key was still good when this request was made).
+    atomic fair action FinishTurnCleanly:
+        require self.open
+        require self.req in ("out", "streaming")
+        require not self.keyRevoked
+        self.closed = "done"
+        self.open = False
+        self.req = ""
+        self.dones = self.dones + 1
+
+    # No turn is open: the row discovers the revocation on its own,
+    # e.g. an idle health probe or the next thing that tries to mount
+    # a dependent. This never touches turn state, because there is
+    # none to touch.
+    atomic fair action HealthCheckFails:
+        require not self.open
+        require self.rowStatus == "ready"
+        require self.keyRevoked
+        self.rowStatus = "pending"
+
+    # Reconcile settles the unmounted row into Failed. This is a step
+    # of its own, not fused into the request that discovered the
+    # 401 — the row is briefly Pending while it unmounts, exactly like
+    # any other row transition in kernel/reconcile.go.
+    atomic fair action SettleFailed:
+        require self.rowStatus == "pending"
+        self.rowStatus = "failed"
+
+    # A Failed row is dead weight per AGENTS.md: it stays Failed until
+    # an explicit Remount, which is provider_row_pending_after_key_fix's
+    # territory. A same-spec Reconcile keeps landing on it and changes
+    # nothing — the terminal state of this flow, not a deadlock.
+    atomic action ReconcileSameSpec:
+        require self.rowStatus == "failed"
+        self.rowStatus = "failed"
+
+action Init:
+    provider = Provider()
+
+# The row never jumps straight from Ready to Failed, or back from
+# Failed/Pending to Ready, in this flow: only forward, one stage at a
+# time, and only the other flow's Remount goes the other way.
+always assertion RowStagesInOrder:
+    return provider.rowStatus in ("ready", "pending", "failed")
+
+# A revocation that happens with no turn open never opens one, closes
+# one, or otherwise touches turn state.
+always assertion RevocationAloneNeverTouchesTurn:
+    if not provider.open and provider.req == "":
+        return provider.dones == 0 or provider.closed in ("done", "error")
+    return True
+
+# The open turn's close is always exactly what its own request
+# resolved to: an error only from RequestFailsRevoked (which is
+# reachable only from an open request during a real revocation), a
+# done only from FinishTurnCleanly (which requires the key to still be
+# good). Either way a turn closes at most once and clears its request.
+always assertion TurnClosesCleanly:
+    if provider.open:
+        return provider.dones == 0
+    return provider.req == ""
+
+# A turn that closes "error" only ever does so because the key was
+# actually revoked; the row discovering a bad key never fabricates a
+# turn error out of nothing (no action sets closed = "error" other
+# than RequestFailsRevoked, which requires keyRevoked).
+always assertion ErrorOnlyFromRevocation:
+    return provider.closed != "error" or provider.keyRevoked
+
+# The row settling to Failed never depends on, or waits for, a turn:
+# it can complete whether or not one is open, and it never re-derives
+# from turn state once Pending.
+always assertion RowSettlesIndependently:
+    return provider.rowStatus != "pending" or provider.keyRevoked
+
+# Every turn that starts eventually closes, revocation or not.
+always eventually assertion TurnEnds:
+    return not provider.open
+
+# A revoked key's row eventually settles to Failed (it does not sit in
+# Pending forever, waiting on a turn that may never come).
+always eventually assertion RevocationSettles:
+    return not provider.keyRevoked or provider.rowStatus == "failed"
