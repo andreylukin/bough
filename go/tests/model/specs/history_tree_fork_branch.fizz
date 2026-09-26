@@ -1,0 +1,39 @@
+# Forking a session at a seq while the parent keeps appending turns
+# (plugins/history Fork). The child copies the prefix up to the fork
+# point; the parent's seq only grows; the child never holds an entry the
+# parent had not yet written at fork time. Equal mtimes are broken by id,
+# so the newest-first order is total (Tied).
+
+role Tree:
+    action Init:
+        self.parent = 0
+        self.child = -1
+        self.tied = False
+
+    atomic action Append:
+        require self.parent < 3
+        self.parent += 1
+
+    atomic action Fork:
+        require self.child == -1
+        require self.parent > 0
+        self.child = self.parent
+
+    atomic action TieMtime:
+        require self.child != -1
+        require not self.tied
+        self.tied = True
+
+    atomic action Drop:
+        require self.child != -1
+        self.child = -1
+        self.tied = False
+
+action Init:
+    tree = Tree()
+
+always assertion ChildIsPrefix:
+    return tree.child <= tree.parent
+
+always assertion ParentBounded:
+    return tree.parent <= 3
