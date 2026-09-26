@@ -334,10 +334,16 @@ func (a *multiTabRemoteChangeAdapter) AStop() error {
 	if err := a.s.Interrupt(ctx, a.id); err != nil {
 		return err
 	}
-	a.dropHeld()
-	return a.waitStatus("the stopped turn", func(s serve.Status) bool {
+	// The held request is let go only once the stop has landed: the
+	// SIGINT reaches the turn's cancel several hops later (and serve
+	// holds it until the child reports the turn), while llm-control
+	// answers a release within 10 ms, so releasing first let the reply
+	// close the turn "done" before the cancel did.
+	err := a.waitStatus("the stopped turn", func(s serve.Status) bool {
 		return s == serve.StatusStopped || s == serve.StatusInterrupted
 	})
+	a.dropHeld()
+	return err
 }
 
 func (a *multiTabRemoteChangeAdapter) AAckRead() error {
