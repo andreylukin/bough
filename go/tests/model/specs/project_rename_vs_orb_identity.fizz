@@ -1,0 +1,92 @@
+# Renaming a project rewrites only the `name:` line in project.yml
+# (projectdef.SetName / withNameLine, via supervisor.go RenameProject);
+# the slug, the image cache and any running orb container keep the
+# identity they were built with. This flow checks that a rename racing
+# an orb build or an open session's re-read of the name never disturbs
+# that identity, and that the UI's display name only ever catches up to
+# disk on its own poll, never earlier.
+#
+# Checked against:
+#   internal/projectdef/projectdef.go SetName/withNameLine: a textual
+#     splice of the name: line only; slug is the directory name and
+#     never touched by it.
+#   internal/serve/supervisor.go RenameProject: calls SetName, nothing
+#     else; no orb is looked at.
+#   internal/orb/orb.go, internal/orb/image.go: every runtime call keys
+#     off o.spec.Name / the image tag, both derived from the slug at
+#     Prepare, never from project.yml's name: line — a build in flight
+#     or a running container has no code path back to the display name.
+#   web/src/project.tsx and the session UI poll the project's name off
+#     GET /api/projects/{slug} on their own schedule; a session open
+#     mid-rename shows whichever poll last landed until the next one.
+#
+# Scope cuts: which orb runtime, image caching internals and the
+# multi-writer project.yml races (comments, CheckHost) are the other
+# project.yml flows (project_definition_writers_yml,
+# project_definition_writers); this flow is only the rename vs. the
+# orb's fixed identity and the UI's lagging read of the name.
+
+role Project:
+    action Init:
+        self.y_name = "Alpha"
+        self.ui_name = "Alpha"
+        self.orb_building = False
+        self.orb_running = False
+        self.orb_identity = "alpha-slug"
+
+    # RenameProject -> SetName: splices the name: line only. Allowed at
+    # any point in the orb's lifecycle (build in flight or container
+    # running) because it never reads or writes anything orb-shaped.
+    atomic action Rename:
+        require self.y_name == "Alpha"
+        self.y_name = "Beta"
+
+    # The open session's/page's poll of GET /api/projects/{slug}: it
+    # only ever catches up to whatever is on disk right now.
+    atomic fair action UiPoll:
+        require self.ui_name != self.y_name
+        self.ui_name = self.y_name
+
+    # A build keyed off the slug, not the name: its tag is fixed at
+    # Prepare time and does not depend on y_name, before or after.
+    atomic action StartOrbBuild:
+        require not self.orb_building
+        self.orb_building = True
+
+    atomic action FinishOrbBuild:
+        require self.orb_building
+        self.orb_building = False
+        self.orb_running = True
+
+    atomic action StopOrb:
+        require self.orb_running
+        self.orb_running = False
+
+action Init:
+    project = Project()
+
+# --- What holds.
+
+# The orb's identity never moves, no matter how many renames happened
+# before, during, or after a build: it is a function of the slug, which
+# a rename never touches.
+always assertion OrbIdentityFixed:
+    return project.orb_identity == "alpha-slug"
+
+# Renaming never itself changes anything orb-shaped: a build in flight
+# stays in flight, a running container stays running, across the rename.
+transition assertion RenameDoesNotTouchOrb(before, after):
+    b = before.project
+    a = after.project
+    return b.y_name == a.y_name or (b.orb_building == a.orb_building and b.orb_running == a.orb_running and b.orb_identity == a.orb_identity)
+
+# The UI's displayed name only ever moves via its own poll: nothing else
+# changes it, so a rename never itself flips what a session shows.
+transition assertion NameOnlyMovesOnPoll(before, after):
+    b = before.project
+    a = after.project
+    return b.ui_name == a.ui_name or a.ui_name == a.y_name
+
+# The UI eventually shows the disk name (its poll is fair).
+always eventually assertion UiCatchesUpToRename:
+    return project.ui_name == project.y_name
