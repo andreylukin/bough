@@ -79,38 +79,68 @@ func Run(p paths, exe string, all bool, maxSessions int, quiet time.Duration, on
 // ensureWiki creates the wiki directory, its index and log (the log
 // with the baseline that keeps the first run from ingesting all of
 // history), and a git repo so every ingest is one reviewable commit.
-func ensureWiki(p paths) error {
+func ensureWiki(p paths) error { return ensureWikiChecked(p, func() {}) }
+
+// ensureWikiChecked is ensureWiki with its check-then-create boundary
+// exposed as a hook: it stats every component up front, calls
+// atCheckpoint, then creates whatever was missing and commits iff it
+// created something. Production always passes a no-op; EnsureWikiForTest
+// is the only caller that uses the hook, to drive the install-vs-first-run
+// race in go/tests/model/mbt/wiki_install_first_run_vs_serve_tick_test.go
+// deterministically instead of relying on real thread-scheduling luck.
+func ensureWikiChecked(p paths, atCheckpoint func()) error {
 	if err := os.MkdirAll(p.wiki, 0o755); err != nil {
 		return err
 	}
+	logMissing := statMissing(p.log())
+	indexMissing := statMissing(p.index())
+	ignore := filepath.Join(p.wiki, ".gitignore")
+	ignoreMissing := statMissing(ignore)
+	gitDir := filepath.Join(p.wiki, ".git")
+	_, hasGit := exec.LookPath("git")
+	gitMissing := hasGit == nil && statMissing(gitDir)
+
+	atCheckpoint()
+
 	created := false
-	if _, err := os.Stat(p.log()); errors.Is(err, fs.ErrNotExist) {
+	if logMissing {
 		log := fmt.Sprintf("# Wiki log\n\n<!-- baseline: %s -->\n\nAppend-only. One `## [YYYY-MM-DD] ingest | <session>#<seq> | <disposition> | <pages>` heading per ingested session; `bough wiki pending` reads them.\n", time.Now().UTC().Format(time.RFC3339))
 		if err := os.WriteFile(p.log(), []byte(log), 0o644); err != nil {
 			return err
 		}
 		created = true
 	}
-	if _, err := os.Stat(p.index()); errors.Is(err, fs.ErrNotExist) {
+	if indexMissing {
 		if err := os.WriteFile(p.index(), []byte("# Wiki index\n\nOne line per page, grouped by `## <topic>` headings (format: see the llm-wiki skill).\n"), 0o644); err != nil {
 			return err
 		}
 		created = true
 	}
-	ignore := filepath.Join(p.wiki, ".gitignore")
-	if _, err := os.Stat(ignore); errors.Is(err, fs.ErrNotExist) {
+	if ignoreMissing {
 		_ = os.WriteFile(ignore, []byte(".ingest.lock\ningest.log\n"), 0o644)
 	}
-	if _, err := os.Stat(filepath.Join(p.wiki, ".git")); errors.Is(err, fs.ErrNotExist) {
-		if _, err := exec.LookPath("git"); err == nil {
-			_ = git(p.wiki, "init", "-q")
-			created = true
-		}
+	if gitMissing {
+		_ = git(p.wiki, "init", "-q")
+		created = true
 	}
 	if created {
 		commit(p, "wiki: initialise")
 	}
 	return nil
+}
+
+func statMissing(path string) bool {
+	_, err := os.Stat(path)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// EnsureWikiForTest runs ensureWiki against wikiDir with atCheckpoint
+// called between its check and its create-if-missing, so a test can pause
+// two real callers there and force a specific interleaving. It exists for
+// go/tests/model/mbt/wiki_install_first_run_vs_serve_tick_test.go, the
+// only place two callers race this function on purpose.
+func EnsureWikiForTest(wikiDir string, atCheckpoint func()) error {
+	return ensureWikiChecked(paths{wiki: wikiDir}, atCheckpoint)
 }
 
 // commit records whatever the ingest changed; a no-op when git is
