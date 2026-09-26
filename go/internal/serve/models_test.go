@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -46,8 +47,15 @@ func TestModelCatalogue(t *testing.T) {
 	withModels := 0
 	for _, p := range provs {
 		pm, _ := p.(map[string]any)
-		if ms, _ := pm["models"].([]any); len(ms) > 0 {
+		ms, _ := pm["models"].([]any)
+		if len(ms) > 0 {
 			withModels++
+		}
+		// Every model the catalogue has, not the newest few: a cap of
+		// fourteen hid the model OpenRouter's config runs.
+		plugin, _ := pm["plugin"].(string)
+		if want := len(models.List(plugin, 0)); len(ms) != want {
+			t.Errorf("%s offers %d models, want all %d", plugin, len(ms), want)
 		}
 	}
 	if withModels == 0 {

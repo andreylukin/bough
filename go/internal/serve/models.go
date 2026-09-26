@@ -14,12 +14,6 @@ import (
 	"github.com/andreylukin/bough/plugins/llm"
 )
 
-// catalogueCap is how many models one provider contributes. The
-// catalogue carries hundreds for some providers, and a list that long
-// is not a choice; newest first, so the cap keeps what someone is
-// likely reaching for. Any id still works when typed.
-const catalogueCap = 14
-
 // ModelInfo is one model as the picker shows it.
 type ModelInfo struct {
 	ID      string   `json:"id"`
@@ -52,7 +46,11 @@ func (a *API) models(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(name, "llm-") {
 			continue
 		}
-		ids := models.List(name, catalogueCap)
+		// Every model, newest first. A cap of the fourteen newest left
+		// OpenRouter's list to whatever launched that week and hid the
+		// model its config runs; the picker folds each provider and
+		// searches instead.
+		ids := models.List(name, 0)
 		if len(ids) == 0 {
 			// A provider with no curated list is still selectable by
 			// name; the UI can offer it with a free-text model.

@@ -3574,7 +3574,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
         <div className="ctl ctl-run" title="Model and effort for the next turn">
           <span className="ctl-label ctl-next">Next turn</span>
           <span className="ctl-label ctl-field">Model</span>
-          <Select label="Next turn model" value={cat ? value : ""} options={models} searchable align="end" disabled={disabled || !cat} currentGroup="Next turn"
+          <Select label="Next turn model" value={cat ? value : ""} options={models} searchable collapsible align="end" disabled={disabled || !cat} currentGroup="Next turn"
                   placeholder={catFailed ? "Unavailable" : cat ? "Choose" : "Loading"}
                   suffix={row.effort}
                   footer={(o) => {
