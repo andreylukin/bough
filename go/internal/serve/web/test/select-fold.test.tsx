@@ -27,16 +27,18 @@ test("SF: every provider opens folded under a heading with its count; the curren
   const { shown, html } = view([]);
   expect(shown.map((o) => o.value)).toEqual(["cur"]);
   expect(html).toContain("claude-opus-5-5");
-  expect(html).not.toContain("gpt-6-astra");
-  expect(html).toMatch(/aria-expanded="false"[^>]*>.*?Anthropic.*?>2</);
-  expect(html).toMatch(/aria-expanded="false"[^>]*>.*?Openrouter.*?>3</);
+  // A folded option stays in the DOM (an empty "group of options" is
+  // itself invalid, axe's aria-required-children) — hidden, not gone.
+  expect(html).toMatch(/hidden=""[^>]*>[^<]*<span class="sel-label">openai\/gpt-6-astra/);
+  expect(html).toMatch(/data-expanded="false"[^>]*>.*?Anthropic.*?>2</);
+  expect(html).toMatch(/data-expanded="false"[^>]*>.*?Openrouter.*?>3</);
 });
 
 test("SF: unfolding one provider shows its models and leaves the others folded", () => {
   const { shown, html } = view(["Openrouter"]);
   expect(shown.map((o) => o.value)).toEqual(["cur", "o1", "o2", "o3"]);
-  expect(html).toContain("gpt-6-astra");
-  expect(html).not.toContain("claude-sonnet-5");
+  expect(html).toMatch(/id="o1"[^>]*>[^<]*<span class="sel-label">openai\/gpt-6-astra/);
+  expect(html).toMatch(/hidden=""[^>]*>[^<]*<span class="sel-label">claude-sonnet-5/);
   // Option ids stay contiguous over what is shown, so aria-activedescendant and ↓↑ agree.
   expect(html).toContain('id="o3"');
   expect(html).not.toContain('id="o4"');
@@ -45,7 +47,7 @@ test("SF: unfolding one provider shows its models and leaves the others folded",
 test("SF: a search (fold off) shows every match with plain headings", () => {
   const { shown, html } = view([], false);
   expect(shown).toHaveLength(all.length);
-  expect(html).not.toContain("aria-expanded=\"false\"");
+  expect(html).not.toContain("data-expanded=\"false\"");
   expect(html).not.toContain("sel-fold");
 });
 

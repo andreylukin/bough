@@ -94,7 +94,17 @@ function grouped(list: Locator): Promise<{ label: string; group: string; selecte
   return list.evaluate((el) => {
     const out: { label: string; group: string; selected: boolean }[] = [];
     let group = '';
+    // A heading and its group's first option sit one level deeper, inside
+    // a wrapping role="group" (select.tsx: a listbox's owned elements
+    // are only option and group, so a bare heading sibling — even one
+    // with no options after it, folded — is invalid); walk into it as if
+    // its children were this level's, same order.
+    const flat: Element[] = [];
     for (const n of Array.from(el.children)) {
+      if (n.getAttribute('role') === 'group') flat.push(...Array.from(n.children));
+      else flat.push(n);
+    }
+    for (const n of flat) {
       if (n.classList.contains('sel-group')) group = n.textContent ?? '';
       else if (n.getAttribute('role') === 'option') {
         out.push({ label: n.querySelector('.sel-label')?.textContent ?? '', group, selected: n.getAttribute('aria-selected') === 'true' });

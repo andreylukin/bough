@@ -233,21 +233,15 @@ export function SelectView({ open, save, shown, all = shown, fold, onFold, at, v
             {(() => { let n = -1; return all.map((o, k) => {
               const head = o.group && o.group !== all[k - 1]?.group;
               const hidden = !!fold?.folded(o.group);
+              const foldable = head && fold?.foldable(o.group);
               const i = hidden ? -1 : ++n;
-              return (
-              <Fragment key={(o.group ?? "") + ":" + o.value}>
-                {head && (fold?.foldable(o.group)
-                  // mousedown would take focus from the search field.
-                  ? <button type="button" className="sel-group sel-fold" aria-expanded={!hidden} tabIndex={-1}
-                            onMouseDown={(e) => e.preventDefault()} onClick={() => onFold?.(o.group!)}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-                      <span>{o.group}</span>
-                      <span className="num sel-count">{fold.count(o.group!)}</span>
-                    </button>
-                  : <div className="sel-group">{o.group}</div>)}
-                {!hidden && <button type="button" role="option" id={optId(i)} tabIndex={-1} aria-selected={o.value === value}
-                        data-at={i === at ? 1 : 0}
+              // A folded option stays in the DOM (an empty "group of
+              // options" is itself invalid, axe's aria-required-children
+              // one level down) but off the page — display:none rather
+              // than not rendering it, since a folded item is still a
+              // real, pickable option once its group opens, not gone.
+              const item = <button type="button" role="option" id={i >= 0 ? optId(i) : undefined} tabIndex={-1} aria-selected={o.value === value}
+                        data-at={i === at ? 1 : 0} hidden={hidden}
                         className={"sel-item" + (i === at ? " sel-on" : "")}
                         onMouseEnter={() => onHover(i)} onClick={() => onPick(o)}>
                   <span className="sel-label">{o.label}</span>
@@ -257,8 +251,27 @@ export function SelectView({ open, save, shown, all = shown, fold, onFold, at, v
                        style={{ visibility: o.value === value ? "visible" : "hidden" }}>
                     <path d="M5 12.5l4.5 4.5L19 7.5" />
                   </svg>
-                </button>}
-              </Fragment>
+                </button>;
+              // A listbox's owned elements are only option and group: the
+              // fold toggle needs role="group" (any content) wrapping it
+              // and its own group's option(s), or it is neither — the
+              // group heading below (unfoldable, or opened) gets the same
+              // wrapper for the same reason.
+              if (!head) return <Fragment key={(o.group ?? "") + ":" + o.value}>{item}</Fragment>;
+              return (
+                <div key={o.group} role="group" aria-label={o.group} className="sel-group-wrap">
+                  {foldable ? (
+                    // mousedown would take focus from the search field.
+                    <div className="sel-group sel-fold" data-expanded={!hidden}
+                         onMouseDown={(e) => e.preventDefault()} onClick={() => onFold?.(o.group!)}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+                      <span>{o.group}</span>
+                      <span className="num sel-count">{fold!.count(o.group!)}</span>
+                    </div>
+                  ) : <div className="sel-group">{o.group}</div>}
+                  {item}
+                </div>
               ); }); })()}
             {shown.length === 0 && <p className="sel-empty">Nothing matches “{q}”</p>}
           </div>

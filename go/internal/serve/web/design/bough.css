@@ -3217,7 +3217,7 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .sel-fold{display:flex;align-items:center;gap:6px;width:100%;min-height:32px;border:0;border-radius:var(--r-sm);background:none;cursor:pointer;text-align:start}
 .sel-fold:hover{color:var(--text-1);background:var(--sel)}
 .sel-fold svg{flex:none;transition:transform .12s}
-.sel-fold[aria-expanded="false"] svg{transform:rotate(-90deg)}
+.sel-fold[data-expanded="false"] svg{transform:rotate(-90deg)}
 .sel-count{margin-inline-start:auto;font-weight:500;letter-spacing:0;font-variant-numeric:tabular-nums}
 .sel-item{min-height:32px;padding:0 8px;border-radius:var(--r-sm);font-size:var(--fs-md);color:var(--text-1)}
 .sel-on{background:var(--sel);box-shadow:none}
