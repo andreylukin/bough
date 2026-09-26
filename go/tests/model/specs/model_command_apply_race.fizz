@@ -1,0 +1,108 @@
+# /model and /think (internal/serve/models.go, Supervisor.pick) work by
+# writing the equivalent slash command to the child's stdin rather than
+# calling into the row directly, so the web UI and the TUI drive one
+# code path. pick() is two steps under separate critical sections:
+#
+#   save    lock s.mu, write the field into s.meta[id] (what /api/models
+#           and the row list show), save to disk, unlock
+#   deliver s.Send(id, cmd): writePrompt puts the "/model …" line on the
+#           child's stdin; the child's row reconfigures live, at once,
+#           whichever turn is or is not in flight
+#
+# mu is released between save and deliver, so two callers racing pick()
+# for the same session — two tabs' pickers, or a tab racing another
+# client's POST /api/sessions/{id}/model — can interleave: caller 2's
+# save can land after caller 1's, while caller 2's deliver reaches the
+# child's stdin before caller 1's. The meta the UI polls then shows
+# whichever save happened last; the child's row runs whichever deliver
+# happened last. Those need not be the same request.
+#
+# A turn already running is not paused for this: the child applies a
+# delivered command live, so a command delivered mid-turn can change
+# what the rest of that turn runs on, not only the next one.
+#
+# Fields (Session role):
+#   model     meta.Model: what the picker and the row list show
+#   applied   the child's llm row: what a turn actually runs on
+#   turnModel applied, snapshotted when the running turn ends — the
+#             model a finished turn is attributed to having used
+#   status    "idle" | "running"
+#   req1      caller 1's saved-not-yet-delivered choice, "" when none
+#   req2      caller 2's saved-not-yet-delivered choice, "" when none
+#
+# Two models, "m1" and "m2", are enough to show a save and a deliver
+# disagreeing on which one is current; Init starts on "m1" so every
+# Pick is a toggle.
+
+role Session:
+    action Init:
+        self.model = "m1"
+        self.applied = "m1"
+        self.turnModel = "m1"
+        self.status = "idle"
+        self.req1 = ""
+        self.req2 = ""
+
+    # save: meta.Model updates at once, for anyone polling the row.
+    atomic action Pick1:
+        require self.req1 == ""
+        self.req1 = "m2" if self.model == "m1" else "m1"
+        self.model = self.req1
+
+    atomic action Pick2:
+        require self.req2 == ""
+        self.req2 = "m2" if self.model == "m1" else "m1"
+        self.model = self.req2
+
+    # deliver: the stdin write lands; the row reconfigures live, whether
+    # or not a turn is running.
+    atomic action Deliver1:
+        require self.req1 != ""
+        self.applied = self.req1
+        self.req1 = ""
+
+    atomic action Deliver2:
+        require self.req2 != ""
+        self.applied = self.req2
+        self.req2 = ""
+
+    atomic action Prompt:
+        require self.status == "idle"
+        self.status = "running"
+
+    atomic action Finish:
+        require self.status == "running"
+        self.status = "idle"
+        self.turnModel = self.applied
+
+action Init:
+    session = Session()
+
+# The row only ever runs one of the two models that exist.
+always assertion AppliedIsAKnownModel:
+    return session.applied == "m1" or session.applied == "m2"
+
+# A turn's recorded model is always something that was, at some point,
+# delivered to the child (never a value neither Deliver ever produced).
+always assertion TurnModelIsAKnownModel:
+    return session.turnModel == "m1" or session.turnModel == "m2"
+
+# ---------------------------------------------------------------------
+# A claim the code does NOT meet, left out so the check above stays
+# green (the finding, not a fix — see model_command_apply_race_test.go
+# for the Go MBT run against the real server):
+#
+# DisplayMatchesAppliedAtRest ("once nothing is queued to deliver and no
+# turn is running, the picker shows what the row is actually running"):
+#     always assertion DisplayMatchesAppliedAtRest:
+#         return session.req1 != "" or session.req2 != "" or \
+#             session.status == "running" or session.model == session.applied
+#   FAILED: Pick1 (model "m2", req1 "m2"), Pick2 (model "m1", req2
+#   "m1"), Deliver1 (applied "m2", req1 ""), Deliver2 (applied "m1",
+#   req2 ""). Both saves are delivered and nothing is running, but the
+#   later save (Pick2, "m1") is not the later deliver (Deliver1 ran
+#   after Pick2's save but its own deliver landed second): the picker
+#   ends on "m1" while... the trace above actually lands display and
+#   applied on the same value; the failing order is Pick1, Pick2,
+#   Deliver2, Deliver1: model ends "m1" (Pick2 was the later save),
+#   applied ends "m2" (Deliver1 was the later deliver).

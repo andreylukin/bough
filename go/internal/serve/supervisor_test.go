@@ -1209,7 +1209,7 @@ func TestSupervisorSetModelNamesTheProvider(t *testing.T) {
 	f := newFixture(t)
 	f.seed(t, "sess-model")
 
-	if err := f.sup.SetModel("sess-model", "llm-google", "google/gemini-3.8-flash"); err != nil {
+	if err := f.sup.SetModel("sess-model", "llm-google", "google/gemini-3.8-flash", ""); err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
 	waitFor(t, "the /model command to reach the child", func() bool {
