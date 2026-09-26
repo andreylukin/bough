@@ -1,0 +1,71 @@
+---
+deadlock_detection: false
+---
+
+# POST /api/sessions/{id}/jobs/{job}/kill (changes.go killJob) racing the
+# job exiting on its own, session stop, and child restart.
+#
+# killJob only sends "/jobkill N" to the child (sup.Send); a dead child
+# is a 409. The child's Jobs.jobKill on a finished job answers "already
+# finished" and writes nothing. A job's finished entry is written once:
+# by the job's exit/kill in the child, or, when the child died first, by
+# endOrphanJobs at reap (stopped:true), which skips jobs already finished.
+#
+# Fields: child alive | gone; job running | exited | killed | stopped;
+# finished = typed finished entries written for the job; kill_ok = last
+# kill answered 200 (else 409 or none yet); kills = requests made.
+
+MAX_KILLS = 2
+
+role Job:
+    action Init:
+        self.child = "alive"
+        self.job = "running"
+        self.finished = 0
+        self.kill_reply = "none"
+        self.kills = 0
+        self.reaped = False
+
+    # The person's Stop button or the model's own exit.
+    atomic action KillRequest:
+        require self.kills < MAX_KILLS
+        self.kills = self.kills + 1
+        if self.child == "gone":
+            self.kill_reply = "409"
+        else:
+            self.kill_reply = "200"
+            if self.job == "running":
+                self.job = "killed"
+                self.finished = self.finished + 1
+
+    atomic action JobExits:
+        require self.child == "alive" and self.job == "running"
+        self.job = "exited"
+        self.finished = self.finished + 1
+
+    # Session stop / orb restart: the child dies; the reap ends jobs the
+    # file still shows running.
+    atomic action ChildDies:
+        require self.child == "alive"
+        self.child = "gone"
+        if self.job == "running":
+            self.job = "stopped"
+            self.finished = self.finished + 1
+        self.reaped = True
+
+action Init:
+    j = Job()
+
+always assertion SettlesOnce:
+    return j.finished <= 1
+
+always assertion FinishedMatchesJob:
+    if j.job == "running":
+        return j.finished == 0
+    return j.finished == 1
+
+always assertion NoRunningInDeadChild:
+    return not (j.child == "gone" and j.job == "running")
+
+always assertion KillOnFinishedIs200OrDead:
+    return j.kill_reply != "200" or j.child == "alive" or j.kills > 0
