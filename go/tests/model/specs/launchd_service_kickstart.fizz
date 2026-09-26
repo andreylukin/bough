@@ -1,0 +1,62 @@
+# The serve daemon under launchd versus a manual start/stop
+# (go/cmd/bough/launchd.go, serve.go). agent is the LaunchAgent (plist
+# loaded, KeepAlive); proc is the supervisor process; pidfile is the
+# serve pidfile. A supervisor that is stopping keeps its pidfile until it
+# has reaped its children, so a start meanwhile is refused rather than
+# running a second supervisor. Stop unloads the agent first, so launchd
+# cannot respawn what the shell just stopped.
+
+role Service:
+    action Init:
+        self.agent = "none"
+        self.proc = "down"
+        self.pidfile = False
+
+    # `bough serve` with no agent: detached daemon; with one, install.
+    # A second start while a pidfile exists is a no-op.
+    atomic action Start:
+        require not self.pidfile
+        self.proc = "up"
+        self.pidfile = True
+        if self.agent == "none":
+            self.agent = "loaded"
+
+    atomic action StartAgain:
+        require self.pidfile
+
+    # launchctl kickstart -k: kills the running job; launchd respawns it
+    # only once the old one has released the pidfile (Reap, then Respawn).
+    atomic action Kickstart:
+        require self.agent == "loaded" and self.proc == "up"
+        self.proc = "stopping"
+
+    atomic action Crash:
+        require self.proc == "up"
+        self.proc = "down"
+        self.pidfile = False
+
+    atomic action Stop:
+        require self.proc == "up" or self.agent == "loaded"
+        self.agent = "none"
+        if self.proc == "up":
+            self.proc = "stopping"
+
+    atomic action Reap:
+        require self.proc == "stopping"
+        self.proc = "down"
+        self.pidfile = False
+
+    atomic action Respawn:
+        require self.agent == "loaded" and self.proc == "down"
+        self.proc = "up"
+        self.pidfile = True
+
+action Init:
+    svc = Service()
+
+always assertion PidfileMatchesProc:
+    return svc.pidfile == (svc.proc != "down")
+
+
+always assertion NoLoadedAgentWithoutStart:
+    return svc.agent == "none" or svc.proc != "stopping" or svc.pidfile
