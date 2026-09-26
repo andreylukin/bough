@@ -1,0 +1,70 @@
+# draft_ask_key_split_race (go/tests/model/README.md): the thread
+# composer's two localStorage keys for one session — draftKey (the
+# free text) and askKey (which ask that text answers). askKey is only
+# updated while the draft is blank (app.tsx ~4181: `if (blank)
+# setDraftAsk(row.ask?.id ?? "")`); once you start typing, it freezes
+# at whatever ask was open then, so the binding can outlive that ask
+# being answered elsewhere or expiring server-side, and a *different*
+# ask can open before the draft is sent or cleared. Sending must be
+# gated on the exact ask the draft was frozen against, not merely on
+# some ask being open.
+#
+# State lives in a role because fizzbee-mbt compares state per role.
+# askSeq stands in for an ask's true identity, the way a real ask's
+# (id, seq) pair does (`askKeyOf` in app.tsx already needs both to
+# tell two answered asks apart; the composer's own draft binding must
+# too) — a later ask can reuse the same displayed id, so only an exact
+# identity match may let a frozen draft go out as an answer.
+
+role Draft:
+    action Init:
+        self.askOpen = False
+        self.askSeq = 0        # 0 = no ask open; else the open ask's identity
+        self.hasText = False
+        self.boundSeq = 0      # persisted askKey: which ask the draft answers, frozen while typing
+
+    atomic action Ask:
+        require not self.askOpen
+        self.askOpen = True
+        self.askSeq = self.askSeq + 1
+        if not self.hasText:
+            self.boundSeq = self.askSeq
+
+    # Answered from another tab, or expired server-side.
+    atomic action AskResolved:
+        require self.askOpen
+        self.askOpen = False
+        self.askSeq = 0
+        if not self.hasText:
+            self.boundSeq = 0
+
+    atomic action Type:
+        require not self.hasText
+        self.hasText = True
+
+    atomic action Clear:
+        require self.hasText
+        self.hasText = False
+        if self.askOpen:
+            self.boundSeq = self.askSeq
+        else:
+            self.boundSeq = 0
+
+    atomic action Send:
+        require self.hasText
+        require self.askOpen
+        require self.boundSeq == self.askSeq
+        self.hasText = False
+        self.askOpen = False
+        self.askSeq = 0
+        self.boundSeq = 0
+
+action Init:
+    draft = Draft()
+
+# A blank composer always tracks whatever ask is (or is not) live —
+# staleness can only start once typing freezes the binding, and only
+# Send's own guard (boundSeq == askSeq, enforced by its require) may
+# ever clear a frozen, stale binding.
+always assertion BlankDraftTracksLiveAsk:
+    return draft.hasText or draft.boundSeq == draft.askSeq
