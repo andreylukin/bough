@@ -1,0 +1,81 @@
+# POST /api/sessions/{id}/files (go/internal/serve/attachments.go uploadFile)
+# writes into ~/.bough/scratch/<id>/ while a turn runs or the session is
+# archived. Uploads never depend on turn state: the workspace stays
+# consistent, a name collision keeps both files, a path-escaping name is
+# flattened to its base inside the scratch dir, and a failed write must
+# not leave a partial file or a reference to it.
+#
+#   turn     "idle" | "running"
+#   archived the session is archived (the handler only needs it known)
+#   files    files in the scratch dir (0..2)
+#   ref      what the composer holds: "none", "valid" (points at a file on
+#            disk), "dangling" (only a bug: points at nothing)
+#   partial  a half-written file is left in the dir (only a bug)
+#   escaped  a file landed outside the scratch dir (only a bug)
+#
+# Finding to check against code: uploadFile opens the file O_EXCL and, on a
+# write error, returns 500 without removing it, so partial can become True.
+
+role Workspace:
+    action Init:
+        self.turn = "idle"
+        self.archived = False
+        self.files = 0
+        self.ref = "none"
+        self.partial = False
+        self.escaped = False
+
+    atomic action Start:
+        require self.turn == "idle" and not self.archived
+        self.turn = "running"
+
+    atomic fair action Finish:
+        require self.turn == "running"
+        self.turn = "idle"
+
+    atomic action Archive:
+        require not self.archived
+        self.archived = True
+        self.turn = "idle"
+
+    atomic action Unarchive:
+        require self.archived
+        self.archived = False
+
+    # A fresh or colliding name: a new file, the earlier one kept.
+    atomic action Upload:
+        require self.files < 2 and self.ref == "none"
+        self.files = self.files + 1
+        self.ref = "valid"
+
+    # ../../x or an absolute name: flattened to its base, inside the dir.
+    atomic action UploadEscape:
+        require self.files < 2 and self.ref == "none"
+        self.files = self.files + 1
+        self.ref = "valid"
+
+    # Write fails (disk full): 500, nothing kept, no reference.
+    atomic action UploadFail:
+        require self.ref == "none"
+
+    atomic action Detach:
+        require self.ref == "valid"
+        self.ref = "none"
+
+action Init:
+    ws = Workspace()
+
+always assertion NoDanglingRef:
+    return ws.ref != "dangling"
+
+always assertion NoPartialFile:
+    return not ws.partial
+
+always assertion NoEscape:
+    return not ws.escaped
+
+always assertion RefNeedsFile:
+    return ws.ref == "none" or ws.files > 0
+
+always assertion ArchivedNotRunning:
+    return not (ws.archived and ws.turn == "running")
