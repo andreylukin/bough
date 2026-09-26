@@ -1,0 +1,155 @@
+# Two orbs compete for the reaper's attention the way the fd-exhaustion
+# incident did (memory: bough-laptop-orb-fd-exhaustion — 22 orb VMs ate
+# 96% of kern.maxfiles): several sessions idle at once while one of them
+# is in the middle of ensureRunningLocked's slow path, restarting its own
+# container for a fresh command. reapIdleOrbs (internal/serve/reaper.go)
+# and the child's own restart (internal/orb/restart.go via
+# ensureRunningLocked) take no lock in common; the only thing that keeps
+# the reaper off a container the restart path still references is the
+# per-orb status/owner check in reapIdleOrbs' switch.
+#
+# This is not a "raise urgency near the fd limit" spec: reapIdleOrbs
+# reads no host fd/VM count at all. It ticks on a fixed timer
+# (reapEvery) and treats every idle orb the same regardless of how close
+# the host is to its limit — the only priority the incident's fix
+# (BOUGH_ORB_IDLE + the reaper) gives is per-orb idle time. So the
+# question this spec checks is narrower and real: with several orbs
+# idle in the same tick and one of them mid-restart, does the reaper's
+# per-orb guard actually keep its hands off that one, in every
+# interleaving — including the case where a session goes idle, then
+# starts restarting before the reaper's fair action gets scheduled to
+# it, and the reverse order too?
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - reapIdleOrbs' switch has no owner/container guard for file in
+#     ("running", "failed") — see orb_idle_reaper_vs_resume_race.fizz.
+#     Its guard exists only for ("starting", "building"): skip unless
+#     the owner is dead AND the container is up (an orphaned first
+#     start or restart). A restart with a live owner is excluded by
+#     that same check; nothing separate exists for "restart" as a
+#     concept — the code does not distinguish a first start from a
+#     restart, only "does this session's own process still own it".
+#
+# Fields (role Orb):
+#   file       state.json status: starting | running | failed | stopped
+#   ctr        the real container: running | stopped
+#   owner      a child process is alive for this session
+#   restarting ensureRunningLocked's slow path is in flight for this
+#              orb: it has written "starting" and is waiting on the
+#              runtime to bring the container back
+#   idle       no history and no state.json write for BOUGH_ORB_IDLE
+#   reapedLiveRestart tripwire: latches True if a reap action ever fires
+#              while restarting and owner were both True (should never
+#              happen — the assertion below is what proves it)
+
+role Orb:
+    action Init:
+        self.file = "running"
+        self.ctr = "running"
+        self.owner = True
+        self.restarting = False
+        self.idle = False
+        self.reapedLiveRestart = False
+
+    # Time passes with nothing written. reapIdleOrbs' idle clock applies
+    # to "starting" too (an owned restart that has hung, or an orphan
+    # left over from one), not just running/failed.
+    atomic fair action GoIdle:
+        require not self.idle and self.file in ("running", "failed", "starting")
+        self.idle = True
+
+    # The owning child exits cleanly (archive, idle child timeout) while
+    # NOT mid-restart: it stops its own, owned, up container as it goes,
+    # same as orb_failure_reaper's OwnerExits.
+    atomic action OwnerExits:
+        require self.owner and not self.restarting
+        self.owner = False
+        if self.ctr == "running":
+            self.ctr = "stopped"
+
+    # The child crashes (killed, panics) WHILE mid-restart: the runtime
+    # call it was waiting on is abandoned, state.json is left at
+    # "starting" with nobody left to finish it — exactly the orphan the
+    # reaper's owner/container guard exists for.
+    atomic action OwnerCrashMidRestart:
+        require self.owner and self.restarting
+        self.owner = False
+
+    # ensureRunningLocked's slow path: a command needs the container
+    # back. Runs regardless of what the reaper is doing to the same
+    # file right now — there is no lock in common.
+    atomic action StartRestart:
+        require self.ctr != "running" and not self.restarting
+        self.owner = True
+        self.restarting = True
+        self.file = "starting"
+        self.idle = False
+
+    atomic fair action RestartOk:
+        require self.restarting and self.owner
+        self.restarting = False
+        self.ctr = "running"
+        self.file = "running"
+
+    atomic fair action RestartFails:
+        require self.restarting and self.owner
+        self.restarting = False
+        self.file = "failed"
+
+    # reapIdleOrbs' running/failed branch: no owner or container check
+    # at all. A restart in flight is never in "running" or "failed" (it
+    # holds "starting" until it settles), so this can never race a live
+    # restart directly — it can only race the moment right after
+    # StartRestart claims the file, which the require below already
+    # rules out (file left "running"/"failed" the instant restarting
+    # goes True).
+    atomic fair<strong> action ReapRunningOrFailed:
+        require self.idle and self.file in ("running", "failed")
+        if self.restarting and self.owner:
+            self.reapedLiveRestart = True
+        self.file = "stopped"
+        self.ctr = "stopped"
+        self.owner = False
+        self.idle = False
+
+    # reapIdleOrbs' starting/building branch: reaps only an orphan —
+    # owner already dead. A live restart (owner still True) never
+    # satisfies this, in any interleaving fizz explores.
+    atomic fair<strong> action ReapOrphanedStart:
+        require self.idle and self.file == "starting" and not self.owner
+        if self.restarting and self.owner:
+            self.reapedLiveRestart = True
+        self.file = "stopped"
+        self.ctr = "stopped"
+        self.restarting = False
+
+action Init:
+    orb1 = Orb()
+    orb2 = Orb()
+
+# The core claim: the reaper never stops the container of an orb whose
+# own restart is still in flight and still owned. Checked on both
+# instances so a fix or a regression scoped to one role index would
+# still be caught. reapedLiveRestart latches True the instant either
+# reap action ever fires against a live, owned restart — it is a
+# tripwire, not a snapshot of the current state.
+always assertion NeverReapsLiveRestart:
+    return not orb1.reapedLiveRestart and not orb2.reapedLiveRestart
+
+def orphaned_start(o):
+    return o.file == "starting" and not o.owner
+
+# A restart never leaves the file claiming "starting" once its owner is
+# gone and it is not eventually cleaned up: an orphaned restart is
+# eventually reaped, not left as a phantom "starting" forever burning a
+# VM (the incident this spec is named for).
+always eventually assertion OrphanedRestartEventuallyReaped:
+    return not orphaned_start(orb1) and not orphaned_start(orb2)
+
+# NOT modelled as an "eventually reaped" assertion: a session that keeps
+# restarting and failing forever (Command, StartFails, Command, ...) is
+# always idle-and-failed again the instant it settles, so it would never
+# satisfy such a claim — that is the retry loop's own doing, not the
+# reaper failing to act on it, and orb_idle_reaper_vs_resume_race.fizz's
+# IdleEventuallyHandled already covers the single-orb version of "an
+# idle running/failed orb gets picked up" without that confound.
