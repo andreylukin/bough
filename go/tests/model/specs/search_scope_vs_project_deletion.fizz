@@ -1,0 +1,83 @@
+# Full-text search and a project vanishing underneath a shown result.
+# fulltext_search_surfaces.fizz models the search/debounce/abort machinery
+# in general; this flow is the part it prunes: a hit's project label is
+# resolved from history.Repo at the moment the query answers (web/src
+# app.tsx useFullText, web/src/palette.tsx useWikiHits/meta), and nothing
+# re-resolves it while the result sits on screen. Deleting the project
+# the hit belongs to (internal/serve/supervisor.go DeleteProject) can run
+# before the query starts, while it is in flight, or after the result is
+# already shown; in every case the session itself is untouched (deleting
+# a project only unassigns its sessions — project_delete_with_project_
+# sessions.fizz), so a click on a stale hit must still open the session,
+# never 500 or throw on the project it no longer resolves to.
+#
+# Mapped fields:
+#   query    the sidebar/palette search: "idle" | "loading" | "shown".
+#   label    the project label the shown hit carries, frozen at the
+#            moment the query answered: "" | "alpha" | "gone" (the
+#            server itself found no project for the session, e.g. the
+#            query answered after the delete already unassigned it).
+#   disk     the project's own state: "ok" | "none" (deleted) |
+#            "recreated" (the slug reused by a new project).
+#   opened   the last click on the shown hit: "" | "session".
+#
+# Pruned: the query text, debounce and abort are fulltext_search_
+# surfaces's; here a query is one opaque round trip. Only one session and
+# one project slug: two hits or two projects add no new interaction with
+# the delete.
+
+role Search:
+    action Init:
+        self.query = "idle"
+        self.label = ""
+        self.disk = "ok"
+        self.opened = ""
+
+    atomic action Ask:
+        require self.query == "idle"
+        self.query = "loading"
+
+    # The label is resolved from the project as it is right now — so an
+    # answer that lands after the delete already shows "gone", never a
+    # slug that does not exist.
+    atomic action Answer:
+        require self.query == "loading"
+        self.query = "shown"
+        self.label = "alpha" if self.disk == "ok" else "gone"
+
+    # New query typed over a shown or loading result: the old label is
+    # dropped, never carried into the next answer.
+    atomic action Reask:
+        require self.query != "idle"
+        self.query = "loading"
+        self.label = ""
+
+    # DeleteProject: nothing about the search gates it, and it never
+    # touches the session the hit points at.
+    atomic action DeleteProject:
+        require self.disk == "ok"
+        self.disk = "none"
+
+    atomic action RecreateProject:
+        require self.disk == "none"
+        self.disk = "recreated"
+
+    # Click-through on the shown hit. The session always opens: deleting
+    # or recreating the project never removes it, and a stale label is a
+    # display gap, not a lookup that can miss and crash.
+    atomic action OpenHit:
+        require self.query == "shown"
+        self.opened = "session"
+
+action Init:
+    search = Search()
+
+# A label is shown only once a query has actually answered.
+always assertion LabelOnlyWhenShown:
+    return search.query == "shown" or search.label == ""
+
+# The label the hit carries never names a project that was never there:
+# it is either the live slug or "gone", nothing else.
+always assertion LabelIsSlugOrGone:
+    return search.label in ["", "alpha", "gone"]
+
