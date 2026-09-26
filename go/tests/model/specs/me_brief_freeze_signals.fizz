@@ -1,0 +1,98 @@
+# Daily me brief generation (go/plugins/wiki/brief.go, check.go).
+# briefDue gates the tick on a profile, working hours and age; a brief
+# run rewrites today's file only; NextDay freezes it (briefs/ is a
+# diary); signals.json is written by the same run and Me() shows it only
+# while it is valid JSON, so a torn concurrent write reads as no signals;
+# Check flags a brief whose citations point at nothing.
+#
+#   profile  topics/me/profile.md exists
+#   today    none | fresh | aged: today's brief (aged = older than briefEvery)
+#   past     an earlier day's brief exists, frozen
+#   job      idle | running: the run holding .ingest.lock
+#   signals  none | valid | torn: signals.json as Me() reads it
+#   cites    ok | bad: what Check finds in today's brief
+
+role Diary:
+    action Init:
+        self.profile = False
+        self.today = "none"
+        self.past = False
+        self.job = "idle"
+        self.signals = "none"
+        self.cites = "ok"
+
+    atomic action WriteProfile:
+        require not self.profile
+        self.profile = True
+
+    # The tick (or Refresh): needs a profile and no run; the tick also
+    # needs today missing or aged, Refresh does not, so Refresh is the
+    # one that may rewrite a fresh brief.
+    atomic action Start:
+        require self.profile and self.job == "idle" and self.today != "fresh"
+        self.job = "running"
+
+    atomic action Refresh:
+        require self.profile and self.job == "idle"
+        self.job = "running"
+
+    # The run is mid-write of signals.json while it is still running.
+    atomic action TearSignals:
+        require self.job == "running" and self.signals != "torn"
+        self.signals = "torn"
+
+    atomic action Finish:
+        require self.job == "running"
+        self.job = "idle"
+        self.today = "fresh"
+        self.signals = "valid"
+        self.cites = "ok"
+
+    # Finished with a brief that cites something missing; Check finds it.
+    atomic action FinishBadCite:
+        require self.job == "running"
+        self.job = "idle"
+        self.today = "fresh"
+        self.signals = "valid"
+        self.cites = "bad"
+
+    atomic action Fail:
+        require self.job == "running"
+        self.job = "idle"
+
+    atomic action Age:
+        require self.today == "fresh" and self.job == "idle"
+        self.today = "aged"
+
+    # Midnight: today's file is never rewritten again.
+    atomic action NextDay:
+        require self.today != "none" and self.job == "idle"
+        self.today = "none"
+        self.past = True
+        self.cites = "ok"
+
+action Init:
+    diary = Diary()
+
+always assertion NoRunWithoutProfile:
+    return diary.profile or (diary.job == "idle" and diary.today == "none")
+
+# A run that fails mid-write leaves signals.json torn (found by fizz);
+# Me() then shows none until the next run. Signals need a profile.
+always assertion SignalsNeedProfile:
+    return diary.signals == "none" or diary.profile
+
+always assertion BadCitesNeedABrief:
+    return diary.cites == "ok" or diary.today != "none"
+
+transition assertion PastFrozen(before, after):
+    return after.diary.past or not before.diary.past
+
+# Only a finishing run makes or rewrites today's brief.
+transition assertion TodayOnlyByRun(before, after):
+    if after.diary.today == "fresh" and before.diary.today != "fresh":
+        return before.diary.job == "running" and after.diary.job == "idle"
+    return True
+
+always eventually assertion RunEnds:
+    return diary.job == "idle"
