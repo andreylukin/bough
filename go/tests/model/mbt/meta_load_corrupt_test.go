@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	fmbt "github.com/fizzbee-io/fizzbee/mbt/lib/go"
 
@@ -241,6 +242,16 @@ func (a *mlcAdapter) tokenAbsent() bool {
 func (a *mlcAdapter) launch(action, bin string) error {
 	mark := len(a.s.Output())
 	err := a.s.Resume(bin)
+	if err == nil {
+		// /api/health can answer before the listening line has come
+		// through serve's stderr pipe into Output. Recorded without it,
+		// the journal read this start as a refusal (and the next start
+		// would have got the line): seen on CI.
+		deadline := time.Now().Add(actionTimeout)
+		for !strings.Contains(a.s.Output()[mark:], "bough serve: http://") && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	log := a.s.Output()[mark:]
 	switch {
 	case err == nil:
