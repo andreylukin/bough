@@ -145,9 +145,34 @@ func newOesEnv(t *testing.T) *oesEnv {
 			t.Fatal(err)
 		}
 	}
-	e.rt = &oesRuntime{Fake: container.NewFake()}
-	e.t.Cleanup(func() { e.rt.release(fmt.Errorf("test over")) })
 	return e
+}
+
+// closeHandleUnblocking runs h.close in the background while releasing
+// any oesRuntime hold left on rt: a walk that ends mid-restart (its
+// trace stopped before CloseTurn/ApplySwap released it) leaves the
+// container Start held, which would otherwise block h.close's wait for
+// its restarter to stop forever. rt is this walk's own runtime (a fresh
+// one per Init, not shared across walks: a single hold field can only
+// remember one pending Start, and two walks sharing it would let a
+// later walk's arm silently orphan an earlier walk's still-held one).
+func closeHandleUnblocking(h *handle, rt *oesRuntime) {
+	done := make(chan struct{})
+	go func() { h.close(); close(done) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		rt.release(fmt.Errorf("test over"))
+		if time.Now().After(deadline) {
+			<-done
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 func (e *oesEnv) pass(enabled bool) bool {
@@ -168,8 +193,10 @@ func (e *oesEnv) writeSecret(t *testing.T, n int) {
 	}
 }
 
-// Init opens a fresh session's orb on the shared fake runtime, at
-// hostSecret 0, no restart in flight, no turn open.
+// Init opens a fresh session's orb on a fresh fake runtime, at
+// hostSecret 0, no restart in flight, no turn open. Each walk gets its
+// own runtime (not one shared across the whole test): see
+// closeHandleUnblocking for why sharing one is unsafe.
 func (e *oesEnv) Init() error {
 	e.n++
 	e.slug = fmt.Sprintf("oes%04d", e.n)
@@ -177,6 +204,7 @@ func (e *oesEnv) Init() error {
 	e.gateOff = false
 	e.hostSecret, e.pendingSecret, e.lastInjected = 0, 0, 0
 	e.restartPending = false
+	e.rt = &oesRuntime{Fake: container.NewFake()}
 	if _, err := projectdef.CreateEmpty(e.home, e.slug, ""); err != nil {
 		return err
 	}
@@ -205,7 +233,8 @@ func (e *oesEnv) Init() error {
 	}
 	e.h.rs.setNotify(func(string) {})
 	e.h.rs.start()
-	e.t.Cleanup(e.h.close)
+	h, rt := e.h, e.rt
+	e.t.Cleanup(func() { closeHandleUnblocking(h, rt) })
 	e.rt.arm(container.OrbName(e.session))
 	return nil
 }
