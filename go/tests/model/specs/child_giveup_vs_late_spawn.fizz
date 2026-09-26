@@ -1,0 +1,89 @@
+---
+# A settled request (answered with no give-up, or withdrawn and retried)
+# is where a walk ends, not a deadlock.
+deadlock_detection: false
+---
+
+# A client that gives up on a spawn (serveTimeout, or Esc cancelling the
+# turn) while CreateChild is still in flight (children.go, children_api.go
+# holdCreate/createChild): the give-up and the async spawn (launch, an
+# orb's container start) race each other. Given up before Make ever runs,
+# there is nothing to withdraw. Given up after Make but before serve's
+# post-make Check, WithdrawChild must undo the reservation. The race this
+# flow is named for is Boot completing AFTER Check already withdrew: the
+# spawn was already told to die, but its own async completion runs on its
+# own schedule and must still end up dead, not live under an id the
+# parent was told failed — left alive, a retry starts a second child
+# while the orphan keeps running and later reports a finish nobody
+# expected (children_giveup_test.go).
+
+role Flow:
+    action Init:
+        self.given_up = False   # serveTimeout fired, or Esc cancelled
+        self.made = False       # CreateChild reserved the slot (s.kids/s.running)
+        self.checked = False    # serve rechecked ctx.Err() after Make, before answering
+        self.booted = False     # the async spawn (exec, orb start) finished
+        self.withdrawn = False  # WithdrawChild ran for this id
+        self.live = False       # a process is actually running under this id
+        self.retried = False
+        self.retry_live = False
+
+    # user: the client gives up, at any point before Check has run.
+    atomic action GiveUp:
+        require not self.given_up and not self.checked
+        self.given_up = True
+
+    # system: CreateChild reserves the slot and starts the async spawn.
+    atomic fair action Make:
+        require not self.made
+        self.made = True
+
+    # system: the async part of the spawn (process exec, orb container
+    # start) finishes on its own schedule, independent of give-up or of
+    # whether serve has rechecked yet.
+    atomic fair action Boot:
+        require self.made and not self.booted and not self.withdrawn
+        self.booted = True
+        self.live = True
+
+    # system: serve rechecks ctx.Err() right after Make, before
+    # answering. A give-up here withdraws the reservation and kills
+    # whatever already booted.
+    atomic fair action Check:
+        require self.made and not self.checked
+        self.checked = True
+        if self.given_up:
+            self.withdrawn = True
+            self.live = False
+
+    # system: the race this flow is named for — Boot finishes AFTER
+    # Check already withdrew. Correct behaviour tears the late arrival
+    # down too, so it is never left running.
+    atomic fair action LateBoot:
+        require self.made and not self.booted and self.withdrawn
+        self.booted = True
+        self.live = False
+
+    # user: retries once told the create failed.
+    atomic action Retry:
+        require self.checked and self.withdrawn and not self.retried
+        self.retried = True
+        self.retry_live = True
+
+action Init:
+    flow = Flow()
+
+# A withdrawn id never has a process running under it, whether the spawn
+# finished before the withdraw or arrives late.
+always assertion NeverLiveAfterWithdraw:
+    return not (flow.withdrawn and flow.live)
+
+# A retry's own child and a straggler from the abandoned id are never
+# both running at once.
+always assertion AtMostOneLiveChild:
+    return not (flow.retry_live and flow.live)
+
+# Every spawn that ever starts eventually settles as either answered to
+# the client that asked for it, or withdrawn — never forgotten mid-air.
+always eventually assertion SpawnSettles:
+    return not flow.made or flow.checked
