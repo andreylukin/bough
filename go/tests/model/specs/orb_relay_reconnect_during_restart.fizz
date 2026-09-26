@@ -1,0 +1,97 @@
+# orb_relay_reconnect_during_restart (go/tests/model/README.md): a
+# host-side call into the orb — the MCP/browser relay reaching the guest
+# through plugins/orb's handle (go/plugins/orb/handle.go's Command) —
+# racing a restart's swap (go/plugins/orb/restart.go's once, calling
+# internal/orb/restart.go's Orb.Replace).
+#
+# The handle resolves the live orb per call (h.current), which blocks
+# while a swap's gate is closed, then hands it to o.Command. Replace
+# marks the old orb retired in the same critical section that stops its
+# container, so an exec whose Command call lands after that sees
+# ErrReplaced at once and is never actually run: handle.Command retries
+# through the orb now behind the handle exactly once (the `try == 0`
+# branch), then gives up and returns the failure. Neither the gate nor
+# ErrReplaced protects a call already past that point — its exec.Cmd is
+# a live subprocess against a container the swap is about to stop and
+# maybe remove out from under it, and nothing in restart.go's waitIdle
+# knows to wait for it: relayed calls are not turn events (turnKinds),
+# so a swap runs while one is in flight and it dies with the container,
+# the same as a background job (restart.go's noticeText: "Background
+# job(s) stopped with the old container").
+#
+# gen is the container generation a swap bumps; at is the generation a
+# call captured when handle.current() handed it an orb. A call that
+# reaches "executing" is a live subprocess, and a swap that happens then
+# kills it outright (failed_killed) rather than retrying it: retrying
+# would replay a relayed `bough mcp`/`bough browser` command, which is
+# not idempotent from the guest's side.
+#
+# MAX_GEN bounds how many swaps the graph explores: past two, every path
+# the extra swaps could add is one Swap already covers (gen only ever
+# matters relative to at), so a third one only inflates the graph.
+
+MAX_GEN = 3
+
+role Relay:
+    action Init:
+        self.gen = 1
+        self.call = "idle"
+        self.at = 0
+        self.retriedOnce = False
+
+    # handle.current(): blocked while a swap's gate is closed (require
+    # not self.gate would be a second field; a swap here is atomic and
+    # instantaneous, so nothing is ever caught mid-gate — see Swap).
+    atomic action Resolve:
+        require self.call == "idle" or self.call == "replaced_once"
+        if self.call == "replaced_once":
+            self.retriedOnce = True
+        self.at = self.gen
+        self.call = "resolved"
+
+    # o.Command taking its lock: ErrReplaced if a swap retired the orb
+    # handle.current() handed out (a full Swap already ran since
+    # Resolve, so at != gen), otherwise the exec actually starts.
+    atomic action Enter:
+        require self.call == "resolved"
+        if self.at == self.gen:
+            self.call = "executing"
+        elif self.retriedOnce:
+            self.call = "failed_no_retry"
+        else:
+            self.call = "replaced_once"
+
+    # A swap (Replace: stop, retire, start next) reduced to the one
+    # instant a caller can observe: the generation the handle now
+    # resolves to. A call already executing dies with the old container;
+    # one only resolved or idle is unaffected until it next acts.
+    atomic action Swap:
+        require self.gen < MAX_GEN
+        self.gen = self.gen + 1
+        if self.call == "executing":
+            self.call = "failed_killed"
+
+    atomic action Finish:
+        require self.call == "executing"
+        self.call = "done"
+
+    # A later call, after this one settled one way or another.
+    atomic action NextCall:
+        require self.call == "done" or self.call == "failed_killed" or self.call == "failed_no_retry"
+        self.call = "idle"
+        self.retriedOnce = False
+
+action Init:
+    relay = Relay()
+
+# handle.Command retries an ErrReplaced exactly once (the `try == 0`
+# branch): a second one in the same call is never retried again.
+always assertion RetryBoundedToOnce:
+    return relay.call != "failed_no_retry" or relay.retriedOnce
+
+# A call that is actually running is always running against the
+# generation it resolved to: a swap that happens while it executes ends
+# it (failed_killed) in the same step, rather than leaving "executing"
+# true against a container that is no longer current.
+always assertion ExecutingMatchesCurrentGen:
+    return relay.call != "executing" or relay.at == relay.gen
