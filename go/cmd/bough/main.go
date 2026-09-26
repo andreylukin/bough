@@ -19,6 +19,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/andreylukin/bough"
+	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/internal/stepgate"
 	"github.com/andreylukin/bough/internal/testhold"
@@ -380,6 +381,13 @@ func main() {
 	if src.path != "bough.yml" && ((mode == "tui" && !rowsCmd && !*dump) || kernel.Verbose) {
 		fmt.Fprintf(os.Stderr, "bough: using %s\n", src.describe())
 	}
+	// Absolute before anything reloads it: /new <dir> changes the cwd,
+	// and the swap that follows re-reads the config.
+	if src.path != "" {
+		if abs, err := filepath.Abs(src.path); err == nil {
+			src.path = abs
+		}
+	}
 
 	// Resolve session flags before anything mounts: --continue and
 	// --resume <id> become a history row override; a bare --resume in
@@ -428,7 +436,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "bough:", err)
 		os.Exit(2)
 	}
-	applyDefaultWriteRoot(sessMode)
+	ownRoots := applyDefaultWriteRoot(sessMode)
 
 	// Catch interrupts BEFORE the mount: the headless ui row interrupts
 	// the process on stdin EOF, which on a fast run can fire before main
@@ -462,6 +470,7 @@ func main() {
 	ctx.Provide("ui-mode", mode)
 	ctx.Provide("origin", sessionOrigin(mode))
 	ctx.Provide("session-mode", sessMode)
+	ctx.Provide(iorb.WriteRootsKey, iorb.LocalWriteRoots())
 	ctx.Provide("session-project", sessProject)
 	// The project directory of a LOCAL session assigned to a project.
 	// Kept apart from session-project, which is a slug written into the
@@ -510,7 +519,7 @@ func main() {
 	ctx.Provide("config-set", func(newSets ...string) error {
 		return runtimeSet(ctx, src, ov, newSets...)
 	})
-	provideChoose(ctx, src, ov)
+	provideChoose(ctx, src, ov, ownRoots)
 	providePrompts(ctx)
 	if needPicker {
 		providePicker(ctx)

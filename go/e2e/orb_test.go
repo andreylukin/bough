@@ -24,6 +24,28 @@ func TestHeadlessLocalSessionInCheckoutWrites(t *testing.T) {
 	mustContain(t, out, "Session mode: local, with write access to", "tools.write(path")
 }
 
+// A session started outside a checkout is read-only until /new moves
+// it into one: the write root is re-derived from the new cwd, where it
+// used to be fixed at launch and left "/new ~/repos/x" from ~ read-only.
+func TestHeadlessNewIntoCheckoutWrites(t *testing.T) {
+	t.Parallel()
+	b := launchHeadless(t, launchOpts{cwd: map[string]string{"repo/.git/HEAD": "ref: refs/heads/main\n"}})
+	b.send("SYSTEM!")
+	b.waitFor("[done]")
+	mustNotContain(t, b.out.String(), "with write access to")
+	b.send("/new repo")
+	b.send("SYSTEM!")
+	b.closeStdin()
+	if code := b.waitExit(); code != 0 {
+		t.Fatalf("exit code %d; output:\n%s", code, b.out.String())
+	}
+	cwd, err := filepath.EvalSymlinks(b.cwd) // the launcher's Getwd: /private/var on macOS
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, b.out.String(), "Session mode: local, with write access to "+filepath.Join(cwd, "repo")+" only", "tools.write(path")
+}
+
 // --project with the fake runtime mounts the orb row and routes
 // tools.bash through its exec seam.
 func TestHeadlessProjectSessionExecsThroughOrb(t *testing.T) {

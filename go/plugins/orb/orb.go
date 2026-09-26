@@ -129,7 +129,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		// nothing in local mode, so its reload when the loop's sections
 		// land is free, where a tools reload cascades into loop and ui.
 		if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-			s.Set("mode", iorb.LocalPromptSectionFor(iorb.LocalWriteRoots()))
+			roots, err := kernel.Get[[]string](ctx, iorb.WriteRootsKey)
+			if err != nil {
+				roots = iorb.LocalWriteRoots() // a context without the launcher
+			}
+			s.Set("mode", iorb.LocalPromptSectionFor(roots))
 			ctx.Effect(func() { s.Set("mode", "") })
 		}
 		return nil

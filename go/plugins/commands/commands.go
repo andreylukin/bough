@@ -246,21 +246,16 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 			return "", ActionOpenPicker
 		}},
 		{CommandInfo{Name: "new", Usage: "[dir]", Summary: "start a fresh session (in dir), keeping the model and config"}, func(args string) (string, error) {
-			// A new session is the picker's swap with an id nothing
-			// has written yet: history.Apply creates the file.
-			choose, err := kernel.Get[func(string)](ctx, "session-choose")
-			if err != nil {
-				return "", fmt.Errorf("new: this build cannot swap sessions (needs the bough launcher)")
+			return newSession(ctx, "new", args)
+		}},
+		// /cd is what someone started in ~ reaches for to work in a repo.
+		// It cannot keep the conversation (the engine's cwd and prompt are
+		// fixed for a session), so it says so and is /new <dir>.
+		{CommandInfo{Name: "cd", Usage: "<dir>", Summary: "start a fresh session in dir (writable if it is a git checkout)"}, func(args string) (string, error) {
+			if strings.TrimSpace(args) == "" {
+				return "", fmt.Errorf("cd: want a directory")
 			}
-			if dir := strings.TrimSpace(args); dir != "" {
-				// The new file's meta records os.Getwd (history.Apply):
-				// moving there first is what puts the session in dir.
-				if err := os.Chdir(dir); err != nil {
-					return "", fmt.Errorf("new: %w", err)
-				}
-			}
-			choose(history.NewID())
-			return "", ActionClear
+			return newSession(ctx, "cd", args)
 		}},
 		{CommandInfo{Name: "cost", Usage: "", Summary: "tokens and cost this session"}, func(string) (string, error) {
 			return costText(ctx)
@@ -286,6 +281,25 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 		return err
 	}
 	return registerExport(r, ctx)
+}
+
+// newSession is /new and /cd: a new session is the picker's swap with an
+// id nothing has written yet (history.Apply creates the file).
+func newSession(ctx *kernel.Context, name, args string) (string, error) {
+	choose, err := kernel.Get[func(string)](ctx, "session-choose")
+	if err != nil {
+		return "", fmt.Errorf("%s: this build cannot swap sessions (needs the bough launcher)", name)
+	}
+	if dir := strings.TrimSpace(args); dir != "" {
+		// The new file's meta records os.Getwd (history.Apply), and the
+		// launcher derives the write root from it: moving there first is
+		// what puts the session in dir.
+		if err := os.Chdir(dir); err != nil {
+			return "", fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	choose(history.NewID())
+	return "", ActionClear
 }
 
 func uiAction(a UIAction) func(string) (string, error) {

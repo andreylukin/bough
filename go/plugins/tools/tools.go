@@ -448,7 +448,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	mode, _ := kernel.Get[string](ctx, "session-mode")
 	local := mode != "project"
 	if local {
-		st.writeRoots = iorb.LocalWriteRoots()
+		roots, err := kernel.Get[[]string](ctx, iorb.WriteRootsKey)
+		if err != nil {
+			roots = iorb.LocalWriteRoots() // a context without the launcher
+		}
+		st.writeRoots = append([]string(nil), roots...)
 		// A local session assigned to a project may write that project's
 		// directory. The context-md header names MEMORY.md by path every
 		// turn, and "remember this" is the agent editing that file: without

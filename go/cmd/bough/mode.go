@@ -9,6 +9,7 @@ import (
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/internal/testhold"
+	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -145,21 +146,41 @@ func sessionFile(sets setFlags) string {
 func defaultWriteRoot(cwd, home string) string { return iorb.CheckoutRoot(cwd, home) }
 
 // applyDefaultWriteRoot makes a local session's git checkout writable
-// when nothing set BOUGH_WRITE_ROOTS. It goes through the environment
-// because tools reads the roots there, and a `bough -p` the agent runs
-// from tools.bash should inherit the same boundary.
-func applyDefaultWriteRoot(mode string) {
+// when nothing set BOUGH_WRITE_ROOTS, and reports whether the launcher
+// owns the roots (so /new may move them). It goes through the
+// environment because a `bough -p` the agent runs from tools.bash should
+// inherit the same boundary.
+func applyDefaultWriteRoot(mode string) bool {
 	if mode != "local" || os.Getenv(iorb.WriteRootsEnv) != "" {
-		return
+		return false
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return
+		return false
 	}
 	home, _ := os.UserHomeDir()
 	if root := defaultWriteRoot(cwd, home); root != "" {
 		os.Setenv(iorb.WriteRootsEnv, root)
 	}
+	return true
+}
+
+// moveWriteRoot re-derives the write root from the directory /new moved
+// the session to. Decided only at launch, a session started in ~ stayed
+// read-only after "/new ~/repos/x". Only a changed root is provided: the
+// Provide remounts tools, and with it everything that reads turn-stats.
+func moveWriteRoot(ctx *kernel.Context) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	home, _ := os.UserHomeDir()
+	root := defaultWriteRoot(cwd, home)
+	if root == os.Getenv(iorb.WriteRootsEnv) {
+		return
+	}
+	os.Setenv(iorb.WriteRootsEnv, root)
+	ctx.Provide(iorb.WriteRootsKey, iorb.LocalWriteRoots())
 }
 
 // chooseMode resolves the session's mode for main and validates a

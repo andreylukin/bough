@@ -256,10 +256,15 @@ func providePrompts(ctx *kernel.Context) {
 // ui; the kernel's Get-tracking makes that cascade automatic, and the
 // override is recorded so a config hot reload keeps the resumed file).
 // Always provided: the ui's /sessions picker resumes mid-session too.
-func provideChoose(ctx *kernel.Context, src configSource, ov *overrides) {
+// With ownRoots the write root follows the cwd, which /new <dir> has
+// just changed.
+func provideChoose(ctx *kernel.Context, src configSource, ov *overrides, ownRoots bool) {
 	ctx.Provide("session-choose", func(id string) {
 		if id == "" {
 			return // fresh session already mounted
+		}
+		if ownRoots {
+			moveWriteRoot(ctx)
 		}
 		set := "history.file=" + filepath.Join(sessionsDir(), id+".jsonl")
 		if err := runtimeSet(ctx, src, ov, set); err != nil {

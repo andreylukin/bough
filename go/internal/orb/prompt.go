@@ -27,6 +27,12 @@ To change code, tell the user this session cannot, and give the exact command: q
 // (applyDefaultWriteRoot); outside a checkout a session stays read-only.
 const WriteRootsEnv = "BOUGH_WRITE_ROOTS"
 
+// WriteRootsKey is the service the launcher provides the roots under, so
+// the rows that read them remount when /new moves the session into
+// another checkout. The environment stays the record a child process
+// inherits.
+const WriteRootsKey = "write-roots"
+
 // LocalWriteRoots reads WriteRootsEnv: absolute paths, cleaned; relative
 // or empty entries are dropped.
 func LocalWriteRoots() []string {
