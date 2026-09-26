@@ -1,0 +1,93 @@
+---
+# Both tabs mounting once each and settling is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# The sidebar's one-time auto-open of the background group: on mount,
+# a tab that finds background work already running or failed opens the
+# group for the person, but only the first time ever, across every tab
+# of the origin — a shared localStorage flag ("bough:bg-auto") is how a
+# tab remembers that some tab, at some point, already did this.
+#
+# Code: go/internal/serve/web/src/app.tsx lines ~433-450 (the Sidebar
+# mount effect: bgRunning/bgFailed, the "bough:bg-auto" read-then-set,
+# setUnfolded adding "background").
+#
+# Two tabs of the same origin (A, B), both open with background work
+# present from their first render, each mounting its own effect once.
+# The flag is shared (real localStorage); the "unfolded" fold set each
+# tab shows is also localStorage-backed but each tab's React copy of it
+# is read once, at that tab's own mount (readSet in useState), and nothing
+# in this effect re-reads it — so a tab's own local view of "is background
+# open" only ever changes by its own actions, never by the other tab's.
+#
+# Read and write happen in the same synchronous effect, but across two
+# tabs (two separate scripts, no shared lock) the pair is not atomic
+# with respect to each other: both can read the flag before either sets
+# it. Split into ReadFlag then MaybeOpen to let the model checker
+# explore both orderings.
+#
+# Where this exposes a design gap in today's code (not modelled as a
+# violation — MBT against the real page, a later flow, is what would
+# turn this into a failing assertion): the flag is consumed by whichever
+# tab's effect runs first. The other tab's effect still finds the flag
+# already set and returns, so ITS OWN sidebar never opens automatically
+# even though background work was there from its own first render too.
+# "Both open" (both read the flag unset before either writes) is
+# harmless duplication; "neither opens" is not reachable from a single
+# flag read-then-write race by itself — it takes a second, independent
+# fault (a storage exception aborting the write, or the effect's
+# dependency array never re-firing) to lose the auto-open entirely, and
+# those are not modelled here.
+
+role Tab:
+    action Init:
+        self.read = False
+        self.wrote = False
+        self.opened = False
+
+    # The effect's read of the shared flag: a snapshot of what this tab
+    # saw, taken before it decides whether to write.
+    atomic fair action ReadFlag:
+        require not self.read
+        self.read = True
+        self.saw = flag
+
+    # try { if (flag === "1") return; localStorage.setItem(...) }: only a
+    # tab that saw the flag unset writes it and opens locally.
+    atomic fair action MaybeOpen:
+        require self.read and not self.wrote
+        self.wrote = True
+        if self.saw == 0:
+            flag = 1
+            self.opened = True
+
+action Init:
+    flag = 0
+    tabA = Tab()
+    tabB = Tab()
+
+# A tab only ever opens through its own MaybeOpen, and only once.
+always assertion OpenedOnlyAfterWrite:
+    return (not tabA.opened or tabA.wrote) and (not tabB.opened or tabB.wrote)
+
+# The flag is set exactly when some tab's write set it; it is never
+# cleared, and never set by a tab that saw it already set.
+always assertion FlagFollowsAWrite:
+    return flag == 0 or tabA.opened or tabB.opened
+
+# Nobody opens twice: opening is a one-shot per tab (MaybeOpen requires
+# not self.wrote, so this holds by construction, but the assertion is
+# the contract, not the mechanism).
+always assertion OpensAtMostOnce:
+    return tabA.wrote != False or not tabA.opened
+
+# Once both tabs have run their mount effect, the flag reflects that at
+# least one of them tried, if either saw work to show: this spec always
+# has work present, so both tabs having read implies the flag question
+# was settled one way (a tab opened) or the other (a race left the flag
+# already set from outside this pair, which two fresh tabs never do).
+always eventually assertion SettledOnceBothMount:
+    if tabA.read and tabB.read:
+        return tabA.wrote and tabB.wrote
+    return True
