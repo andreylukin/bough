@@ -1,0 +1,81 @@
+# The sidebar tree's peek card (a 300 ms hover timer, dropped by scroll,
+# selection and archive), the roving keyboard focus, and the group head
+# that says where a pinned "Needs you" row went (app.tsx SidebarList).
+#
+# One listed session S in one project group G. peek is the hover card:
+# none | pending (timer armed) | shown. Any scroll of the tree, a click
+# selecting the row, or S leaving the list clears the timer and the card.
+# grp is where the poll last put S: "recent" (in G) or "needs" (pinned
+# under Needs you; G's head then reads "1 needs you up" and S also stays
+# in G only while G is folded). folded is G's fold. focus is
+# document.activeElement: none (body) | row | other (a section fold).
+# Archiving the focused row leaves focus on body, never on a stale row.
+
+role Tree:
+    action Init:
+        self.peek = "none"
+        self.grp = "recent"
+        self.folded = False
+        self.focus = "none"
+        self.archived = False
+        self.selected = False
+        self.scrolled = False
+
+    atomic action Hover:
+        require not self.archived and self.peek == "none"
+        self.peek = "pending"
+
+    atomic action Tick:
+        require self.peek == "pending"
+        self.peek = "shown"
+
+    atomic action Unhover:
+        require self.peek != "none"
+        self.peek = "none"
+
+    atomic action Scroll:
+        self.scrolled = True
+        self.peek = "none"
+
+    atomic action Select:
+        require not self.archived
+        self.selected = True
+        self.focus = "row"
+        self.peek = "none"
+
+    atomic action PollNeedsYou:
+        require not self.archived and self.grp == "recent"
+        self.grp = "needs"
+
+    atomic action PollClear:
+        require self.grp == "needs"
+        self.grp = "recent"
+
+    atomic action ToggleFold:
+        self.folded = not self.folded
+
+    atomic action FocusOther:
+        self.focus = "other"
+
+    atomic action Archive:
+        require not self.archived
+        self.archived = True
+        self.peek = "none"
+        self.selected = False
+        if self.focus == "row":
+            self.focus = "none"
+
+action Init:
+    tree = Tree()
+
+always assertion NoCardOverGoneRow:
+    return not (tree.archived and tree.peek != "none")
+
+always assertion NoFocusOnGoneRow:
+    return not (tree.archived and tree.focus == "row")
+
+always assertion SelectedIsListed:
+    return not (tree.selected and tree.archived)
+
+always assertion ScrolledStaysKnown:
+    return tree.peek != "shown" or not tree.archived
