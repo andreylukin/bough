@@ -126,6 +126,24 @@ async function settle(c: Ctx): Promise<void> {
   });
 }
 
+// Called before the held request is answered with no calls: a call's
+// end or a steer that waited for it (unsent, queued) goes out then as a
+// new request. The error entry is written before that request is made,
+// and on a loaded runner the gap outlasted settle's quiet window, so the
+// state was read with the request not yet held. The returned wait holds
+// it; when none comes the state check reports it.
+function expectResend(c: Ctx): () => Promise<void> {
+  const waited = c.unsent || c.queued;
+  const next = c.next;
+  return async () => {
+    if (!waited) return;
+    await until('the request what waited makes', () => {
+      absorb(c);
+      return c.next !== next;
+    }, 10_000).catch(() => {});
+  };
+}
+
 // Run step, then note whether the engine asked the model on it: a
 // request held before and none new after means what the step ended (a
 // call, or a steer) waits for the held request's answer.
@@ -306,8 +324,10 @@ const FLOW = {
 
     async ProviderFails(c: Ctx) {
       const from = entries(c).length;
+      const resend = expectResend(c);
       answer(c, { mode: 'error', error: PERR });
       await waitEntry(c, from, 'the provider error', (e) => e.kind === 'error' && said(e).includes(PERR));
+      await resend();
       await settle(c);
     },
 
@@ -324,8 +344,10 @@ const FLOW = {
     // The request in flight is refused: an error note mid-turn.
     async HookErrorNote(c: Ctx) {
       const from = entries(c).length;
+      const resend = expectResend(c);
       answer(c, { mode: 'refuse', error: REFUSAL });
       await waitEntry(c, from, 'the refusal note', (e) => e.kind === 'error' && said(e).includes(REFUSAL));
+      await resend();
       await settle(c);
     },
 
