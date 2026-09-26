@@ -29,30 +29,30 @@ role Session:
         self.order = ""
 
     # One reply, two calls, started at once.
-    atomic action Reply:
+    atomic fair action Reply:
         require self.status == "running" and self.a == "idle"
         self.a = "running"
         self.b = "running"
 
-    atomic action AOk:
+    atomic fair action AOk:
         require self.a == "running"
         self.a = "ok"
         if self.first == "":
             self.first = "a"
 
-    atomic action AFail:
+    atomic fair action AFail:
         require self.a == "running"
         self.a = "failed"
         if self.first == "":
             self.first = "a"
 
-    atomic action BOk:
+    atomic fair action BOk:
         require self.b == "running"
         self.b = "ok"
         if self.first == "":
             self.first = "b"
 
-    atomic action BFail:
+    atomic fair action BFail:
         require self.b == "running"
         self.b = "failed"
         if self.first == "":
