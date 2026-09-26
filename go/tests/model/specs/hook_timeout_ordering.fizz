@@ -1,0 +1,102 @@
+---
+deadlock_detection: false
+---
+
+# hook_timeout_ordering: two pre-code-exec hook files (a.js then b.js, by
+# base name) fire for one call. Each passes, denies, throws, or hangs past
+# the codemode hook timeout (RunHook interrupts the VM and returns an
+# error, same path as a throw). Ordering, timeout and crash paths vs the
+# tool call. Recipe: go/tests/model/README.md.
+#
+# Code: plugins/hooks/hooks.go fire() file loop (an error is recorded and
+# the next hook runs; a refusal breaks the loop; errors are joined and the
+# merged result still returned), plugins/codemode/codemode.go RunHook.
+
+RESULTS = ["pass", "deny", "throw", "timeout"]
+
+role Turn:
+    action Init:
+        self.a = "none"
+        self.b = "none"
+        self.phase = "setup"
+        # "" | "no" | "yes"
+        self.ran = ""
+        # "" | "none" (never ran) | "passed" | "denied" | "error"
+        self.ledger_a = ""
+        self.ledger_b = ""
+        # Errors from the fire were returned to the caller.
+        self.errors_reported = False
+
+    atomic action WriteA:
+        require self.phase == "setup" and self.a == "none"
+        r = any RESULTS
+        self.a = r
+
+    atomic action WriteB:
+        require self.phase == "setup" and self.b == "none"
+        r = any RESULTS
+        self.b = r
+
+    atomic action Call:
+        require self.phase == "setup"
+        self.phase = "called"
+        refused = False
+        errs = False
+        if self.a == "none":
+            self.ledger_a = "none"
+        elif self.a == "deny":
+            self.ledger_a = "denied"
+            refused = True
+        elif self.a in ("throw", "timeout"):
+            self.ledger_a = "error"
+            errs = True
+        else:
+            self.ledger_a = "passed"
+        if self.b == "none" or refused:
+            self.ledger_b = "none"
+        elif self.b == "deny":
+            self.ledger_b = "denied"
+            refused = True
+        elif self.b in ("throw", "timeout"):
+            self.ledger_b = "error"
+            errs = True
+        else:
+            self.ledger_b = "passed"
+        self.errors_reported = errs
+        if refused:
+            self.ran = "no"
+        else:
+            self.ran = "yes"
+
+action Init:
+    turn = Turn()
+
+# The call is refused iff some hook that ran denied.
+always assertion RefusedIffDenied:
+    if turn.phase == "setup":
+        return True
+    denied = turn.ledger_a == "denied" or turn.ledger_b == "denied"
+    return denied == (turn.ran == "no")
+
+# A denial by a stops b; nothing else does (a throw or timeout does not).
+always assertion OnlyDenialStopsLater:
+    if turn.phase == "setup":
+        return True
+    if turn.a == "deny":
+        return turn.ledger_b == "none"
+    return (turn.b == "none") == (turn.ledger_b == "none")
+
+# A crash or timeout never refuses the call and is always reported.
+always assertion CrashIsFailOpenAndReported:
+    if turn.phase == "setup":
+        return True
+    crashed = turn.ledger_a == "error" or turn.ledger_b == "error"
+    return (not crashed) or turn.errors_reported
+
+# Timeout and throw are recorded the same way.
+always assertion TimeoutRecordedAsError:
+    if turn.phase == "setup":
+        return True
+    if turn.a in ("throw", "timeout"):
+        return turn.ledger_a == "error"
+    return True
