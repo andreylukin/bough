@@ -523,11 +523,44 @@ func (a *bbjAdapter) taken(name string) error {
 
 // answer releases the held request as turn says and waits for the next
 // request, which takes a fresh held turn.
+//
+// With notices queued, the next request the spec means is the one that
+// carries them, and that is not always the first one out: the actor
+// sends them when it reads the response off the store, and a call that
+// has already ended (job answers in a few ms) lets the coordinator start
+// the next request first. The notices then supersede it (an external
+// input always interrupts the request in flight), one at a time when
+// there are two. So the held turn only takes a request carrying the last
+// queued notice, and a spare held turn takes one that started without
+// it, to be superseded; without the spare, that request found the queue
+// empty, answered "no turn queued" and closed the turn.
 func (a *bbjAdapter) answer(turn control.Turn) error {
-	next := a.block()
+	if len(a.sh.queued) == 0 {
+		next := a.block()
+		control.ReleaseWith(a.t, a.dir, a.held, turn)
+		a.held = next
+		return a.taken(next)
+	}
+	_, lines, err := a.read()
+	if err != nil {
+		return err
+	}
+	next := a.queue(control.Turn{Mode: "block", Text: "reply", Match: lastNoteText(lines)})
+	spare := a.block()
 	control.ReleaseWith(a.t, a.dir, a.held, turn)
 	a.held = next
-	return a.taken(next)
+	if err := a.taken(next); err != nil {
+		return err
+	}
+	// A superseded request may still be claiming the spare: gone from
+	// the queue is taken.
+	if err := os.Remove(filepath.Join(a.dir, spare+".json")); errors.Is(err, os.ErrNotExist) {
+		a.names = append(a.names, spare)
+		a.takes++
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // pass is the gate, counting how deep each walk gets. A JobKill's notice
@@ -926,16 +959,19 @@ func (a *bbjAdapter) BudgetStop() error {
 		}
 		control.ReleaseWith(a.t, a.dir, a.held, control.Turn{Mode: "call", Tool: "job_kill", Args: map[string]any{"id": 999}})
 		a.held = ""
-		for _, n := range names {
-			if err := a.taken(n); err != nil {
-				return err
-			}
-		}
 		if _, err := a.wait("the step budget to stop the turn", actionTimeout, func(r serve.Row, l []serve.Line) bool {
 			o := bbjObserve(r, l, nil)
 			return o.turn == "none" && o.last == "cancelled"
 		}); err != nil {
 			return err
+		}
+		// The Gate also counts a request superseded before it took a turn
+		// (see answer), so the budget can stop the turn a pad early; the
+		// pads it never asked for would answer the walk's next request.
+		for _, n := range names {
+			if err := os.Remove(filepath.Join(a.dir, n+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
 		a.ahead = "budget"
 	}
