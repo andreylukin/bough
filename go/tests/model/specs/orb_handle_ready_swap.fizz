@@ -1,0 +1,105 @@
+# plugins/orb/handle.go: the orb handle a session's tools go through while
+# the container starts, fails, or is swapped by a restart. Ready waits for
+# the start to settle; current (Command) waits for the swap gate; beginSwap
+# closes the gate and its end installs the new orb or keeps the old one;
+# Stop cancels a start in flight or stops the open container.
+#
+# Code: handle.go settle/Ready/current/Command/beginSwap/Stop; restart.go
+# (a swap only begins after the start settled and no turn is running; a
+# closed row cancels r.ctx so a swap in flight never installs).
+#
+# Fields (role Handle):
+#   start   starting | open | failed (ready closed once, either way)
+#   orb     none | o1 | o2 (h.o; o2 is what a swap installs)
+#   gate    a swap is under way (h.gate != nil)
+#   swaps   swaps begun, capped at 2 to keep the graph small
+#   stopped Stop stopped the open container (or cancelled the start)
+#   cmd     one Command caller: idle | ready (in Ready) | gated (in current,
+#           waiting on the gate) | ran_o1 | ran_o2 | err (start's error)
+# A waiter wakes exactly once: ran_*/err are terminal until Reset.
+
+def current(gate, orb):
+    if gate:
+        return "gated"
+    if orb == "o1":
+        return "ran_o1"
+    if orb == "o2":
+        return "ran_o2"
+    return "err"
+
+role Handle:
+    action Init:
+        self.start = "starting"
+        self.orb = "none"
+        self.gate = False
+        self.swaps = 0
+        self.stopped = False
+        self.cmd = "idle"
+
+    atomic action Call:
+        require self.cmd == "idle"
+        if self.start == "starting":
+            self.cmd = "ready"
+        else:
+            self.cmd = current(self.gate, self.orb)
+
+    atomic action SettleOpen:
+        require self.start == "starting" and not self.stopped
+        self.start = "open"
+        self.orb = "o1"
+        if self.cmd == "ready":
+            self.cmd = current(self.gate, self.orb)
+
+    atomic action SettleFail:
+        require self.start == "starting"
+        self.start = "failed"
+        if self.cmd == "ready":
+            self.cmd = "err"
+
+    atomic action BeginSwap:
+        require self.start != "starting" and not self.gate and not self.stopped and self.swaps < 2
+        self.gate = True
+        self.swaps += 1
+
+    # end(o, stopped): install the new orb and open the gate. A Stop that
+    # landed during the swap wins: the closed row cancels the restarter.
+    atomic action EndSwapInstall:
+        require self.gate and not self.stopped
+        self.gate = False
+        self.orb = "o2"
+        self.start = "open"  # h.err = nil: a failed start recovered
+        if self.cmd == "gated":
+            self.cmd = current(self.gate, self.orb)
+
+    atomic action EndSwapKeep:
+        require self.gate
+        self.gate = False
+        if self.cmd == "gated":
+            self.cmd = current(self.gate, self.orb)
+
+    atomic action Stop:
+        require not self.stopped
+        self.stopped = True
+        if self.start == "starting":
+            # cancel: the start unwinds and settles failed
+            self.start = "failed"
+            if self.cmd == "ready":
+                self.cmd = "err"
+
+    atomic action Reset:
+        require self.cmd in ("ran_o1", "ran_o2", "err")
+        self.cmd = "idle"
+
+action Init:
+    h = Handle()
+
+# No caller is left waiting on Ready once the start settled.
+always assertion ReadyWaiterWoken:
+    return not (h.cmd == "ready" and h.start != "starting")
+
+# No caller sits on the gate once the swap ended.
+always assertion GateWaiterWoken:
+    return not (h.cmd == "gated" and not h.gate)
+
+always assertion OrbOnlyWhenOpen:
+    return h.orb == "none" or h.start == "open"

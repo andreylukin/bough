@@ -1,0 +1,71 @@
+---
+# stop() ends the flow: every action requires not stopped, so a stopped
+# restarter has nothing left to do. That is rest, not a deadlock.
+deadlock_detection: false
+---
+# orb_restart_during_open_turn_then_stop (go/tests/model/README.md):
+# plugins/orb/restart.go's swap loop, reduced to the part a stop() races
+# against. request() queues a fresh-container flag on self.pending and
+# kicks the build goroutine; run() dequeues it (clearing pending) and
+# calls once(), which builds, then waits for no turn to be open (busy)
+# before swapping the container in. stop() cancels both goroutines,
+# waits for them to actually return, then reports whether a request that
+# asked for a fresh container was left unapplied — true only while it is
+# still queued (pending), never once a build for it has started: a
+# build stop() cancels mid-flight never reaches Replace, so the old
+# container needs no cleanup either way.
+
+role Restarter:
+    action Init:
+        self.busy = False
+        self.building = False
+        self.pending = False
+        self.freshPending = False
+        self.stopped = False
+
+    atomic action StartTurn:
+        require not self.stopped
+        require not self.busy
+        self.busy = True
+
+    atomic action EndTurn:
+        require self.busy
+        self.busy = False
+
+    atomic action Request:
+        require not self.stopped
+        require not self.pending
+        self.pending = True
+
+    atomic action RequestFresh:
+        require not self.stopped
+        require not self.pending
+        self.pending = True
+        self.freshPending = True
+
+    # A build starts as soon as a request is queued, whether or not a
+    # turn is open: only the swap below waits for idle. Dequeuing it
+    # clears pending immediately, before the build or the swap runs.
+    atomic action Build:
+        require not self.stopped
+        require self.pending
+        require not self.building
+        self.building = True
+        self.pending = False
+        self.freshPending = False
+
+    atomic action Swap:
+        require not self.stopped
+        require self.building
+        require not self.busy
+        self.building = False
+
+    atomic action Stop:
+        require not self.stopped
+        self.stopped = True
+
+action Init:
+    r = Restarter()
+
+always assertion FreshPendingImpliesPending:
+    return not r.freshPending or r.pending

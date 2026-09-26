@@ -1,0 +1,63 @@
+# The session list's refresh loop (web/src/app.tsx, refresh + its effect).
+# A poll never stacks on the newest read still out, is skipped while the tab
+# is hidden, and resuming a hidden tab reads at once. Toggling Archived reads
+# at once even with a read out, which supersedes it: only the newest read
+# lands, so a stale answer never overwrites a newer one. A stream opening
+# only slows the interval (x3); it does not read.
+
+role List:
+    action Init:
+        self.archived = False
+        self.streaming = False
+        self.hidden = False
+        self.shown_archived = False
+        self.newest_out = False
+        self.stale_out = False
+        self.interval = "fast"
+
+    atomic action Tick:
+        require not self.hidden
+        require not self.newest_out
+        self.newest_out = True
+
+    atomic action ToggleArchived:
+        self.archived = not self.archived
+        self.stale_out = self.stale_out or self.newest_out
+        self.newest_out = True
+
+    atomic action Land:
+        require self.newest_out
+        self.newest_out = False
+        self.shown_archived = self.archived
+
+    atomic action LandStale:
+        require self.stale_out
+        self.stale_out = False
+
+    atomic action Hide:
+        require not self.hidden
+        self.hidden = True
+
+    atomic action Show:
+        require self.hidden
+        self.hidden = False
+        self.newest_out = True
+
+    atomic action OpenStream:
+        require not self.streaming
+        self.streaming = True
+        self.interval = "slow"
+
+    atomic action CloseStream:
+        require self.streaming
+        self.streaming = False
+        self.interval = "fast"
+
+action Init:
+    list = List()
+
+always assertion StaleNeverLands:
+    return list.newest_out or list.shown_archived == list.archived
+
+always assertion IntervalFollowsStream:
+    return (list.interval == "slow") == list.streaming

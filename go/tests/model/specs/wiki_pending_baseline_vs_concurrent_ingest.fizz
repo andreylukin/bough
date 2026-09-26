@@ -1,0 +1,105 @@
+# wiki_pending_baseline_vs_concurrent_ingest: the manual "Ingest now"
+# and the launchd tick meeting at .ingest.lock, checked at the level of
+# what pending.go and the marker in log.md actually record — not the
+# lock file itself (wiki_check_race, wiki_edit_vs_ingest_lock cover
+# that) but whether the range a run commits for a session is the range
+# it read, once two starters have gone through the lock in some order.
+#
+# Product:
+#   go/plugins/wiki/run.go Run: tryLock(.ingest.lock) first (a second
+#     starter that finds it held returns nil at once and touches nothing
+#     — wiki_edit_vs_ingest_lock's OneRunHoldsTheLock); only the holder
+#     calls FindPending, so the read of log.md a run acts on is always
+#     taken *after* the lock, never before it.
+#   go/plugins/wiki/pending.go FindPending/readLog: `done[id]` is the
+#     max seq over every "## [...] ingest | id#seq | ..." heading in
+#     log.md, so an out-of-order append can never make done[id] regress
+#     — this is the thing this spec exists to pin down, because a naive
+#     "last heading wins" reading of log.md would let a stale write
+#     silently undo a later one's ground.
+#   go/plugins/wiki/SKILL.md (the ingest agent, run headless inside
+#     Run): the heading it appends names "the last seq in the digest it
+#     built" — the range it actually read at its own start, not
+#     whatever the session has grown to by the time it writes. New
+#     conversation entries a person adds to S while a run holds the
+#     lock are simply left pending for the next tick.
+#
+# The world: one session S with one ever-growing entries counter and
+# one lock two Runner instances (Manual = the person's "Ingest now",
+# Scheduler = launchd's tick) contend for. A run that gets the lock
+# reads S's entries as `from`..`to` (a snapshot), and its commit records
+# exactly that `to`, never something read later.
+#
+# Abstractions:
+# - Only one session, so "which session" never has to be modelled: the
+#   only thing worth checking is whether the recorded range for S ever
+#   loses or fabricates ground.
+# - The agent's own work (writing pages, deciding a disposition) is not
+#   modelled: Commit is the single step from "holds the lock, has read
+#   a range" to "log.md has a heading for it and the lock is free".
+# - A run that finds nothing pending (to == from) still takes and
+#   releases the lock in the product; skipping that state here would
+#   lose no reachable ground so it is left out to keep the graph small.
+#
+# Fairness: NewEntry, Lock and Commit are unfair (a person may never
+# type again, a tick may never come, a run may run forever); nothing
+# here needs a liveness claim about the log ever catching up.
+
+role Runner:
+    action Init:
+        self.phase = "idle"      # idle -> locked -> committed -> idle
+        self.lo = 0
+        self.hi = 0
+
+    # Take the lock and read pending: FindPending's snapshot of S.
+    atomic action Lock:
+        require self.phase == "idle" and lock == "free"
+        lock = "held"
+        self.phase = "locked"
+        self.lo = committed
+        self.hi = entries
+
+    # The agent runs and writes the heading for exactly [from, to).
+    atomic action Commit:
+        require self.phase == "locked"
+        if self.hi >= committed:
+            committed = self.hi
+        else:
+            regressed = True
+        self.phase = "idle"
+        lock = "free"
+
+action Init:
+    lock = "free"
+    entries = 0
+    committed = 0
+    regressed = False
+    runner0 = Runner()
+    runner1 = Runner()
+
+# A person or something else adds a conversation entry to S at any time,
+# including while a run holds the lock. Capped at 2: one entry ahead of
+# whatever a run has read is enough to show a run's own snapshot never
+# moves out from under it; unbounded growth is not a new state, just a
+# bigger number, and would make the graph infinite.
+atomic action NewEntry:
+    require entries < 2
+    entries = entries + 1
+
+# At most one runner holds the lock.
+always assertion OneRunnerLocked:
+    return not (runner0.phase == "locked" and runner1.phase == "locked")
+
+# A commit never records less ground than log.md already has: the
+# thing a naive "last heading wins" reading would get wrong.
+always assertion CommittedNeverRegresses:
+    return not regressed
+
+# What is committed was, at some point, actually read: it never runs
+# ahead of the entries that exist.
+always assertion CommittedNeverExceedsEntries:
+    return committed <= entries
+
+# The lock is free exactly when no runner holds it.
+always assertion LockMatchesHolders:
+    return (lock == "held") == (runner0.phase == "locked" or runner1.phase == "locked")

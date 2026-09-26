@@ -206,8 +206,13 @@ func (c *Context) Reconcile(newRows []Row) error {
 // Remount unmounts the mounted row id (and its dependents, as Reconcile
 // does for a changed row) and settles, so the row re-runs Apply against
 // the current desired tree. For a row whose inputs live outside its
-// config (init-js reads ~/.bough/init.js). Unknown or unmounted ids are
-// a no-op settle.
+// config (init-js reads ~/.bough/init.js), or a provider row that went
+// Failed on a bad key that has since been fixed outside the config too
+// (an edit of ~/.bough/env): Reconcile's same-spec rule leaves a Failed
+// row's failure recorded forever, which would make Remount(id) on it a
+// no-op right when it is needed most, so it forgets that one row's
+// failure unconditionally before settling, same-spec or not. An unknown
+// id is a no-op settle.
 func (c *Context) Remount(id string) error {
 	return c.reconcile(c.Desired(), id)
 }
@@ -253,7 +258,7 @@ func (c *Context) reconcile(newRows []Row, force string) error {
 	for id, f := range c.failed {
 		nr, ok := newByID[id]
 		if !ok || nr.Disabled || nr.Plugin != f.row.Plugin ||
-			!reflect.DeepEqual(nr.Config, f.row.Config) {
+			!reflect.DeepEqual(nr.Config, f.row.Config) || id == force {
 			delete(c.failed, id)
 		}
 	}

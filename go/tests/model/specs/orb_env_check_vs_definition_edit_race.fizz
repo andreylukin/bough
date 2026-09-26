@@ -1,0 +1,125 @@
+# orb_env_check_vs_definition_edit_race: the orb's missing-env warning
+# races an edit to the project definition (go/tests/model/README.md).
+#
+# Product:
+#   go/plugins/orb/orb.go settled(): on every settle (a fresh start, a
+#     resumed orb, a restart's requote) it re-reads the definition fresh
+#     off disk (`projectdef.Load`), then computes
+#     `missingEnv(resume, p.Def.Checks, p.Def, setup+dockerfile)`
+#     against that just-read definition, and says the result as a
+#     prompt-section line and (when loud) a chat line.
+#   go/plugins/orb/envcheck.go missingEnv/provided(): a name is not
+#     "missing" when `def.Env` or `def.Secrets` has it. The check has no
+#     memory of which definition the container it is warning about was
+#     actually built from — Start and Restart snapshot the definition
+#     once, at the top of orb.go's Apply, well before settled() runs.
+#   If the definition is edited between that snapshot and settled()'s
+#     read (a build takes seconds; an edit is a file write from another
+#     tab or an agent), the two disagree about which names the build
+#     provided, and settled() reports env state for a definition the
+#     running container was never built from.
+#
+# Fields (one EnvCheck role, one env name X):
+#   status    idle | building | up. Init is idle; Build (Start or
+#             Restart — both snapshot the definition and clear the last
+#             result the same way) moves to building; BuildDone moves to
+#             up.
+#   declared  the definition's current word on X: does it list X in
+#             env/secrets. Edited by EditDef, any time, including
+#             mid-build (a build reads files at its own pace; a
+#             definition write is not excluded while one is out).
+#   built     the definition's word on X snapshotted when the build that
+#             produced the orb now running (or now building) started.
+#             This is what the container actually has: not declared at
+#             build time means nothing set X in it.
+#   checked   settled() has read the fresh definition and reported since
+#             this build finished.
+#   warn      the reported verdict: "X is unset" shown on the prompt
+#             section / said in chat.
+#
+# Abstractions:
+# - One boolean env name stands in for missingEnv's whole list: the race
+#   is the same for every name the check flags, so tracking one is
+#   enough to catch the disagreement.
+# - resume.sh, checks and the image (setup.sh/Dockerfile) that also feed
+#   missingEnv are folded into "the definition": editing any of them
+#   mid-build is the same shape of race and is not modelled separately.
+# - Start and Restart are one action, Build: both snapshot the
+#   definition the same way and clear the last result the same way; the
+#   only difference — idle vs. up before it — is not part of what the
+#   check disagrees about.
+# - settled() runs once per Build's completion is not assumed: Check is
+#   its own action, repeatable while up (a resumed row's re-Apply, a
+#   restart's OnResume address refresh), because each call re-reads the
+#   definition and can land on either side of an EditDef.
+#
+# Fairness: Build, BuildDone and Check are fair (an orb starts, a build
+# finishes, a settle happens); EditDef is not (nothing forces an edit).
+#
+# The product does not meet the mapped claim below; it is left out so
+# the check stays green, and it is the finding this flow exists to
+# report:
+#
+#   WarnMatchesBuild  warn == (not built)
+#     Build, EditDef, Check: EditDef flips declared after Build has
+#     already snapshotted built; Check reads the flipped declared, not
+#     built, so warn disagrees with what the running (or still building)
+#     container actually has. Two shapes:
+#       - built=False (build saw X undeclared), then EditDef declares
+#         X, then Check: warn=False said over a container that still
+#         has X unset — a real gap goes unreported.
+#       - built=True (build saw X declared), then EditDef undeclares X,
+#         then Check: warn=True said over a container that already has
+#         X set — a false alarm.
+
+role EnvCheck:
+    action Init:
+        self.status = "idle"
+        self.declared = False
+        self.built = False
+        self.checked = False
+        self.warn = False
+
+    # Start or Restart: both snapshot the definition's current word on X
+    # into what this build actually gets, and clear the last verdict.
+    atomic fair action Build:
+        require self.status != "building"
+        self.status = "building"
+        self.built = self.declared
+        self.checked = False
+        self.warn = False
+
+    atomic fair action BuildDone:
+        require self.status == "building"
+        self.status = "up"
+
+    # A person or an agent edits the project definition; not excluded
+    # by a build being out.
+    atomic action EditDef:
+        self.declared = not self.declared
+
+    # settled(): reads the definition fresh, right now, and reports.
+    atomic fair action Check:
+        require self.status == "up"
+        self.checked = True
+        self.warn = not self.declared
+
+action Init:
+    envCheck = EnvCheck()
+
+# The verdict is never shown before a settle has read it.
+always assertion WarnImpliesChecked:
+    return not envCheck.warn or envCheck.checked
+
+# checked (a reported verdict is on screen) only while the orb it is
+# about is up: Build always clears it on the way to building.
+always assertion CheckedOnlyWhenUp:
+    return not envCheck.checked or envCheck.status == "up"
+
+# The orb reaches "up".
+always eventually assertion ReachesUp:
+    return envCheck.status == "up"
+
+# Once up, a settle reports.
+always eventually assertion SettlesReport:
+    return envCheck.status != "up" or envCheck.checked

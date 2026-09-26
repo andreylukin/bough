@@ -1,0 +1,49 @@
+# POST /api/projects/from-repo files the unassigned sessions of one repo
+# group under a new project (there is no clone: the repo is only guessed
+# from the paths the sessions touched). Two imports of the same repo race
+# on the group and on the project directory; a name whose slug is taken
+# is refused with 409 and must leave the group untouched and no second
+# directory. GET /api/projects/by-repo lists the group only while it has
+# unassigned sessions.
+#
+# group: "unassigned" (listed by by-repo) | "filed" (sessions moved).
+# dirs: project directories carrying the slug (never more than one).
+# last: outcome of the latest import: none | created | not_found | exists.
+
+role Import:
+    action Init:
+        self.group = "unassigned"
+        self.dirs = 0
+        self.last = "none"
+
+    # A project directory with the wanted slug already exists (another
+    # client, or an earlier import of a different repo under the same name).
+    atomic action TakeName:
+        require self.dirs == 0
+        self.dirs = 1
+
+    atomic action Import:
+        require self.group == "unassigned"
+        if self.dirs == 1:
+            self.last = "exists"
+        else:
+            self.dirs = 1
+            self.group = "filed"
+            self.last = "created"
+
+    # A second import of the same repo after the group was filed.
+    atomic action ImportAgain:
+        require self.group == "filed"
+        self.last = "not_found"
+
+action Init:
+    imp = Import()
+
+always assertion OneDirectory:
+    return imp.dirs <= 1
+
+always assertion FiledMeansProject:
+    return imp.group != "filed" or imp.dirs == 1
+
+always assertion RefusalLeavesGroup:
+    return imp.last != "exists" or imp.group == "unassigned"

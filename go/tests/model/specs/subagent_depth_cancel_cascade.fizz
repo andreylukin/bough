@@ -1,0 +1,81 @@
+---
+deadlock_detection: false
+---
+
+# Esc on a parent turn cancels its running subagents (spawn/spawnAll)
+# but not its background jobs. Children live at depth 1 (they cannot
+# spawn), and end done, capped (step cap, partial result) or cancelled.
+# Code: go/plugins/tools, go/plugins/loop.
+#
+# Fields:
+#   turn   idle | running | cancelled
+#   c1,c2  none | running | done | capped | cancelled
+#   job    none | running | done
+#   grand  a child tried to spawn (denied at depth 1)
+#   partial  the parent holds a partial result from a capped/cancelled child
+
+role Parent:
+    action Init:
+        self.turn = "idle"
+        self.c1 = "none"
+        self.c2 = "none"
+        self.job = "none"
+        self.grand = False
+        self.partial = False
+
+    atomic action Prompt:
+        require self.turn == "idle" and self.c1 == "none"
+        self.turn = "running"
+
+    atomic action SpawnAll:
+        require self.turn == "running" and self.c1 == "none"
+        self.c1 = "running"
+        self.c2 = "running"
+
+    atomic action StartJob:
+        require self.turn == "running" and self.job == "none"
+        self.job = "running"
+
+    atomic action ChildSpawns:
+        require self.c1 == "running" and not self.grand
+        self.grand = True
+
+    atomic action FinishC1:
+        require self.c1 == "running"
+        self.c1 = "done"
+
+    atomic action CapC2:
+        require self.c2 == "running"
+        self.c2 = "capped"
+        self.partial = True
+
+    atomic fair action JobEnds:
+        require self.job == "running"
+        self.job = "done"
+
+    # esc: children die, the job does not.
+    atomic action Esc:
+        require self.turn == "running"
+        self.turn = "cancelled"
+        if self.c1 == "running":
+            self.c1 = "cancelled"
+            self.partial = True
+        if self.c2 == "running":
+            self.c2 = "cancelled"
+            self.partial = True
+
+    atomic action Finish:
+        require self.turn == "running" and self.c1 != "running" and self.c2 != "running"
+        self.turn = "idle"
+
+action Init:
+    parent = Parent()
+
+always assertion NoChildOutlivesEsc:
+    return parent.turn != "cancelled" or (parent.c1 != "running" and parent.c2 != "running")
+
+always assertion PartialNeedsEnd:
+    return (not parent.partial) or "capped" in [parent.c1, parent.c2] or "cancelled" in [parent.c1, parent.c2]
+
+always eventually assertion JobSettles:
+    return parent.job != "running"

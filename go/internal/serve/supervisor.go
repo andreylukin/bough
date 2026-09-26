@@ -2134,7 +2134,7 @@ func (s *Supervisor) EndProject(slug string) error {
 // path to keep in step with the TUI. plugin names the provider that
 // owns the model: a bare id keeps whichever provider the row runs, so
 // another provider's model would still go to the old one.
-func (s *Supervisor) SetModel(id, plugin, model string) error {
+func (s *Supervisor) SetModel(id, plugin, model, tag string) error {
 	model, plugin = strings.TrimSpace(model), strings.TrimSpace(plugin)
 	if model == "" {
 		return fmt.Errorf("serve: supervisor: model is required")
@@ -2143,7 +2143,7 @@ func (s *Supervisor) SetModel(id, plugin, model string) error {
 	if plugin != "" {
 		cmd = "/model " + plugin + " " + model
 	}
-	return s.pick(id, cmd, func(m *SessionMeta) *string { return &m.Model }, model)
+	return s.pick(id, cmd, func(m *SessionMeta) *string { return &m.Model }, model, tag)
 }
 
 // pick saves a model or effort choice (field of the session's meta) and
@@ -2151,7 +2151,13 @@ func (s *Supervisor) SetModel(id, plugin, model string) error {
 // the child told nothing, so it never runs a model the list does not
 // name. A Send that fails (the session archived, an ask pending, no
 // child to start) takes the saved choice back.
-func (s *Supervisor) pick(id, cmd string, field func(*SessionMeta) *string, val string) error {
+//
+// tag, when non-empty, holds this call at the gap between save and
+// deliver on BOUGH_TEST_STEP_GATE's "pick-<tag>" (see internal/stepgate):
+// two racing callers can then be released in whichever order a model
+// test wants to land their sends. Off in production, where nothing sets
+// the env var or passes a tag.
+func (s *Supervisor) pick(id, cmd string, field func(*SessionMeta) *string, val, tag string) error {
 	s.mu.Lock()
 	old, had := s.meta[id]
 	m := old
@@ -2163,6 +2169,11 @@ func (s *Supervisor) pick(id, cmd string, field func(*SessionMeta) *string, val 
 		return err
 	}
 	s.mu.Unlock()
+	if tag != "" {
+		if g := stepgate.Here(); g != nil {
+			defer g.Hold("pick-" + tag)()
+		}
+	}
 	if err := s.Send(id, cmd); err != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -2183,7 +2194,7 @@ func (s *Supervisor) SetEffort(id, level string) error {
 	if level == "" || !llm.ValidEffort(level) {
 		return fmt.Errorf("serve: supervisor: %q is not a reasoning level (have %s)", level, strings.Join(llm.Levels(), ", "))
 	}
-	return s.pick(id, "/think "+level, func(m *SessionMeta) *string { return &m.Effort }, level)
+	return s.pick(id, "/think "+level, func(m *SessionMeta) *string { return &m.Effort }, level, "")
 }
 
 // SetArchived hides a session. Archiving kills its child first: an

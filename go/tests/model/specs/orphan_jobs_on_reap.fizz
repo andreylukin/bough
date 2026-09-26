@@ -1,0 +1,161 @@
+---
+# Every path ends at rest: the old child gone, its job's history entry
+# closed (or, on the adopted path, the new child's own job left open
+# with nothing left to do to it in this flow) — not a deadlock.
+deadlock_detection: false
+---
+
+# A background job's typed history entries as one child dies and the
+# session file passes to whatever process holds it next
+# (go/internal/serve/orphan_jobs.go endOrphanJobs, called from
+# supervisor.go's reap goroutine after cmd.Wait returns).
+#
+# A job's process lives inside its child: a crash, `bough restart`, or a
+# clean stop kills the job with it, but nothing in the dying child says
+# so unless something writes a "finished" entry for it. Two things can
+# write one:
+#   - the job's own goroutine, mid-flush, if the process happened to
+#     exit right as the child died (NaturalFinish below);
+#   - endOrphanJobs, scanning the history for typed "started" entries
+#     with no matching "finished" and appending one with stopped:true.
+#
+# supervisor.go checks the lease twice around the reap — once right
+# after cmd.Wait (`leased`), once again right before calling
+# endOrphanJobs (`held`), with the mutex released in between — because
+# only the child currently holding `s.kids[id]` should touch the file.
+# If something reassigns the session to a new child in that window
+# (LeaseStolen), `held` reads false and endOrphanJobs is skipped
+# outright: whatever the old child's history says about the job stands
+# unedited, and the new child's own writes for the same job id (ids
+# restart at 1 per child) land on top of it.
+#
+# Fields (Session role) track what RunningJobs/killJob/the footer
+# actually see, which is the *last* typed event recorded for the job id
+# — not which child or which generation of the job wrote it:
+#   open          the id's last typed event is "started" (a client
+#                 reading history now would call the job running)
+#   dying         the child that started the job is reaping
+#   leaseStolen   the lease moved to a new child before the held check
+#   reapScanned   endOrphanJobs's held check has run once
+#   reapWritten   its outcome is final: it appended a close (or, on the
+#                 stolen path, never ran at all)
+#   scanOpen      what endOrphanJobs's read saw the id as, at its scan
+#   finishFlushed the job's own natural finish got written
+#   adopted       a new child started a job of its own under the same id
+#   gone          the old child fully released the lease (s.drop)
+#
+# Findings for the Go MBT step (not asserted here, so the spec itself
+# stays green; the adapter comparison is where the product proves or
+# disproves them):
+#   - On the stolen path, if the job never got a natural finish either,
+#     `open` stays true forever with the child gone: killJob answers ok
+#     for a job that has no process, and the footer never clears it.
+#   - The same path, once a new child starts its own job under the
+#     reused id (adopted), inherits whatever `open` already said — a
+#     late natural finish flush from the OLD child's goroutine landing
+#     after adoption would wrongly close the NEW job. Not modelled as a
+#     transition here (NaturalFinish requires `dying`, which ends at
+#     `gone`), but a MBT mismatch shaped like it is the same bug.
+
+role Session:
+    action Init:
+        self.open = False
+        self.dying = False
+        self.leaseStolen = False
+        self.reapScanned = False
+        self.reapWritten = False
+        self.scanOpen = False
+        self.finishFlushed = False
+        self.adopted = False
+        self.gone = False
+
+    # The model starts a background job (tools.bash background: true).
+    atomic action StartJob:
+        require not self.dying and not self.open
+        self.open = True
+
+    # The child crashes, is restarted, or is told to stop: cmd.Wait
+    # returns and the reap goroutine begins.
+    atomic fair action ChildADies:
+        require not self.dying
+        self.dying = True
+
+    # The job's own goroutine, still flushing as the process exits,
+    # writes the real "finished" entry — racing everything below.
+    atomic action NaturalFinish:
+        require self.dying and self.open and not self.finishFlushed
+        self.finishFlushed = True
+        self.open = False
+
+    # Something reassigns the session to a new child before the reap
+    # goroutine's second (`held`) check: endOrphanJobs is skipped, and
+    # nothing here ever closes the old typed "started" entry itself.
+    atomic action LeaseStolen:
+        require self.dying and not self.leaseStolen and not self.reapScanned
+        self.leaseStolen = True
+
+    # supervisor.go's `held` check. On the stolen path there is nothing
+    # left to scan — endOrphanJobs is never called, and the outcome is
+    # final at the same instant. On the normal path it takes a snapshot
+    # of whether the id is still open; the close it writes for that
+    # snapshot comes later (FinishReapWrite), leaving a window for
+    # NaturalFinish to land in between.
+    atomic fair action BeginReap:
+        require self.dying and not self.reapScanned
+        self.reapScanned = True
+        if self.leaseStolen:
+            self.reapWritten = True
+        else:
+            self.scanOpen = self.open
+
+    # endOrphanJobs appends the stopped:true close for whatever its scan
+    # saw open. A concurrent NaturalFinish before this point already
+    # closed it (scanOpen false); after this point it just adds a
+    # second, harmless "finished" entry.
+    atomic fair action FinishReapWrite:
+        require self.reapScanned and not self.reapWritten
+        self.reapWritten = True
+        if self.scanOpen:
+            self.open = False
+
+    # A new child starts a job of its own, reusing the id (ids restart
+    # per child). Only reachable once the handoff is either safe (the
+    # old child fully released the lease) or already broken
+    # (LeaseStolen put the new child in charge early).
+    atomic action ChildBAdopts:
+        require self.dying and not self.adopted
+        require self.gone or self.leaseStolen
+        self.adopted = True
+        self.open = True
+
+    # The old child's reap goroutine releases the lease (s.drop), which
+    # on the normal path only happens once endOrphanJobs has returned.
+    atomic action ChildAGone:
+        require self.dying and self.reapWritten and not self.gone
+        self.gone = True
+
+action Init:
+    session = Session()
+
+# On the normal (lease-held) path, once endOrphanJobs has run, the id
+# reads open only if a later, safely-handed-off adoption made it so —
+# never as a leftover from the old child.
+always assertion ReapClosesWhenHeld:
+    if session.reapWritten and not session.leaseStolen:
+        return not session.open or session.adopted
+    return True
+
+# A new child never adopts the id while the old one might still touch
+# it: either the old child is fully gone, or the lease was already
+# stolen out from under it.
+always assertion AdoptionOnlyAfterHandoff:
+    if session.adopted:
+        return session.gone or session.leaseStolen
+    return True
+
+# On the lease-held path, the reap always resolves — it neither hangs
+# nor writes twice.
+always eventually assertion ReapSettlesWhenHeld:
+    if not session.dying or session.leaseStolen:
+        return True
+    return session.reapWritten

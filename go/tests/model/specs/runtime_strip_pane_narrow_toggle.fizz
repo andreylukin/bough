@@ -1,0 +1,59 @@
+# RuntimeStrip folds its own metrics off a page-wide matchMedia(720px)
+# check plus its own DOM-collision detection (app.tsx ~2810); the pane
+# around it separately tracks paneNarrow off the thread container's own
+# clientWidth (<760px, app.tsx ~4428-4431). Both react to the same
+# underlying resize (a side panel opening/closing, or the window itself
+# narrowing) but each catches up through its own ResizeObserver, so a
+# session shown in a side panel versus full width can have the two
+# narrow signals disagree mid-session until both observers have fired.
+#
+# `wants` is what the width implies right now; `paneNarrow` and
+# `stripNarrow` are what each observer has actually recorded, and each
+# only catches up when its own Sync action runs — modelling the two
+# effects firing independently, in either order, or one lagging behind
+# the other across several resizes.
+
+role Layout:
+    action Init:
+        self.panelOpen = False
+        self.pageNarrow = False
+        self.paneNarrow = False
+        self.stripNarrow = False
+
+    atomic action OpenPanel:
+        require not self.panelOpen
+        self.panelOpen = True
+
+    atomic action ClosePanel:
+        require self.panelOpen
+        self.panelOpen = False
+
+    atomic action ResizePageNarrow:
+        require not self.pageNarrow
+        self.pageNarrow = True
+
+    atomic action ResizePageWide:
+        require self.pageNarrow
+        self.pageNarrow = False
+
+    # The pane's own ResizeObserver on the thread container.
+    atomic action SyncPane:
+        require self.paneNarrow != (self.panelOpen or self.pageNarrow)
+        self.paneNarrow = self.panelOpen or self.pageNarrow
+
+    # RuntimeStrip's own matchMedia + collision-detecting ResizeObserver,
+    # over the same underlying width but wired independently of SyncPane.
+    atomic action SyncStrip:
+        require self.stripNarrow != (self.panelOpen or self.pageNarrow)
+        self.stripNarrow = self.panelOpen or self.pageNarrow
+
+action Init:
+    layout = Layout()
+
+# Once neither observer has anything left to catch up on, they agree —
+# the two signals never settle on different answers, only diverge
+# transiently on the way there.
+always assertion SettledSignalsAgree:
+    paneSettled = layout.paneNarrow == (layout.panelOpen or layout.pageNarrow)
+    stripSettled = layout.stripNarrow == (layout.panelOpen or layout.pageNarrow)
+    return not (paneSettled and stripSettled) or layout.paneNarrow == layout.stripNarrow

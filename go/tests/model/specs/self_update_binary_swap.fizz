@@ -1,0 +1,62 @@
+# bough update: build next to the installed binary, rename over it, then
+# bounce the running serve onto it. A build failure leaves the installed
+# binary untouched (tmp removed); a failed rename removes the tmp; the
+# serve keeps its old embedded UI until restarted, so it is stale
+# whenever the installed binary is newer than the one it runs. A second
+# update while one is in flight is refused by nothing today: the model
+# says both build to pid-named temp files, so the swap stays atomic.
+
+role Updater:
+    action Init:
+        self.phase = "idle"        # idle | building | built
+        self.installed = "old"     # old | new
+        self.serve = "old"         # old | new | down
+        self.tmp = False           # a .bough-update-<pid> file exists
+
+    atomic action Start:
+        require self.phase == "idle"
+        self.phase = "building"
+        self.tmp = True
+
+    atomic action BuildFail:
+        require self.phase == "building"
+        self.phase = "idle"
+        self.tmp = False
+
+    atomic action BuildOk:
+        require self.phase == "building"
+        self.phase = "built"
+
+    atomic action Swap:
+        require self.phase == "built"
+        self.installed = "new"
+        self.tmp = False
+        self.phase = "swapped"
+
+    atomic action SwapFail:
+        require self.phase == "built"
+        self.tmp = False
+        self.phase = "idle"
+
+    atomic action Restart:
+        require self.phase == "swapped"
+        require self.serve != "new"
+        self.serve = "new"
+        self.phase = "idle"
+
+    atomic action RestartFail:
+        require self.phase == "swapped"
+        self.serve = "down"
+        self.phase = "idle"
+
+action Init:
+    u = Updater()
+
+always assertion NoTmpWhenIdle:
+    return u.phase != "idle" or not u.tmp
+
+always assertion ServeNeverNewerThanInstalled:
+    return u.serve != "new" or u.installed == "new"
+
+always assertion InstalledNeverPartial:
+    return u.installed in ("old", "new")

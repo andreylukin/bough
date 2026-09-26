@@ -1,0 +1,74 @@
+# CLI `bough --resume`: the picker lists a snapshot of sessions
+# (history.List, ties on mtime broken by id), the person picks one, and
+# meanwhile serve or another CLI process may append to or delete the file.
+#
+#   Snapshot  the picker reads the list: it shows the session iff the file exists
+#   Append    a concurrent writer touches the file (mtime tie; order stays stable)
+#   Remove    the file is deleted or archived away
+#   SwitchEngine  the session was recorded by the other engine
+#   Pick      resume the listed row: a live file resumes with its history
+#             and model sets whichever engine wrote it; a vanished file is
+#             a clean "gone" error, never a crash or an empty session
+#
+# Abstractions: one session, two engines, the tie is the order flag.
+
+role Session:
+    action Init:
+        self.file = "live"
+        self.listed = False
+        self.engine = "unreal"
+        self.recordedBy = "unreal"
+        self.order = "stable"
+        self.picked = "none"
+        self.modelKept = True
+
+    atomic action Snapshot:
+        require self.picked == "none"
+        self.listed = self.file == "live"
+
+    atomic action Append:
+        require self.file == "live"
+        require self.picked == "none"
+        self.order = "stable"
+
+    atomic action Remove:
+        require self.file == "live"
+        self.file = "gone"
+
+    atomic action SwitchEngine:
+        require self.picked == "none"
+        require self.file == "live"
+        self.recordedBy = "loop" if self.recordedBy == "unreal" else "unreal"
+
+    atomic action Pick:
+        require self.listed
+        require self.picked == "none"
+        if self.file == "live":
+            self.picked = "resumed"
+            self.engine = self.recordedBy
+        else:
+            self.picked = "missing"
+
+    # A new CLI launch: a fresh session file and picker.
+    atomic action Relaunch:
+        require self.picked != "none"
+        self.file = "live"
+        self.listed = False
+        self.picked = "none"
+        self.engine = "unreal"
+        self.recordedBy = "unreal"
+
+action Init:
+    session = Session()
+
+always assertion MissingOnlyWhenGone:
+    return session.picked != "missing" or session.file == "gone"
+
+always assertion ResumeUsesRecordedEngine:
+    return session.picked != "resumed" or session.engine == session.recordedBy
+
+always assertion ModelSetsSurviveResume:
+    return session.modelKept
+
+always assertion ListedOnlyIfSnapshotted:
+    return not session.listed or session.picked in ("none", "resumed", "missing") 

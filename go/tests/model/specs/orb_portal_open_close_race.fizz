@@ -1,0 +1,61 @@
+# tools.portal (go/plugins/orb/portal.go: registerPortalTools,
+# nativePortal, portalJSON) open/list/close against a live orb. Open
+# refuses unless the orb is running (OpenPortal's status check); once
+# open a portal outlives a stop — it is Close or the session exiting
+# that removes it, never the orb going down on its own. A restart gives
+# the orb a new address, and the running product re-points every open
+# portal's dial at it (RetargetPortals) so the URL a person already has
+# keeps working instead of reaching a dead IP.
+#
+# Close is idempotent (ClosePortal's nil-listener check on an
+# already-closed guest port): two overlapping closes, or a close racing
+# an open that has not landed yet, must settle on exactly one state —
+# closed, dial forgotten — never a double-close error and never a stale
+# dial left live on a closed portal.
+
+role Portal:
+    action Init:
+        self.orbRunning = True
+        self.orbIP = "ip1"
+        self.open = False
+        self.dial = ""
+
+    atomic action StopOrb:
+        require self.orbRunning
+        self.orbRunning = False
+
+    # A restart always brings the orb back with a new address; an open
+    # portal is retargeted at it in the same step (RetargetPortals),
+    # never left pointed at the dead one.
+    atomic action RestartOrb:
+        require not self.orbRunning
+        self.orbRunning = True
+        self.orbIP = "ip2"
+        if self.open:
+            self.dial = self.orbIP
+
+    atomic action Open:
+        require not self.open
+        require self.orbRunning
+        self.open = True
+        self.dial = self.orbIP
+
+    # Closing an already-closed portal is a no-op in the product
+    # (ClosePortal finds no listener for the guest port and returns
+    # nil), which is what makes two racing closers safe: both land
+    # here, and neither errors.
+    atomic action Close:
+        self.open = False
+        self.dial = ""
+
+action Init:
+    portal = Portal()
+
+always assertion DialSetOnlyWhileOpen:
+    return portal.open or portal.dial == ""
+
+always assertion DialMatchesOrbIPWhenOpen:
+    return not portal.open or portal.dial == portal.orbIP
+
+always assertion OpenOnlyEverStartedWhileRunning:
+    return not portal.open or portal.orbIP != ""

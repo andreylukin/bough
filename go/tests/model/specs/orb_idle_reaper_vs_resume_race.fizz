@@ -1,0 +1,175 @@
+# The idle reaper (internal/serve/reaper.go) races a session's own
+# restart of its container. reapIdleOrbs decides purely off state.json
+# and the history file's mtime, on a timer, in the serve process; the
+# child that owns the orb decides off the real container (Inspect) and
+# writes state.json under its own in-process lock (Orb.mu) in ITS OWN
+# process. Neither side takes the other's lock, so a command that needs
+# ensureRunningLocked to restart the container can land in the same
+# window as the reaper's stop, and orb.StopContainer's own
+# check-then-commit (MarkStopped writes "stopped" and remembers what it
+# replaced; a failed rt.Stop calls Restore with that snapshot) is not
+# atomic with anything the child does in between.
+#
+# orb_failure_reaper.fizz covers the reaper as a single fair transition
+# once an orb is idle; this spec is the interleaving that transition
+# hides — what happens between MarkStopped's snapshot and the runtime
+# call it is waiting on.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - reapIdleOrbs has NO owner/container guard for file in ("running",
+#     "failed") — that guard (a.ownerAlive / a.containerUp) exists only
+#     for the starting/building branch (an orphaned first start). A
+#     running or failed orb is reaped purely on the idle clock, however
+#     fresh the container really is the instant the reaper reads it.
+#   - orb.StopContainer's failure path (Restore(home, prev)) is a bare
+#     writeJSON of the pre-stop snapshot: no version check, no
+#     comparison with what is in the file now. Whatever the child wrote
+#     to state.json while the reaper's rt.Stop call was in flight is
+#     silently overwritten. (RestoreCanClobberFreshWork below.)
+#   - ensureRunningLocked's fast path (container already Inspect-running)
+#     never touches state.json at all: a command that lands while the
+#     container is still up rides straight through without writing
+#     "starting", so the reaper's snapshot is the only record of that
+#     instant — modelled as Activity, which never touches file/reap_prev.
+#
+# Fields (role Orb):
+#   file      state.json status: running | starting | failed | stopped
+#   ctr       the real container: running | stopped
+#   owner     a child process is alive for this session
+#   idle      no history and no state.json write for BOUGH_ORB_IDLE
+#   stopping  MarkStopped has written "stopped" and the reaper is
+#             waiting on rt.Stop; the file may already be stale
+#   reap_prev the status MarkStopped replaced, held for Restore if
+#             rt.Stop fails ("" once the call resolves either way)
+#   touched   the child wrote state.json (Command, StartOk or
+#             StartFails) while stopping was true, i.e. after the
+#             snapshot was taken and before the reaper's call resolved
+#   clobbered a Restore fired after the file was touched: the reaper
+#             overwrote a write nobody told it about
+
+role Orb:
+    action Init:
+        self.file = "running"
+        self.ctr = "running"
+        self.owner = True
+        self.idle = False
+        self.stopping = False
+        self.reap_prev = ""
+        self.touched = False
+        self.clobbered = False
+
+    # --- the session ---
+
+    # Time passes with nothing written (no history, no state.json).
+    atomic action GoIdle:
+        require not self.idle and self.file in ("running", "failed")
+        self.idle = True
+
+    # A command reaches a live, already-running container: the fast
+    # path in ensureRunningLocked, which returns before touching
+    # state.json.
+    atomic action Activity:
+        require self.owner and self.idle and self.file == "running" and self.ctr == "running"
+        self.idle = False
+
+    # The child exits (idle child timeout, archive). An owned, up
+    # container is stopped as part of that exit, same as
+    # orb_failure_reaper's OwnerExits, and can do so while the reaper's
+    # own stop of the same container is in flight.
+    atomic action OwnerExits:
+        require self.owner and self.file != "starting"
+        self.owner = False
+        if self.ctr == "running":
+            self.ctr = "stopped"
+
+    # A command that needs the container back: ensureRunningLocked's
+    # slow path. It writes state.json "starting" and starts the
+    # container, whatever the reaper is doing to the same file right
+    # now — there is no lock in common.
+    atomic action Command:
+        require self.ctr != "running" and self.file != "starting"
+        if self.stopping:
+            self.touched = True
+        self.owner = True
+        self.file = "starting"
+        self.idle = False
+
+    atomic fair action StartOk:
+        require self.file == "starting"
+        if self.stopping:
+            self.touched = True
+        self.ctr = "running"
+        self.file = "running"
+
+    atomic fair action StartFails:
+        require self.file == "starting"
+        if self.stopping:
+            self.touched = True
+        self.file = "failed"
+
+    # --- the reaper ---
+
+    # reapIdleOrbs, then orb.StopContainer's MarkStopped: snapshot the
+    # file, write "stopped". Enabled on file alone — running or failed,
+    # owner and container whatever they really are right now.
+    atomic fair action ReapMark:
+        require self.idle and self.file in ("running", "failed") and not self.stopping
+        self.reap_prev = self.file
+        self.touched = False
+        self.file = "stopped"
+        self.stopping = True
+
+    # rt.Stop succeeds: the container really does go down under the
+    # reaper's own call.
+    atomic fair action ReapStopOk:
+        require self.stopping and self.ctr == "running"
+        self.ctr = "stopped"
+        self.stopping = False
+        self.reap_prev = ""
+
+    # rt.Stop fails (the container was already down under it, a runtime
+    # timeout, anything) and StopContainer's own Inspect does not see it
+    # missing: Restore(prev) writes the snapshot back over whatever the
+    # file says now, unconditionally.
+    atomic fair action ReapStopFailRestore:
+        require self.stopping
+        if self.touched:
+            self.clobbered = True
+        self.file = self.reap_prev
+        self.stopping = False
+        self.reap_prev = ""
+
+action Init:
+    orb = Orb()
+
+# The reaper's own bookkeeping is internally consistent: a pending
+# snapshot exists exactly while a stop is in flight.
+always assertion SnapshotHeldWhileStopping:
+    return orb.stopping == (orb.reap_prev != "")
+
+# A child's start never hangs, reaper or no reaper.
+always eventually assertion StartsSettle:
+    return orb.file != "starting"
+
+# The reaper's own call always resolves.
+always eventually assertion ReaperCallSettles:
+    return not orb.stopping
+
+# An idle running or failed orb is eventually reaped (or overtaken by a
+# fresh command, which is also a resolution: file leaves "starting" and
+# idle is false again either way).
+always eventually assertion IdleEventuallyHandled:
+    return not (orb.idle and orb.file in ("running", "failed") and not orb.stopping)
+
+# KNOWN GAP (not asserted; added to a copy of this spec and fizz failed
+# it on the trace shown): RestoreCanClobberFreshWork. The reaper can
+# snapshot a session at file="failed", then a command restarts it clean
+# to file="running" while the reaper's rt.Stop call is still out; if
+# that call then fails for any reason, StopContainer's Restore writes
+# "failed" straight back over the now-healthy session, with no owner or
+# container check at all — a running session is shown failed until the
+# next idle cycle or command corrects it:
+#   always assertion RestoreNeverClobbersFreshWork:
+#       return not orb.clobbered
+# fizz: GoIdle, ReapMark, Command, StartOk (or OwnerExits then Command
+# then StartOk), ReapStopFailRestore.

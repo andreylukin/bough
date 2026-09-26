@@ -1,0 +1,124 @@
+# Hot-reloading bough.yml/project.yml while a turn is open
+# (go/kernel/loader.go overlay/Mount, go/kernel/reconcile.go
+# Reconcile/settle, go/cmd/bough/main.go watchConfig/reload/runtimeSet).
+#
+# The file watcher debounces an edit 300ms and calls reload() -> src.load()
+# (embedded base + file overlay by row id) -> applyOverrides (replays every
+# recorded --set/runtime-set, so those survive a later file edit) ->
+# Reconcile, with no gate on an open turn (only the init-js row's Apply
+# holds the VM lock across its own remount; every other row unmounts and
+# remounts mid-turn same as idle). Reconcile drops a row whose spec
+# changed and, transitively, every mounted row that injects or observes a
+# key the drop withdrew (reconcile.go's dependent closure), then settle()
+# mounts whatever is now dependency-satisfied and leaves the rest Pending.
+# A row whose Apply errored goes Failed and is never retried by a
+# dependency landing later — only a spec change (plugin, config or
+# disabled) forgets the failure (reconcile.go's `c.failed` bookkeeping).
+# This is the ordering the home-config-only-row bug (5dd3daec) got wrong:
+# a row only the home config adds used to mount after the settle pass
+# that its own dependents needed, so they briefly ran without it.
+#
+# Modeled as one provider row ("a", e.g. an llm-small row a home config
+# adds) and one dependent row ("b") that injects a's provided key, plus
+# whether a's own dependency ("upstream", e.g. the llm row's key) is
+# satisfied. A turn is open or not, orthogonal to every config action —
+# the point of the flow is that edits are not blocked or deferred by one.
+#
+# Fields (Config role):
+#   a         "mounted" | "pending" | "failed": the provider row
+#   b         "mounted" | "pending": the row that injects a's key
+#   upstream  "ok" | "missing": whether a's own dependency is met
+#   override  a --set/runtime-set has been layered onto a's config
+#   turnOpen  a bough turn is in flight, interleaved with edits
+
+role Config:
+    action Init:
+        self.a = "mounted"
+        self.b = "mounted"
+        self.upstream = "ok"
+        self.override = False
+        self.turnOpen = False
+
+    # ---- the running turn, orthogonal to every config action below ----
+
+    atomic action StartTurn:
+        require not self.turnOpen
+        self.turnOpen = True
+
+    atomic action EndTurn:
+        require self.turnOpen
+        self.turnOpen = False
+
+    # ---- what a live edit does, via reconcile's drop + settle ----
+
+    # a's own dependency (another row's key) goes away: a is mounted, so
+    # it unmounts (the dependent closure), taking b with it. Neither
+    # remounts: upstream is still missing.
+    atomic action UpstreamBreaks:
+        require self.upstream == "ok"
+        self.upstream = "missing"
+        if self.a == "mounted":
+            self.a = "pending"
+            self.b = "pending"
+
+    # a's dependency comes back. settle mounts a only if it is Pending —
+    # a Failed row is never retried by a dependency landing; only a spec
+    # change forgets a failure (reconcile.go). b follows a.
+    atomic fair action UpstreamHeals:
+        require self.upstream == "missing"
+        self.upstream = "ok"
+        if self.a == "pending":
+            self.a = "mounted"
+            self.b = "mounted"
+
+    # A file edit that leaves a's config valid: reconcile drops a (spec
+    # changed) and b with it, forgets any Failed record for a (the spec
+    # changed), then settle remounts both if upstream allows.
+    atomic fair action EditGoodConfig:
+        self.b = "pending"
+        if self.upstream == "ok":
+            self.a = "mounted"
+            self.b = "mounted"
+        else:
+            self.a = "pending"
+
+    # A file edit whose value a's Apply rejects: same drop, but the
+    # remount attempt itself fails (only reachable when upstream is met,
+    # or settle never attempts the mount at all).
+    atomic action EditBadConfig:
+        require self.upstream == "ok"
+        self.a = "failed"
+        self.b = "pending"
+
+    # A runtime --set (runtimeSet): recorded so a later file-watch reload
+    # replays it too (main.go's ov.all()); otherwise it is the same kind
+    # of edit as EditGoodConfig.
+    atomic action SetOverride:
+        require not self.override
+        self.override = True
+        self.b = "pending"
+        if self.upstream == "ok":
+            self.a = "mounted"
+            self.b = "mounted"
+        else:
+            self.a = "pending"
+
+action Init:
+    config = Config()
+
+# b is never mounted without its provider, and never left behind once a
+# is: settle resolves both in the same reconcile call reconcile.go makes,
+# so there is no reachable state with one mounted and not the other.
+always assertion DependentTracksProvider:
+    return (config.a == "mounted") == (config.b == "mounted")
+
+# a is never stuck Pending once its own dependency is satisfied: the
+# reconcile step that heals or edits it always attempts (and, absent a
+# bad value, succeeds at) the mount in the same call.
+always assertion NoStrandedPending:
+    return not (config.upstream == "ok" and config.a == "pending")
+
+# The tree always eventually gets everything mountable mounted (fair
+# heals and edits), even if a turn is open the whole time.
+always eventually assertion ConfigSettles:
+    return config.a != "pending"

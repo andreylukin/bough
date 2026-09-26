@@ -1,0 +1,52 @@
+# context-md: AGENTS.md/CLAUDE.md/MEMORY.md are deduped and prepended once at
+# session start; a later edit (including an agent write to project MEMORY.md)
+# reaches the model only as an appended context-update on a later turn. The
+# first input is never rewritten: it would break the prompt cache and is a 400
+# on later turns for some models.
+#
+# disk is the file's revision (0..2), first is the revision baked into the
+# first input (-1 = not started), told is the newest revision the model has
+# seen, updates counts appended context-updates, dup is whether CLAUDE.md
+# repeats AGENTS.md (the copy is dropped from the prompt, never sent twice).
+
+role Context:
+    action Init:
+        self.disk = 0
+        self.first = -1
+        self.told = -1
+        self.updates = 0
+        self.dup = True
+        self.sent_copies = 0
+
+    atomic action Start:
+        require self.first == -1
+        self.first = self.disk
+        self.told = self.disk
+        self.sent_copies = 1
+
+    atomic action Edit:
+        require self.disk < 2
+        self.disk = self.disk + 1
+
+    atomic action ToggleDup:
+        self.dup = not self.dup
+
+    atomic action Turn:
+        require self.first != -1 and self.told != self.disk
+        self.told = self.disk
+        self.updates = self.updates + 1
+
+action Init:
+    ctx = Context()
+
+always assertion FirstInputNeverRewritten:
+    return ctx.first == -1 or ctx.first <= ctx.told
+
+always assertion UpdateOnlyAfterStart:
+    return ctx.first != -1 or ctx.updates == 0
+
+always assertion DedupedOnce:
+    return ctx.sent_copies <= 1
+
+always assertion UpdatesBounded:
+    return ctx.updates <= 2

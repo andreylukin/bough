@@ -1,0 +1,38 @@
+# The sidebar's collapsed/open state persists in localStorage
+# ("bough:side-closed"); a finish notice arriving force-reopens it by
+# writing the key back to "0" (app.tsx ~611, the reveal effect ~628).
+# A person closing the sidebar at the same moment a notice lands races
+# that write: whichever setSide/localStorage.setItem call lands last
+# decides whether the sidebar ends up open or closed, independent of
+# which of the two the person actually did last. justNotified records
+# that the most recent transition was the notice's own forced write, so
+# the invariant below is the one thing that IS always true: a notice
+# always leaves the sidebar open, whatever it was before.
+
+role Sidebar:
+    action Init:
+        self.closed = False
+        self.justNotified = False
+
+    atomic action Close:
+        require not self.closed
+        self.closed = True
+        self.justNotified = False
+
+    atomic action Open:
+        require self.closed
+        self.closed = False
+        self.justNotified = False
+
+    # A finish notice reveals its row unconditionally: it force-reopens
+    # even when the person just closed the sidebar, and even when it was
+    # already open.
+    atomic action Notice:
+        self.closed = False
+        self.justNotified = True
+
+action Init:
+    sidebar = Sidebar()
+
+always assertion NoticeLeavesOpen:
+    return not sidebar.justNotified or not sidebar.closed

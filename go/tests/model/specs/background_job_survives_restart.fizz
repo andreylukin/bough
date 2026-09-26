@@ -1,0 +1,169 @@
+---
+# Every path ends at rest: the job's process settled, its history
+# closed, the session resumed — not a deadlock.
+deadlock_detection: false
+---
+
+# Whether a background job survives `bough update` / `bough restart`,
+# and whether the resumed session is ever told what happened to it.
+#
+# Code:
+#   go/plugins/tools/jobs.go start(): tools.bash(cmd, limit) detaches the
+#     command as a plain os/exec child of the headless bough process —
+#     no Setpgid, so it is not a process-group leader and nothing signals
+#     it independently of that process. Its notice is delivered through
+#     Jobs.Stop() (jctx cancelled), wired as a kernel Effect
+#     (tools.go: ctx.Effect(st.jobs.Stop)) that fires on the row's own
+#     unmount — a graceful shutdown of THIS process.
+#   go/internal/serve/supervisor.go Supervisor.Close() (the path
+#     `bough update`/`bough restart` take through restartServe in
+#     cmd/bough/update.go): SIGINTs nothing — killChild calls
+#     ch.cmd.Process.Kill() directly, a SIGKILL to the headless child's
+#     single PID. SIGKILL is not caught, so the child's own row unmount,
+#     and with it Jobs.Stop/cancelJobs, never runs. The job's process is
+#     a grandchild of serve, not of the PID that was killed, so the
+#     SIGKILL never reaches it: a job still running when the kill lands
+#     is not stopped by anything in this path — it becomes an orphan of
+#     init, running unobserved.
+#   internal/serve/orphan_jobs.go endOrphanJobs, called from the reap
+#     goroutine after cmd.Wait (supervisor.go ~905-925): scans the dead
+#     child's history for a typed "started" with no matching "finished"
+#     and appends one with stopped:true — unconditionally. It has no way
+#     to know whether the process it is writing off actually exited; it
+#     only knows the child that would have told it is gone.
+#   restartServe (cmd/bough/update.go) relaunches serve; the session's
+#     next input (or a queued drain) spawns a brand new headless child
+#     for the same id (Supervisor.ensure, `-r <id>`), with its own
+#     tools.Jobs registry starting empty — no notice object for the old
+#     job id exists in it to ever wake or queue an input.
+#
+# So the two things this flow pins down, both real gaps between what
+# history says and what is true:
+#   - A background job that is still running when the SIGKILL lands is
+#     never killed by anything in the restart path (unlike a plain
+#     SIGINT/unmount, background_bash_jobs.fizz's ChildExits, which does
+#     kill it via Jobs.Stop). It keeps running as an orphan.
+#   - endOrphanJobs writes "finished, stopped:true" for it regardless,
+#     so the very history a resumed session and a person reading it
+#     trust says the job is done. RunningJobs/the footer in the resumed
+#     session read that entry and report nothing running.
+#   - Nobody in the resumed session can name the old job id (ids restart
+#     per child, per jobs.go's comment), so even if a person notices the
+#     orphan process is still there (e.g. `ps`, or a port still bound),
+#     killJob has nothing to kill it by. The only way it ends is on its
+#     own.
+#   - Consequently, the job's actual completion (whenever it happens) is
+#     never delivered to the model as a notice: no live child holds a
+#     Jobs registry entry for it by the time it finishes. A resumed
+#     session's turn never wakes for it, unlike an idle session waking
+#     for an ordinary in-process finish (background_bash_jobs.fizz's
+#     NoticeDelivered / jobWake).
+#
+# One session, at most one background job, across at most one restart.
+# Fields:
+#   child     alive (the original headless process) | killed (SIGKILL
+#             sent, not yet reaped) | gone (reaped, history settled) |
+#             resumed (a new child has started on the same session id)
+#   job       running | orphaned (still a real process, no longer
+#             anyone's) | exited (the OS process itself has ended,
+#             whichever way)
+#   typed     the last typed job entry in history: none | started |
+#             closed (a "finished" entry, natural or the reaper's)
+#   running   ground truth: is the job's OS process still alive
+#   reachable can *anything* still address this job by its old id (kill
+#             it, poll it)? True only while the original child is alive.
+#   delivered has the job's outcome ever reached a live turn as a notice
+#             (an input, or a wake)?
+#
+# Findings (left undocumented as claims so the check stays green,
+# same convention as background_bash_jobs.fizz):
+#   - `running` can be True at every state after `typed` reads "closed":
+#     the reaper's write is not evidence the process is gone.
+#   - `reachable` goes False forever at ReapWritesHistory, well before
+#     the job may actually end: a `bough restart` at the wrong moment
+#     turns a normal background job into a leak nothing in bough can
+#     stop.
+
+role Session:
+    action Init:
+        self.child = "alive"
+        self.job = "running"
+        self.typed = "started"
+        self.running = True
+        self.reachable = True
+        self.delivered = False
+
+    # The ordinary path (background_bash_jobs.fizz's territory): the
+    # command exits on its own while its own child is still up. Jobs
+    # delivers the notice in-process, live.
+    atomic fair action JobFinishesNaturally:
+        require self.job == "running" and self.child == "alive"
+        self.job = "exited"
+        self.typed = "closed"
+        self.running = False
+        self.reachable = False
+        self.delivered = True
+
+    # `bough update`/`bough restart`: Supervisor.Close SIGKILLs the
+    # headless child directly. No unmount runs, so Jobs.Stop and its
+    # cancelJobs() never fire — a running job is left completely alone.
+    atomic action RestartKillsChild:
+        require self.child == "alive"
+        self.child = "killed"
+        if self.job == "running":
+            self.job = "orphaned"
+
+    # The reap goroutine's endOrphanJobs: writes the close unconditionally
+    # once the child is confirmed dead, whatever the job's real state.
+    atomic fair action ReapWritesHistory:
+        require self.child == "killed"
+        self.child = "gone"
+        if self.typed == "started":
+            self.typed = "closed"
+        self.reachable = False
+
+    # restartServe brings serve back up; the session's next input (or a
+    # queued drain) spawns a fresh child for the same id, with an empty
+    # Jobs registry — nothing in it can name the old job.
+    atomic fair action NewChildStarts:
+        require self.child == "gone"
+        self.child = "resumed"
+
+    # The orphaned process is not immortal: it ends on its own, sometime,
+    # with nobody left registered to hear about it.
+    atomic fair action OrphanProcessExits:
+        require self.job == "orphaned" and self.running
+        self.running = False
+
+action Init:
+    session = Session()
+
+# A notice is delivered only through the process that started the job
+# still being the one that answers for it: a job still running when the
+# restart's SIGKILL lands (job goes "orphaned") never gets its outcome
+# delivered to any turn, in this restart or after it resumes.
+always assertion NoDeliveryForOrphanedJob:
+    return session.job != "orphaned" or not session.delivered
+
+# History can only ever record one closing entry for the job.
+always assertion TypedClosesOnce:
+    return session.typed in ("none", "started", "closed")
+
+# reachable can only be true while the original child might still answer
+# for the job — once the reap has run (or the job already finished on
+# its own) nothing can address it by this id again.
+always assertion ReachableOnlyBeforeReap:
+    if session.child in ("gone", "resumed"):
+        return not session.reachable
+    return True
+
+# The job's real process state never un-exits.
+transition assertion RunningNeverRevives(before, after):
+    if not before.session.running:
+        return not after.session.running
+    return True
+
+# Every path settles: the job's process has actually ended and history
+# has closed it out, whether or not a restart happened along the way.
+always eventually assertion Settles:
+    return not session.running and session.typed == "closed"

@@ -1,0 +1,65 @@
+# cmd/bough/stale.go's staleNotice compares the running binary's build
+# revision/mtime against the checkout's HEAD and newest .go mtime, and is
+# computed once per process (shown at TUI launch and in --version); it
+# never recomputes mid-session. update.go's runUpdate rebuilds and
+# restarts, which is the only thing that can clear it.
+#
+# A dev editing sources, or a background `git pull`, can change the
+# checkout underfoot while a session is open: this session's displayed
+# notice does not move, but the checkout is now ahead of what the notice
+# last said. That gap is `underfoot`. An edit that lands while `bough
+# update` is already rebuilding is the sharper case: the rebuild may have
+# already read the tree, so the freshly restarted binary can be stale
+# again the instant it starts — `missed` tracks that a restart happened
+# without the last edit necessarily being in the binary it produced.
+
+role Session:
+    action Init:
+        self.notice = "none"
+        self.underfoot = False
+        self.updating = False
+        self.restarted = False
+        self.missed = False
+
+    atomic action Edit:
+        require not self.updating
+        self.notice = "stale"
+        self.underfoot = True
+
+    atomic action StartUpdate:
+        require not self.updating
+        require self.notice == "stale"
+        self.updating = True
+
+    atomic action EditDuringUpdate:
+        require self.updating
+        self.notice = "stale"
+        self.underfoot = True
+        self.missed = True
+
+    atomic action FinishUpdate:
+        require self.updating
+        self.updating = False
+        self.restarted = True
+        self.notice = "none"
+        self.underfoot = False
+
+action Init:
+    session = Session()
+
+# The notice this session shows never moves except through a restart:
+# it is read once at launch, and Edit only ever moves it stale, never
+# clears it, so nothing but FinishUpdate can bring it back to "none".
+always assertion NoticeOnlyClearedByRestart:
+    return session.notice == "none" or session.notice == "stale"
+
+# A clear notice always means the update flow is idle: FinishUpdate is
+# the only place that clears the notice, and it clears `updating` in the
+# same atomic step.
+always assertion NoticeNoneImpliesNotUpdating:
+    return session.notice != "none" or not session.updating
+
+# missed only means anything once a restart has actually happened; a
+# session that never updated cannot have "missed" a rebuild.
+always assertion MissedImpliesRestarted:
+    return not session.missed or session.restarted or session.updating

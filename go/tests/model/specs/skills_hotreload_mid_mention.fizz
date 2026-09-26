@@ -1,0 +1,123 @@
+# The skills row is hot-reloadable (go/plugins/skills/skills.go): its
+# pools are rescanned from disk on every Inject/scan call rather than
+# once at mount, so a config change, an edit under a pool, or a plain
+# `git pull` landing between two points in one turn is visible mid-turn
+# with no remount needed. This flow models that window: the composer
+# already resolved an "@"/"/" mention to a skill name (skills_mentions.fizz
+# PickMention/PickSkill), the draft is sent, and only later — when the
+# engine actually builds the prompt — does Inject() reopen the pools and
+# read that skill's SKILL.md (Skills.Inject: `body, err :=
+# os.ReadFile(skills[name].path)`, skipped silently with a log line on
+# any error). Between "resolved" and "read" the skill can be removed
+# (folder deleted or off.yml switched it off — scan() drops the entry,
+# Inject finds no match and never even tries the read), renamed (the
+# resolved name no longer keys anything — same outcome), or replaced
+# (a new SKILL.md lands at the same name — the read succeeds but the
+# body is not the one the picker showed).
+#
+# Scope, to keep this to one small race: one skill, one mention, one
+# message. The composer side collapses to a single PickSkill (either
+# picker, per skills_mentions.fizz's own note that picking only edits
+# the draft) since only the resolved/not-resolved edge matters here.
+# poolAtRead freezes what the pool looked like at the one moment that
+# matters (EngineReads); the pool itself keeps changing after that, as
+# it does on the real row, with no effect on a turn already processed.
+
+role Mention:
+    action Init:
+        self.pool = "present"
+        self.poolAtRead = ""
+        self.resolved = False
+        self.sent = False
+        self.read = False
+        self.injected = False
+        self.stale = False
+
+    # Either picker (Skills button or "/"/"@" mention) puts the skill's
+    # name at the front of the draft. Nothing runs yet.
+    atomic action PickSkill:
+        require self.pool == "present" and not self.resolved and not self.sent
+        self.resolved = True
+
+    # The draft, lead "/name", goes to the loop as this turn's input.
+    # Send does not touch the skill: it is plain history at this point.
+    atomic action Send:
+        require self.resolved and not self.sent
+        self.sent = True
+
+    # A hot reload of the skills row's backing pools: scan() rereads disk
+    # on every call, with no mount/remount involved, so the pool's state
+    # can change at any point in the walk, including after the engine has
+    # already read for this turn — a later reload just no longer matters
+    # to a message already processed. Modelled as the four states the
+    # resolved name can be in when something next looks: present (as the
+    # picker last saw it), removed (rmdir, or off.yml switching it off —
+    # scan() drops the entry either way), renamed (the directory moved,
+    # so the resolved name keys nothing), or replaced (a new SKILL.md
+    # landed at the same name).
+    atomic action ReloadPresent:
+        require self.pool != "present"
+        self.pool = "present"
+
+    atomic action ReloadRemove:
+        require self.pool != "removed"
+        self.pool = "removed"
+
+    atomic action ReloadRename:
+        require self.pool != "renamed"
+        self.pool = "renamed"
+
+    atomic action ReloadReplace:
+        require self.pool != "replaced"
+        self.pool = "replaced"
+
+    # The engine builds the prompt and calls Inject(input), which
+    # rescans the pools live and, only on a hit, reads the SKILL.md off
+    # disk. A removed or renamed skill is just absent from scan()'s map:
+    # Inject finds no match for the name still sitting in the sent text
+    # and silently sends the turn with no skill block — the message
+    # reads as a bare "/name ..." line to the model. A replaced skill
+    # is still found and still read, but its body is never the one the
+    # picker showed when the mention resolved.
+    atomic fair action EngineReads:
+        require self.sent and not self.read
+        self.read = True
+        self.poolAtRead = self.pool
+        self.injected = self.pool == "present" or self.pool == "replaced"
+        self.stale = self.pool == "replaced"
+
+action Init:
+    mention = Mention()
+
+# Nothing is sent before a mention resolved it as the message's lead.
+always assertion SentRequiresResolved:
+    return not mention.sent or mention.resolved
+
+# The engine only reads a body for a turn that was actually sent.
+always assertion ReadRequiresSent:
+    return not mention.read or mention.sent
+
+# A block is only injected once the engine has done its read this turn.
+always assertion InjectedRequiresRead:
+    return not mention.injected or mention.read
+
+# Once read, injected reflects the pool as it stood at that moment, not
+# as it stood when the mention was picked — this is the race: a resolved
+# mention is no guarantee the body still exists by send time.
+always assertion InjectMatchesPoolAtRead:
+    return not mention.read or mention.injected == (mention.poolAtRead == "present" or mention.poolAtRead == "replaced")
+
+# A stale inject only happens on a same-name replace, never on a clean
+# present read or on a removed/renamed miss.
+always assertion StaleOnlyOnReplace:
+    return not mention.stale or mention.poolAtRead == "replaced"
+
+# A stale body is still an injected one — the model got something, just
+# not what the picker showed.
+always assertion StaleImpliesInjected:
+    return not mention.stale or mention.injected
+
+# The turn always finishes able to say what happened: read is the only
+# gate on injected/stale, so once sent, the walk eventually reads.
+always eventually assertion EventuallyReadOnceSent:
+    return not mention.sent or mention.read

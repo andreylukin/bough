@@ -1,0 +1,135 @@
+---
+# A job that has finished (state == done) has nothing left to do: that
+# is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# tools.jobkill(id) racing a background job's own natural exit
+# (go/plugins/tools/jobs.go). One background job, already running.
+#
+# jobKill (jobIn/jobKill, ~line 618) does its check-then-act without
+# holding the job's lock across both halves:
+#   b.mu.Lock(); done, cancel, kill := b.done, b.cancel, b.kill
+#   if !done && kill != nil { b.killed = true }
+#   b.mu.Unlock()
+#   if kill != nil { kill() } else { cancel() }
+# The read of b.done and the write of b.killed are atomic together
+# (one lock), but the actual cancel()/kill() call that stops the
+# process happens after the unlock. In that gap the job's own Wait()
+# goroutine (start(), ~line 448) can run to completion independently:
+# it takes the same lock, sets b.done = true and classifies the exit
+# from ctx.Err()/the process's own err, then calls recordJob("finished")
+# and notify() — using b.line(), whose status() (~line 149) checks
+# b.killed *before* the job's own err, unconditionally.
+#
+# So: jobKill can observe done == false, set killed = true and return
+# "job N killed" to its caller, while the job's goroutine — already
+# past its own point of no return — finishes on its own a moment
+# later with a clean exit. The finish notice and every later
+# tools.jobs()/tools.job() read then report "killed" for a job that
+# actually ran to completion; its real exit code and output are still
+# recorded but the status line lies about why it ended.
+#
+# State (Job role, one job, already running — job creation and the
+# until/limit paths are background_bash_jobs.fizz's job):
+#   state       running | done                  (b.done)
+#   kill_stage  none | acting | called | noop    (jobKill's progress)
+#   kills       jobKill calls made (capped at 1: a second call sees
+#               state != running the same way, adds no new interleaving)
+#   killed_flag b.killed, set the moment jobKill's locked check runs
+#   cause       "" | exit0 | failed | killed_ctx
+#               (why the process actually ended, independent of
+#               killed_flag: exit0/failed is the job ending on its own,
+#               clean or not — a timeout or a quit are the same "not a
+#               clean exit" shape as a failure here; killed_ctx is the
+#               process actually dying from jobKill's cancel())
+#   notified    the finish notice/recordJob fired (exactly once: there
+#               is one Wait() goroutine, so no literal double notify —
+#               what races is which story it tells)
+#   reported    the status tools.jobs()/the notice ends up showing,
+#               computed from killed_flag/cause the way status() does
+
+MAX_KILLS = 1
+
+role Job:
+    action Init:
+        self.state = "running"
+        self.kill_stage = "none"
+        self.kills = 0
+        self.killed_flag = False
+        self.cause = ""
+        self.notified = False
+        self.reported = ""
+
+    # The locked half: read b.done, and if it was still false, commit
+    # to reporting "killed" right away — before the process has
+    # actually been touched.
+    atomic action JobKill:
+        require self.kill_stage == "none" and self.kills < MAX_KILLS
+        self.kills = self.kills + 1
+        if self.state == "running":
+            self.killed_flag = True
+            self.kill_stage = "acting"
+        else:
+            self.kill_stage = "noop"
+
+    # The unlocked half: the actual cancel()/kill() call. Nothing reads
+    # kill_stage == "called" here except CancelStopsIt below — if the
+    # job already finished on its own first, this call lands on a dead
+    # process and does nothing.
+    atomic action KillCancelCall:
+        require self.kill_stage == "acting"
+        self.kill_stage = "called"
+
+    # The job finishing on its own: it was going to exit clean, fail,
+    # time out, or be killed at bough quit regardless of jobKill. This
+    # is enabled the whole time the job is running, including in the
+    # gap between JobKill's read and its cancel() call.
+    atomic fair action ProcessEnds:
+        require self.state == "running"
+        self.state = "done"
+        clean = oneof [True, False]
+        if clean:
+            self.cause = "exit0"
+        else:
+            self.cause = "failed"
+        self.notified = True
+        if self.killed_flag:
+            self.reported = "killed"
+        elif clean:
+            self.reported = "exited0"
+        else:
+            self.reported = "failed"
+
+    # cancel() actually reaching the process before it would otherwise
+    # have ended: the one path where the kill is what stopped it.
+    atomic fair action CancelStopsIt:
+        require self.kill_stage == "called" and self.state == "running"
+        self.state = "done"
+        self.cause = "killed_ctx"
+        self.notified = True
+        self.reported = "killed"
+
+action Init:
+    job = Job()
+
+# status() always shows "killed" once b.killed was set, no matter what
+# the process actually did — that precedence is deliberate in the
+# code; this just pins it down.
+always assertion KilledFlagWins:
+    j = job
+    return not j.killed_flag or j.state != "done" or j.reported == "killed"
+
+# Nothing is reported before the job is actually done.
+always assertion ReportOnlyWhenDone:
+    j = job
+    return (j.reported == "") == (j.state != "done")
+
+# Every job reaches a final state.
+always eventually assertion JobSettles:
+    return job.state == "done"
+
+# The finish is recorded exactly once (no double notify: one Wait()
+# goroutine, one recordJob("finished"), one notify()).
+always eventually assertion Notified:
+    return job.notified

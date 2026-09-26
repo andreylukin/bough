@@ -1,0 +1,151 @@
+---
+# Both budgets run out: no more requests, no more turns, nothing left to
+# build or swap is the flow's own success state, not a stuck spec.
+deadlock_detection: false
+---
+
+# The restarter's single serialized loop (plugins/orb/restart.go) between
+# its two writers: watch() polls restart.json — written by serve's POST
+# /api/sessions/{id}/orb/restart or `bough project restart` run outside
+# this process — and picks it up with request(); a live /orb restart in
+# this same session calls handle.Restart, which reaches the identical
+# request() straight from the running turn. Both bump r.gen and merge
+# into r.pending; a single run() goroutine drains r.pending through
+# once(), which checks r.stale(g, ...) against r.gen at two points —
+# right after Successor (the image build) and again after waitIdle (the
+# turn settled) — so a request that lands mid-build is not lost and the
+# build in flight is not swapped in over it.
+#
+# Kept out: the fresh flag's OR-merge into a dropped build's pending (a
+# separate, narrower correctness question from the swap race), the
+# no-orb-yet path (request() starting a first build has no old container
+# to protect, so there is no swap to race), and headless runs (a
+# restart there is never applied in-process at all).
+#
+# Fields (role Restarter), all mirroring plugins/orb/restart.go:
+#   building  a once() call is in flight (run() took a kick and has not
+#             returned)
+#   waiting   a merged request is queued for run() to pick up next: set
+#             by request() (r.pending != nil), cleared when StartBuild
+#             takes it
+#   newer     a further request landed since the in-flight build's
+#             snapshot (r.gen != g, taken by stale()); only meaningful
+#             while building, and reset to False at StartBuild
+#   phase     where once() is, only meaningful while building: "build"
+#             (in Successor), "idle_wait" (in waitIdle), "swap" (past
+#             both stale checks, calling Replace)
+#   turn_open a turn is open (busy, or an unacked "input"): what
+#             waitIdle blocks on
+#   fresh_at_swap  latched True the moment once() enters "swap": whether
+#             stale() at IdleReached found no newer request. Once() never
+#             checks stale() a third time before calling Replace, so this
+#             is the last word on whether the swap it is about to make is
+#             the one a caller is still waiting on.
+#   budget    requests left to issue: two near-simultaneous ones, the
+#             file watcher's and a live /orb restart's (or two of
+#             either), then none — bounding this to what the flow is
+#             named for is what makes RestartSettles provable at all; an
+#             environment that can always send one more request never
+#             lets any queue-drain settle, in a spec or in the code.
+#   turns     turns left to open: one, so waitIdle has exactly one open
+#             turn to wait out rather than an unbounded stream of them —
+#             the same reason budget is bounded.
+
+role Restarter:
+    action Init:
+        self.building = False
+        self.waiting = False
+        self.newer = False
+        self.phase = ""
+        self.turn_open = False
+        self.fresh_at_swap = False
+        self.budget = 2
+        self.turns = 1
+
+    # watch(): TakeRestart found restart.json, calls request().
+    atomic action RequestFromFile:
+        require self.budget > 0
+        self.budget = self.budget - 1
+        if self.building:
+            self.newer = True
+        self.waiting = True
+
+    # handle.Restart: /orb restart in this session's own turn, calls the
+    # same request().
+    atomic action RequestFromLiveOrb:
+        require self.budget > 0
+        self.budget = self.budget - 1
+        if self.building:
+            self.newer = True
+        self.waiting = True
+
+    # run(): the kick woke it, r.pending was taken as this call's req,
+    # gen g := r.gen — the snapshot that stale() compares against later.
+    atomic fair action StartBuild:
+        require self.waiting and not self.building
+        self.building = True
+        self.waiting = False
+        self.newer = False
+        self.phase = "build"
+        self.fresh_at_swap = False
+
+    # Successor (the image build) returned; once()'s first stale() call.
+    # A request that landed during the build must not be lost, but this
+    # build's result must not be swapped in for it: drop it and let the
+    # merged request that arrived meanwhile start its own build.
+    atomic fair action FinishBuild:
+        require self.phase == "build"
+        if self.newer:
+            self.building = False
+            self.phase = ""
+            self.waiting = True
+        else:
+            self.phase = "idle_wait"
+
+    atomic action TurnStart:
+        require not self.turn_open and self.turns > 0
+        self.turns = self.turns - 1
+        self.turn_open = True
+
+    atomic fair action TurnEnd:
+        require self.turn_open
+        self.turn_open = False
+
+    # waitIdle returned (no open turn); once()'s second stale() call,
+    # right before Replace actually swaps the container.
+    atomic fair action IdleReached:
+        require self.phase == "idle_wait" and not self.turn_open
+        if self.newer:
+            self.building = False
+            self.phase = ""
+            self.waiting = True
+        else:
+            self.phase = "swap"
+            self.fresh_at_swap = True
+
+    atomic fair action Swap:
+        require self.phase == "swap"
+        self.building = False
+        self.phase = ""
+
+action Init:
+    r = Restarter()
+
+# The swap Replace performs is only ever the build that was still
+# current when waitIdle returned: stale() at IdleReached must have found
+# no newer request the moment it let once() go on to swap, or an older
+# image gets swapped in over a request nobody applied yet.
+always assertion NeverSwapsAStaleBuild:
+    return r.phase != "swap" or r.fresh_at_swap
+
+# once() runs to completion (dropped or swapped) before the next one
+# starts: the file watcher and a live /orb restart can both call
+# request() at once, but never both reach Replace for the same session.
+always assertion OnlyOneBuildInFlight:
+    return not r.building or r.phase in ("build", "idle_wait", "swap")
+
+# A restart request is never stranded: however the file watcher and a
+# live /orb restart interleave, the loop settles with nothing left to
+# build or swap.
+always eventually assertion RestartSettles:
+    return not r.building and not r.waiting

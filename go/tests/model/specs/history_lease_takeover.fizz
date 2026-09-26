@@ -1,0 +1,71 @@
+# Session write lease across two processes (CLI and serve): the lease is
+# an exclusive flock on .lease/<id>; the kernel drops it when the holder
+# dies, so a crashed holder is "stale" and the other process takes over.
+# A process that lost the race refuses writes (ErrLeased), so the jsonl
+# only ever gets whole lines from the holder. Append's own file lock may
+# be contended, but it degrades without dropping or splitting a line.
+
+role Lease:
+    action Init:
+        self.holder = "none"
+        self.cli_open = False
+        self.serve_open = False
+        self.lines = 0
+        self.corrupt = False
+        self.refused = 0
+
+    atomic action CliTake:
+        require self.holder == "none"
+        self.holder = "cli"
+        self.cli_open = True
+
+    atomic action ServeTake:
+        require self.holder == "none"
+        self.holder = "serve"
+        self.serve_open = True
+
+    # The loser's take retries 500 ms and then fails with ErrLeased.
+    atomic action CliTakeRefused:
+        require self.holder == "serve"
+        self.refused = 1
+
+    atomic action ServeTakeRefused:
+        require self.holder == "cli"
+        self.refused = 1
+
+    atomic action CliAppend:
+        require self.holder == "cli"
+        self.lines = self.lines + 1 if self.lines < 2 else 2
+
+    atomic action ServeAppend:
+        require self.holder == "serve"
+        self.lines = self.lines + 1 if self.lines < 2 else 2
+
+    atomic action CliRelease:
+        require self.holder == "cli"
+        self.holder = "none"
+        self.cli_open = False
+
+    atomic action ServeRelease:
+        require self.holder == "serve"
+        self.holder = "none"
+        self.serve_open = False
+
+    # Holder dies: the kernel drops the flock, so the lease is free.
+    atomic action HolderCrash:
+        require self.holder != "none"
+        self.holder = "none"
+        self.cli_open = False
+        self.serve_open = False
+
+action Init:
+    lease = Lease()
+
+always assertion AtMostOneHolder:
+    return not (lease.cli_open and lease.serve_open)
+
+always assertion HolderMatchesOpen:
+    return (lease.holder == "cli") == lease.cli_open and (lease.holder == "serve") == lease.serve_open
+
+always assertion NeverCorrupt:
+    return not lease.corrupt

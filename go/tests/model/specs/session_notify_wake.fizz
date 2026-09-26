@@ -1,0 +1,89 @@
+---
+deadlock_detection: false
+---
+
+# POST /api/sessions/{id}/notify (children_api.go notify -> notify.go
+# notifyFrom): a notice for a session whose process may be absent, idle,
+# mid-turn or restarting. With a started lease the notice is one
+# {"notice"} stdin line (inbox: queued in the child, wakes it if idle);
+# with none it is appended to the history file (file), which the next
+# mount delivers. It never starts a process.
+#
+# A queued notice is taken by a wake turn (idle) or waits behind the turn
+# in flight; it is delivered exactly once. The one way in to loss is the
+# child dying with a line still in its inbox (the stdin pipe is durable
+# nowhere, see child_notice_delivery.fizz), and the model names it.
+
+MAX_SENDS = 2
+MAX_STARTS = 2
+MAX_KILLS = 1
+
+role Session:
+    action Init:
+        self.proc = "none"
+        self.busy = False
+        self.sent = 0
+        self.inbox = 0
+        self.file = 0
+        self.delivered = 0
+        self.lost = 0
+        self.starts = 0
+        self.kills = 0
+
+    atomic action Notify:
+        require self.sent < MAX_SENDS
+        self.sent += 1
+        if self.proc == "live":
+            self.inbox += 1
+        else:
+            self.file += 1
+
+    atomic action Start:
+        require self.proc == "none" and self.starts < MAX_STARTS
+        self.proc = "live"
+        self.starts += 1
+        # mount delivers what was stored while nothing ran
+        self.inbox += self.file
+        self.file = 0
+
+    # an idle child with a queued notice runs a wake turn that records it
+    atomic action Wake:
+        require self.proc == "live" and not self.busy and self.inbox > 0
+        self.busy = True
+        self.inbox -= 1
+        self.delivered += 1
+
+    atomic action EndTurn:
+        require self.busy
+        self.busy = False
+
+    atomic action Kill:
+        require self.proc == "live" and self.kills < MAX_KILLS
+        self.proc = "none"
+        self.busy = False
+        self.kills += 1
+        self.lost += self.inbox
+        self.inbox = 0
+
+action Init:
+    session = Session()
+
+# no notice is created or duplicated: every one is in exactly one place
+always assertion Conserved:
+    return session.sent == session.inbox + session.file + session.delivered + session.lost
+
+always assertion NoDuplicate:
+    return session.delivered <= session.sent
+
+always assertion InboxNeedsProcess:
+    return session.proc == "live" or session.inbox == 0
+
+always assertion FileOnlyWithoutProcess:
+    return session.proc == "none" or session.file == 0
+
+always assertion BusyNeedsProcess:
+    return not session.busy or session.proc == "live"
+
+# loss needs a kill
+always assertion LossNeedsKill:
+    return session.lost == 0 or session.kills > 0

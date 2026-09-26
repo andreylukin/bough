@@ -1,0 +1,107 @@
+# A project's identity/secrets (project.yml: identity list, secrets.*)
+# versus a session already running for that project.
+#
+#   go/internal/projectdef/projectdef.go   defaultIdentity, CheckIdentity,
+#                                           SetSecret (edits project.yml)
+#   go/internal/serve/supervisor.go        projectEnv (derived at EVERY
+#                                           child start, comment: "A
+#                                           session already running does
+#                                           not pick it up — the
+#                                           injection starts at its next
+#                                           start"), start (spawns the
+#                                           child with that env)
+#   go/internal/serve/projectenv_test.go   TestProjectEnvAtEveryStart:
+#                                           Assign then Kill+Adopt is what
+#                                           makes a running session pick
+#                                           up a new project
+#   kernel row loader                      remounts a row (and its
+#                                           dependents) when the config
+#                                           key it reads changes; the
+#                                           definition file and
+#                                           ~/.bough/env are both read
+#                                           this way, not pushed to a
+#                                           live child
+#
+# Two clocks: `fileVer` is the project's identity/secret file, edited by
+# SetSecret or by hand (~/.bough/env, project.yml). `rowLoaded` is what
+# the kernel's project row has picked up from that file — remounted on
+# a change, independent of whether any session is running. `childEnv` is
+# what a session's OWN process was started with; it is read once, at
+# that process's spawn (SpawnSession), from whatever the row had loaded
+# at that instant, never touched again while the process lives. An orb
+# a session opens mounts identity from that same running process, so it
+# can never be ahead of it.
+#
+# This spec states the boundary the product already has (verified in
+# projectenv_test.go): editing the file, and even the kernel finishing
+# its reload, never reaches a session that is already running. Only a
+# respawn (kill, then start again) reads the current row.
+
+role Project:
+    action Init:
+        self.fileVer = 0
+        self.rowLoaded = 0
+        self.childEnv = 0
+        self.orbIdentity = 0
+        self.running = False
+        self.orbOpen = False
+
+    # SetSecret, an identity edit, or a hand edit of the file: a strictly
+    # newer version. Allowed whether or not a session is running.
+    atomic action EditProjectFile:
+        require self.fileVer < 2
+        self.fileVer = self.fileVer + 1
+
+    # The kernel notices the file changed and remounts the project row.
+    # Fair: it is not held up by anything a session does.
+    atomic fair action KernelHotReload:
+        require self.rowLoaded != self.fileVer
+        self.rowLoaded = self.fileVer
+
+    # A brand-new process for this project: it reads the row exactly
+    # once, at this instant.
+    atomic action SpawnSession:
+        require not self.running
+        self.running = True
+        self.childEnv = self.rowLoaded
+        self.orbOpen = False
+        self.orbIdentity = 0
+
+    # The running session's own orb, built from ITS process env — never
+    # from the row directly, so it can only ever equal what the session
+    # already has.
+    atomic action OpenOrb:
+        require self.running and not self.orbOpen
+        self.orbOpen = True
+        self.orbIdentity = self.childEnv
+
+    # The process ends (stopped, crashed, or killed to force a respawn).
+    # Its orb goes with it.
+    atomic action KillSession:
+        require self.running
+        self.running = False
+        self.orbOpen = False
+
+
+action Init:
+    project = Project()
+
+# A running session's env is exactly what the row held at its spawn: it
+# never drifts to match a later edit or a later reload while the
+# process lives on.
+always assertion ChildEnvNeverAheadOfRow:
+    return project.childEnv <= project.rowLoaded
+
+# An orb this session opened mounts no identity the session's own
+# process was not itself started with.
+always assertion OrbNeverAheadOfChild:
+    return not project.orbOpen or project.orbIdentity == project.childEnv
+
+# No orb without a live session behind it.
+always assertion NoOrbWithoutSession:
+    return not project.orbOpen or project.running
+
+# The kernel eventually catches up to the file — a reload is not stuck
+# forever behind an edit.
+always eventually assertion RowEventuallyMatchesFile:
+    return project.rowLoaded == project.fileVer

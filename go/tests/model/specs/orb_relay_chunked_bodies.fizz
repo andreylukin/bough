@@ -1,0 +1,79 @@
+# One orb relay call (go/internal/orb/relay.go): the shim POSTs a framed
+# request and reads the response as exactly three lines (exit, stdout,
+# stderr). A response Go cannot size is sent chunked, and the shim then
+# read a chunk-size line as the exit code: every MCP result over 2KB
+# failed. The host therefore sizes the body (Content-Length). Delivery can
+# still be cut short (truncation) or the connection can drop mid-stream;
+# either must end the call as an error, never as a corrupt success and
+# never as a hang.
+#
+# size is "small" (<2KB, would never chunk) or "large"; framing is
+# "sized" once the host has set Content-Length, "chunked" only if the
+# host skipped that.
+
+role Relay:
+    action Init:
+        self.phase = "idle"
+        self.size = "none"
+        self.framing = "none"
+        self.delivery = "none"
+        self.result = "pending"
+
+    atomic action SendSmall:
+        require self.phase == "idle"
+        self.phase = "running"
+        self.size = "small"
+
+    atomic action SendLarge:
+        require self.phase == "idle"
+        self.phase = "running"
+        self.size = "large"
+
+    atomic action Respond:
+        require self.phase == "running"
+        self.phase = "streaming"
+        self.framing = "sized"
+        self.delivery = "full"
+
+    atomic action Truncate:
+        require self.phase == "streaming"
+        self.delivery = "truncated"
+
+    atomic action Disconnect:
+        require self.phase == "streaming"
+        self.delivery = "dropped"
+
+    atomic action ShimRead:
+        require self.phase == "streaming"
+        self.phase = "done"
+        if self.delivery == "full" and self.framing == "sized":
+            self.result = "ok"
+        else:
+            self.result = "error"
+
+    atomic action NextCall:
+        require self.phase == "done"
+        self.phase = "idle"
+        self.size = "none"
+        self.framing = "none"
+        self.delivery = "none"
+        self.result = "pending"
+
+action Init:
+    relay = Relay()
+
+always assertion OkOnlyIntactAndSized:
+    return relay.result != "ok" or (relay.delivery == "full" and relay.framing == "sized")
+
+always assertion NeverChunked:
+    return relay.framing != "chunked"
+
+always assertion NoResultBeforeDone:
+    return relay.phase == "done" or relay.result == "pending"
+
+always assertion CutStreamNeverOk:
+    return not (relay.phase == "done" and relay.delivery != "full" and relay.result == "ok")
+
+always assertion StreamingHasAnEnd:
+    # no hang: a streaming call always has ShimRead enabled, so it can end
+    return relay.phase != "streaming" or relay.delivery in ("full", "truncated", "dropped")
