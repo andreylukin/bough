@@ -38,12 +38,11 @@ import (
 //
 // This flow has no container orb (that is project-mode sessions only,
 // plugins/orb, not a local one filed into a project for MEMORY.md). Its
-// OpenOrb instead cross-checks two independently derived real signals
-// the header comment's own cited files describe: Row.StartedIn (the
-// API's answer) against the session's own "meta" history entry naming
-// the directory it started in (the child's self-report, exactly what
-// projectenv_test.go's startedWith reads). Either one drifting from the
-// frozen childEnv is a real product bug.
+// OpenOrb reads Row.StartedIn, the one real signal a running session
+// exposes for this (see OpenOrb's own comment: projectenv_test.go's
+// startedWith reads a "meta" field that only its fixture child, built
+// for internal/serve's own tests, ever writes — a real bough session's
+// history gets no such per-restart record).
 const pevlrConfig = controlConfig
 
 // pevlrSlugs maps the spec's fileVer/childEnv/orbIdentity generation (0,
@@ -112,9 +111,12 @@ func newProjectEnvAdapter(t *testing.T) *projectEnvAdapter {
 	return &projectEnvAdapter{t: t, s: s, dir: control.Dir(s.Home)}
 }
 
-// Init starts each walk on a fresh, unassigned, not-yet-started local
-// session in the same serve: CreateSession with no prompt leaves it
-// idle, matching the spec's Init (running = False).
+// Init starts each walk on a fresh, unassigned local session in the
+// same serve. CreateSession spawns the child immediately, even with no
+// prompt queued (supervisor.go's createWithID starts the process before
+// any prompt is sent) — Row.Live is already true by the time it
+// returns, matching the spec's Init (running = True) at generation 0
+// (no project assigned yet).
 func (a *projectEnvAdapter) Init() error {
 	ctx, cancel := actionCtx()
 	defer cancel()
@@ -123,7 +125,11 @@ func (a *projectEnvAdapter) Init() error {
 		return err
 	}
 	a.id, a.archived, a.held = row.ID, false, ""
-	a.childEnv, a.orbOpen, a.orbIdentity = 0, false, 0
+	a.childEnv, err = genOfSlug(row.StartedIn)
+	if err != nil {
+		return err
+	}
+	a.orbOpen, a.orbIdentity = false, 0
 	a.gate.reset()
 	a.ids = append(a.ids, row.ID)
 	return nil
@@ -267,11 +273,16 @@ func (a *projectEnvAdapter) SpawnSession() error {
 	return err
 }
 
-// OpenOrb reads which directory the running process mounted, from two
-// independent real signals: Row.StartedIn (the API's answer) and the
-// child's own "meta" history entry (its self-report, written once at
-// its start). Both must agree with the frozen childEnv, or this is a
-// real product bug.
+// OpenOrb reads which directory the running process mounted. Row.
+// StartedIn (internal/serve's in-memory record of what the running
+// child was actually spawned with, supervisor.go's startedIn) is the
+// only real signal for this: unlike projectenv_test.go's fixture child
+// (a small stand-in built for internal/serve's own tests), a real
+// bough session's history only ever gets a "meta" entry with a project
+// once, at file creation (plugins/history's `created` guard), so a
+// respawn leaves no persisted, independently-readable self-report to
+// cross-check against — the type comment's "cross-check two signals"
+// plan assumed a signal the real child never writes.
 func (a *projectEnvAdapter) OpenOrb() error {
 	row, err := a.row()
 	if err != nil {
@@ -284,47 +295,15 @@ func (a *projectEnvAdapter) OpenOrb() error {
 	if err != nil {
 		return err
 	}
-	fromChild, err := a.lastStartedDir()
-	if err != nil {
-		return err
-	}
 	if a.wrongOrbUsesLive {
 		g, err := genOfSlug(row.Project)
 		if err != nil {
 			return err
 		}
 		fromRow = g
-	} else if fromRow != fromChild {
-		return fmt.Errorf("orb identity: Row.StartedIn says generation %d, the child's own meta entry says %d", fromRow, fromChild)
 	}
 	a.orbOpen, a.orbIdentity = true, fromRow
 	return nil
-}
-
-// lastStartedDir is the project_dir the child's most recent "meta" entry
-// recorded, as a generation: startedWith in projectenv_test.go reads the
-// same field, from the same file, by a different path (disk, not HTTP).
-func (a *projectEnvAdapter) lastStartedDir() (int, error) {
-	ctx, cancel := actionCtx()
-	defer cancel()
-	_, entries, err := a.s.GetSession(ctx, a.id)
-	if err != nil {
-		return 0, err
-	}
-	dir, seen := "", false
-	for _, e := range entries {
-		if e.Kind != "meta" {
-			continue
-		}
-		if v, ok := e.Data["project_dir"]; ok {
-			dir, _ = v.(string)
-			seen = true
-		}
-	}
-	if !seen {
-		return 0, fmt.Errorf("no meta entry with project_dir yet")
-	}
-	return genOfDir(dir)
 }
 
 // KillSession ends the process; its orb goes with it. childEnv and
@@ -364,17 +343,24 @@ func projectEnvOptions() map[string]any {
 
 // projectEnvHistory reads the abstract trace off a transcript.
 // EditProjectFile, KernelHotReload and OpenOrb leave nothing in
-// history (membership lives in meta.json, and an orb read has no
-// side effect); each "meta" entry with a project_dir is a
-// SpawnSession, and each input/done pair inside it is the wake turn
-// SpawnSession itself opens and closes. A meta entry's project_dir
-// gives childEnv directly, the same signal OpenOrb itself reads, so
-// checking is on running and childEnv alone.
+// history (membership lives in meta.json, and an orb read has no side
+// effect); a real bough session's history writes a "meta" entry with a
+// project_dir only on the file's creation (plugins/history's `created`
+// guard) — a respawn (KillSession, then SpawnSession) leaves no such
+// entry, so genOfDir here only ever matches the one entry Init's own
+// spawn wrote. Any entries beyond that fall back to the Init
+// generation, which is always right for this flow: a local session is
+// never pre-assigned a project at creation.
+//
+// The session's very first start happens at Init (CreateSession spawns
+// the child immediately, before any SpawnSession-shaped action runs),
+// so the first "meta" entry is Init's own state, not a later
+// SpawnSession transition.
 func projectEnvHistory(entries []history.Entry) []tracecheck.Step {
 	st := func(running bool, childEnv int) map[string]any {
 		return map[string]any{"Project#0.running": running, "Project#0.childEnv": childEnv}
 	}
-	steps := []tracecheck.Step{{Action: "Init", State: st(false, 0)}}
+	var gens []int
 	for _, e := range entries {
 		if e.Kind != "meta" {
 			continue
@@ -391,6 +377,14 @@ func projectEnvHistory(entries []history.Entry) []tracecheck.Step {
 			// then fails loudly on the gap instead of silently.
 			gen = -1
 		}
+		gens = append(gens, gen)
+	}
+	initGen := 0
+	if len(gens) > 0 {
+		initGen = gens[0]
+	}
+	steps := []tracecheck.Step{{Action: "Init", State: st(true, initGen)}}
+	for _, gen := range gens[min(1, len(gens)):] {
 		steps = append(steps, tracecheck.Step{Action: "Project#0.SpawnSession", State: st(true, gen)})
 	}
 	return steps
