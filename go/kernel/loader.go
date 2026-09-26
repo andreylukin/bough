@@ -33,7 +33,13 @@ func LoadBytes(data []byte, name string) ([]Row, error) {
 		return nil, fmt.Errorf("kernel: parse %s: %w", name, err)
 	}
 	for i, r := range rows {
-		if r.ID == "" || r.Plugin == "" {
+		// A disabled row may omit plugin: overlay() replaces a base row
+		// outright by id, so `disabled: true` alone (main.go's
+		// documented way to drop a default row) produces exactly this
+		// shape in the overlay file, and Reconcile's own validation
+		// already tolerates it (a disabled row's plugin is never
+		// looked up).
+		if r.ID == "" || (r.Plugin == "" && !r.Disabled) {
 			return nil, fmt.Errorf("kernel: %s row %d: id and plugin are required", name, i)
 		}
 	}
