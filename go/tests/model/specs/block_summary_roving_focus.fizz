@@ -1,0 +1,100 @@
+---
+# Focus can always be moved or dropped; the bounds are rest.
+deadlock_detection: false
+---
+
+# Block summaries in the transcript are one roving tab stop (web/src/app.tsx
+# Thread: summaries(), rove(), the effect after every render, latestKey).
+#
+# Fields (Blocks role):
+#   top      how many top-level block summaries are rendered, 1..3
+#            (streaming appends at the end)
+#   nested   the first block holds a nested block: closed | open. A closed
+#            <details> hides it, so summaries() skips it; open, it is a
+#            summary right after block 0.
+#   cur      the summary that is the tab stop (tabindex 0, its Copy button
+#            tabbable): b0 | n | b1 | b2. Every other summary and Copy is -1.
+#   focused  focus is on a summary (arrow keys walk); else elsewhere
+#   at       the summary holding focus (== cur when focused), tracked so
+#            the two can be compared: "" when not focused
+#
+# Derived: visible, the ordered list of summaries arrows walk.
+
+role Blocks:
+    action Init:
+        self.top = 1
+        self.nested = "closed"
+        self.cur = "b0"
+        self.focused = False
+        self.at = ""
+        self.view()
+
+    atomic func view():
+        v = ["b0"]
+        if self.nested == "open":
+            v.append("n")
+        for i in range(1, self.top):
+            v.append("b" + str(i))
+        self.vis = v
+
+    # Tab into the group lands on the tab stop.
+    atomic action FocusIn:
+        require not self.focused
+        self.focused = True
+        self.at = self.cur
+
+    atomic action Blur:
+        require self.focused
+        self.focused = False
+        self.at = ""
+
+    atomic action Down:
+        require self.focused
+        v = self.vis
+        i = v.index(self.at)
+        if i + 1 < len(v):
+            self.cur = v[i + 1]
+            self.at = self.cur
+
+    atomic action Up:
+        require self.focused
+        v = self.vis
+        i = v.index(self.at)
+        if i > 0:
+            self.cur = v[i - 1]
+            self.at = self.cur
+
+    # A live streaming insert at the end never steals the stop or focus.
+    atomic action Stream:
+        require self.top < 3
+        self.top += 1
+        self.view()
+
+    # Opening adds a summary after b0; the stop stays on the same block.
+    atomic action OpenNested:
+        require self.nested == "closed"
+        self.nested = "open"
+        self.view()
+
+    # Closing hides it. If it held the stop (and focus), the effect
+    # falls back to the first summary; focus is lost with the node's
+    # visibility, so the page keeps it only if it was elsewhere.
+    atomic action CloseNested:
+        require self.nested == "open"
+        self.nested = "closed"
+        if self.cur == "n":
+            self.cur = "b0"
+        if self.at == "n":
+            self.at = "b0"
+        self.view()
+
+action Init:
+    blocks = Blocks()
+
+always assertion StopIsVisible:
+    b = blocks
+    return b.cur in b.vis
+
+always assertion FocusIsStop:
+    b = blocks
+    return (not b.focused) or b.at == b.cur
