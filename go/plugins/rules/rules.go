@@ -23,11 +23,47 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/offlist"
 )
+
+// policyReloadGateEnv names a directory that, when set, holds this
+// row's dispose exactly in the gap real callers can land in: the
+// command policy set to nil, before the row that remounts it (a
+// reload; tests/model/specs/rules_reload_mid_approval.fizz) has
+// applied its own. It is this flow's own hook (never BOUGH_TEST_STEP_GATE:
+// that one also gates headless's per-line stdin pump and ask's answer
+// relay, so turning it on here would freeze every turn, not just a
+// reload) and does nothing unless BOUGH_TEST_RULES_RELOAD_GATE names a
+// directory.
+const policyReloadGateEnv = "BOUGH_TEST_RULES_RELOAD_GATE"
+
+// policyReloadHold announces the dispose as <dir>/held and blocks until
+// the test drops <dir>/go — but only while the test has armed it
+// (<dir>/armed present). A row can dispose for reasons that have
+// nothing to do with the reload this hook exists to test (its own
+// dependencies landing one at a time during startup, for instance);
+// holding one of those hangs the whole reconcile, since it runs on the
+// kernel's one reconcile goroutine, wedging every reload after it.
+func policyReloadHold() {
+	dir := os.Getenv(policyReloadGateEnv)
+	if dir == "" {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(dir, "armed")); err != nil {
+		return
+	}
+	os.WriteFile(filepath.Join(dir, "held"), nil, 0o644)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go")); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 // The seams this row uses, each optional.
 type sourcer interface {
@@ -408,7 +444,10 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	if p, err := kernel.Get[policer](ctx, "turn-stats"); err == nil {
 		p.SetPolicyContext(s.PolicyContext)
-		ctx.Effect(func() { p.SetPolicyContext(nil) })
+		ctx.Effect(func() {
+			p.SetPolicyContext(nil)
+			policyReloadHold()
+		})
 	}
 	if sec, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
 		if text := s.scopedSection(); text != "" {

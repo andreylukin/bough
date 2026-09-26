@@ -1,0 +1,167 @@
+# A config hot reload (bough.yml edited, `/rules` unchanged but the
+# underlying .codex/rules file does) races a tools.bash call that
+# already matched a prompt (or forbidden) rule and is blocked on the
+# person's approval. Recipe: go/tests/model/README.md. Companion to
+# rules_prompt_approval.fizz, which fixes the rule content and the ask
+# row and covers only the approval gate itself.
+#
+# Where each piece lives:
+#   plugins/rules Apply registers the gate once, per mount:
+#     p.SetPolicyContext(s.PolicyContext)
+#     ctx.Effect(func() { p.SetPolicyContext(nil) })
+#   plugins/tools Stats.policy is that one func, guarded only by its own
+#   mutex — nothing coordinates it with kernel.Reconcile. A reload of
+#   the rules row (or anything that remounts it: a bough.yml edit, a
+#   /model swap that remounts rows registering on codemode) disposes
+#   the old row (SetPolicyContext(nil)) and only then Applies the new
+#   one (SetPolicyContext(s2.PolicyContext)). Between those two calls,
+#   Stats.Policy sees a nil policy and returns nil unconditionally
+#   (plugins/tools/tools.go SetPolicy comment: "nil removes it").
+#   PolicyContext itself reads rule files fresh on every call
+#   (s.codex(...) inside PolicyContext), so a call already past that
+#   line has its decision locked in before the person ever sees the
+#   ask; the reload cannot retarget an ask already on screen.
+#
+# THIS SPEC IS THE INTENDED BEHAVIOUR: a command issued mid-reload waits
+# for the reload to finish and is then gated by whichever rules land
+# (self.c1 == "queued" below), never run unchecked. Two places the
+# product differs (findings, not fixed here — the MBT stage is where
+# each turns red):
+#  1. Gap (Bash while reloading): the real Stats.policy is nil in that
+#     window, and Policy() has no retry once it returns nil — the
+#     command runs as if no rule ever matched, permanently, not merely
+#     delayed until the new row lands. The spec's "queued" state is the
+#     fix's shape: hold the call, decide once a policy is registered
+#     again.
+#  2. Reload while an ask is open (ReloadStart with c1 == "open"):
+#     plugins/rules itself does nothing to an ask already in flight on
+#     the old Service — that is exactly right, since the command's
+#     decision was fixed when Policy was called, before the ask was
+#     raised. findAsk() is looked up once, at the top of that same
+#     PolicyContext call (see rules.go's Service.findAsk comment), and
+#     never again for the rest of that one approval; it is fine for a
+#     later config reload that swaps *only* the ask row's Asker,
+#     because the disposed Asker cancels what it holds at once (ask
+#     package, TestDisposedAskerCancelsItsAsks) and the call's own
+#     AskContext returns an error either way. The spec asserts that
+#     outcome: an ask survives its own row's mid-flight reload cleanly.
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.reloading = False
+        self.version = 0
+        self.c1 = ""          # "" | "queued" | "open" | "end"
+        self.locked = -1      # version c1's decision was computed against
+        self.shown = False
+        self.armed = False
+
+    atomic action Prompt:
+        require self.status in ["idle", "done"]
+        self.status = "running"
+
+    # bough.yml edited, or a /model swap that remounts rows on codemode:
+    # the rules row is disposed (policy set to nil) and stays gone until
+    # ReloadFinish applies the new one.
+    atomic action ReloadStart:
+        require not self.reloading
+        self.reloading = True
+        # The disposed Asker cancels whatever it holds at once (ask
+        # package, TestDisposedAskerCancelsItsAsks): an open ask never
+        # rides out the reload waiting on a Service that is gone.
+        if self.c1 == "open":
+            self.c1 = "end"
+            self.shown = False
+            self.armed = False
+            self.status = "running"
+
+    # Even versions land a "prompt" rule, odd versions "forbidden" — a
+    # reload always changes which one a matching command gets.
+    atomic fair action ReloadFinish:
+        require self.reloading
+        self.reloading = False
+        self.version = 1 - self.version
+        if self.c1 == "queued":
+            self.locked = self.version
+            if self.version % 2 == 0:
+                self.c1 = "open"
+                self.shown = True
+                self.armed = True
+                self.status = "needs-you"
+            else:
+                self.c1 = "end"
+
+    # A bash call matching the rule. Real code: Policy runs synchronously
+    # before the tool call returns to the model, so at most one is ever
+    # in flight per turn.
+    atomic action Bash:
+        require self.status in ["running", "needs-you"]
+        require self.c1 == ""
+        if self.reloading:
+            self.c1 = "queued"
+        else:
+            self.locked = self.version
+            if self.version % 2 == 0:
+                self.c1 = "open"
+                self.shown = True
+                self.armed = True
+                self.status = "needs-you"
+            else:
+                self.c1 = "end"
+
+    atomic action ClickRun:
+        require self.c1 == "open"
+        self.c1 = "end"
+        self.shown = False
+        self.armed = False
+        self.status = "running"
+
+    atomic action ClickRefuse:
+        require self.c1 == "open"
+        self.c1 = "end"
+        self.shown = False
+        self.armed = False
+        self.status = "running"
+
+    # The Asker's own timeout_minutes: an open ask nobody answers still
+    # ends on its own, same as rules_prompt_approval.fizz's Timeout.
+    atomic fair action Timeout:
+        require self.c1 == "open"
+        self.c1 = "end"
+        self.shown = False
+        self.armed = False
+        self.status = "running"
+
+    # Esc / Stop: serve SIGINTs the child at once, whatever is in
+    # flight (an open ask, a queued call behind a reload) ends with it.
+    atomic action Stop:
+        require self.status in ["running", "needs-you"]
+        self.status = "done"
+        if self.c1 in ["open", "queued"]:
+            self.c1 = "end"
+            self.shown = False
+            self.armed = False
+
+    atomic fair action Finish:
+        require self.status == "running" and self.c1 not in ["open", "queued"]
+        self.status = "done"
+        self.c1 = ""
+        self.locked = -1
+
+action Init:
+    session = Session()
+
+# needs-you exactly while the one ask is on screen.
+always assertion NeedsYouIsTheAsk:
+    return (session.status == "needs-you") == session.shown
+
+# armed and shown agree: nothing is shown with no arm behind it, and
+# nothing is armed without being shown.
+always assertion ArmedMatchesShown:
+    return session.armed == session.shown
+
+# An ask a reload catches mid-flight still ends promptly, not stuck
+# armed with a disposed Asker behind it, and a call queued behind a
+# reload is eventually gated once the reload finishes.
+always eventually assertion CallSettles:
+    return session.c1 not in ["open", "queued"]
