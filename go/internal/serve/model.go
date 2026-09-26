@@ -23,6 +23,9 @@ func (a *API) ReapIdleOrbs(ctx context.Context, idle time.Duration, now time.Tim
 	return a.reapIdleOrbs(ctx, idle, now)
 }
 
+// ReapVanishedProjectPortals is one project-vanish sweep tick.
+func (a *API) ReapVanishedProjectPortals() []string { return a.reapVanishedProjectPortals() }
+
 // StoppedAt is when this serve last stopped the session's container, the
 // time orbState compares state.json's updatedAt with.
 func (a *API) StoppedAt(session string) (time.Time, bool) {

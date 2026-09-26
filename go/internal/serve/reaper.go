@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/internal/orb"
+	"github.com/andreylukin/bough/internal/projectdef"
 )
 
 const (
@@ -43,6 +44,9 @@ func (a *API) StartReaper(ctx context.Context, idle time.Duration) {
 			case <-t.C:
 				for _, id := range a.reapIdleOrbs(ctx, idle, time.Now()) {
 					fmt.Fprintf(os.Stderr, "bough serve: stopped the orb of %s: idle for %s\n", id, idle)
+				}
+				for _, id := range a.reapVanishedProjectPortals() {
+					fmt.Fprintf(os.Stderr, "bough serve: closed the portal(s) of %s: its project is gone\n", id)
 				}
 			}
 		}
@@ -107,6 +111,36 @@ func (a *API) reapIdleOrbs(ctx context.Context, idle time.Duration, now time.Tim
 		a.forgetRunning()
 	}
 	return stopped
+}
+
+// reapVanishedProjectPortals closes the portals of any orb whose backing
+// project directory no longer exists on disk: the reactive half of
+// orb.CloseIfProjectGone, run on the same tick as the idle sweep. It
+// returns the sessions it closed.
+func (a *API) reapVanishedProjectPortals() []string {
+	home := a.sup.Home()
+	dirs, err := os.ReadDir(filepath.Join(home, ".bough", "orbs"))
+	if err != nil {
+		return nil
+	}
+	var swept []string
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		st, err := orb.ReadState(home, d.Name())
+		if err != nil || st.Session == "" || st.Project == "" || len(st.Portals) == 0 {
+			continue
+		}
+		_, err = os.Stat(filepath.Join(projectdef.Root(home), st.Project))
+		exists := !os.IsNotExist(err)
+		if exists {
+			continue
+		}
+		orb.CloseIfProjectGone(home, st.Session, false)
+		swept = append(swept, st.Session)
+	}
+	return swept
 }
 
 // OrbIdleFromEnv reads BOUGH_ORB_IDLE: a Go duration ("4h", "90m"), "0"
