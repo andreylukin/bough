@@ -6206,7 +6206,7 @@ export default function App() {
         </div>
       )}
       <Palette open={palette} onClose={closePalette} rows={rows} mode={palMode} visited={visited}
-               commands={commands} onOpenSession={(id, seq, q) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, q, at: Date.now() }); }} initialQuery={palQuery} current={selected}
+               commands={commands} onOpenSession={(id, seq, q) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, q, at: Date.now() }); }} initialQuery={palQuery} current={viewing || null}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
                onStartIn={(path) => { setPalCwd(path); setPalette(true); }}

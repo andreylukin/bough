@@ -164,6 +164,30 @@ export function afterClose(close: () => void, run: () => void) {
   setTimeout(run, 0);
 }
 
+function focusDestination() {
+  requestAnimationFrame(() => {
+    if (document.querySelector("[aria-modal='true']")) return;
+    let focused: HTMLElement | null = null;
+    const focus = () => {
+      const composer = document.querySelector<HTMLTextAreaElement>("#composer:not(:disabled)");
+      const next = composer ?? document.querySelector<HTMLElement>("main h1, h1");
+      if (next && next !== focused) {
+        if (next !== composer) next.tabIndex = -1;
+        next.focus();
+        focused = next;
+      }
+    };
+    focus();
+    // The destination can replace its heading or composer after a read.
+    const observer = new MutationObserver(() => {
+      if (document.activeElement !== document.body && document.activeElement !== focused) { observer.disconnect(); return; }
+      focus();
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+    setTimeout(() => observer.disconnect(), 5000);
+  });
+}
+
 /** The palette is over a route: a hash change, Back, or a layout switch closes it. Returns the unsubscribe. */
 export function closeOnNavigate(win: Pick<Window, "addEventListener" | "removeEventListener">, close: () => void, mq: MediaQueryList | null): () => void {
   win.addEventListener("hashchange", close);
@@ -559,7 +583,10 @@ export function PaletteView({ open, onClose, rows, commands, onOpenSession, onSt
   if (!open) return null;
 
   const close = () => onClose();
-  const pick = (c: Command) => { opener.current = null; afterClose(onClose, c.run); };
+  const pick = (c: Command) => { opener.current = null; afterClose(onClose, () => {
+    c.run();
+    focusDestination();
+  }); };
 
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
