@@ -196,6 +196,9 @@ role Phone:
         self.back = True
         self.nav = False
         self.transcript = "loading"
+        if not self.archived:
+            self.focus = "composer"
+            self.keyboard = True
         self.paint()
 
     # ---- the transcript (server) -----------------------------------------
