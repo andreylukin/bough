@@ -131,7 +131,7 @@ func TestChildQueueStartsInOrder(t *testing.T) {
 	if err != nil || !qc {
 		t.Fatalf("c not queued: %v %v", qc, err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	waitFor(t, "first child start", func() bool { return f.startCount(t) >= 1 })
 	if n := f.startCount(t); n != 1 {
 		t.Fatalf("%d starts with max_running 1", n)
 	}
