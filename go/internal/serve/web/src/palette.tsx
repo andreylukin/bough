@@ -180,6 +180,7 @@ function focusDestination() {
     focus();
     // The destination can replace its heading or composer after a read.
     const observer = new MutationObserver(() => {
+      if (document.querySelector("[aria-modal='true']")) { stop(); return; }
       if (document.activeElement !== document.body && document.activeElement !== focused) { stop(); return; }
       focus();
     });
@@ -593,7 +594,7 @@ export function PaletteView({ open, onClose, rows, commands, onOpenSession, onSt
   const close = () => onClose();
   const pick = (c: Command) => { opener.current = null; afterClose(onClose, () => {
     c.run();
-    focusDestination();
+    if (!c.id.startsWith("start:")) focusDestination();
   }); };
 
   const keys = (e: React.KeyboardEvent) => {
