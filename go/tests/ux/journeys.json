@@ -1,0 +1,27 @@
+{
+  "_doc": "What a UX sweep walks. Each journey is a goal a person has, not a click path: the persona finds the path. `personas` are ids from personas.json; `viewports` are desktop (1440x900) and/or phone (390x844). Start is a path on the fixture serve (seed.sh).",
+  "journeys": [
+    {"id": "first-look", "start": "/", "goal": "Open bough for the first time today and work out what needs you, what is running and what changed since yesterday.", "personas": ["amp-switcher", "busy-lead"], "viewports": ["desktop", "phone"]},
+    {"id": "answer-ask", "start": "/", "goal": "A session is waiting on a question for you. Find it, read the question with enough context to answer, answer it and see the agent continue.", "personas": ["busy-lead", "keyboard-only"], "viewports": ["desktop", "phone"]},
+    {"id": "start-task", "start": "/", "goal": "Start a new session in the acme-todo repo asking it to add a 'due today' filter, and follow it until it finishes.", "personas": ["amp-switcher", "newcomer"], "viewports": ["desktop"]},
+    {"id": "review-changes", "start": "/", "goal": "Pick a finished session that edited files. Review exactly what it changed, file by file, and decide whether you would keep it.", "personas": ["skeptical-reviewer", "amp-switcher"], "viewports": ["desktop"]},
+    {"id": "follow-up", "start": "/", "goal": "Open the pingd session that added flags and ask a follow-up that builds on its last answer; check the reply uses the earlier context.", "personas": ["power-user"], "viewports": ["desktop"]},
+    {"id": "failed-tests", "start": "/", "goal": "Sessions say tests failed. Find out which tests, why, and get one of them fixed.", "personas": ["skeptical-reviewer", "busy-lead"], "viewports": ["desktop"]},
+    {"id": "stop-and-steer", "start": "/", "goal": "Start a long task, then change your mind mid-run: stop it or redirect it, and confirm nothing kept running.", "personas": ["power-user", "newcomer"], "viewports": ["desktop"]},
+    {"id": "background-work", "start": "/", "goal": "Find every background job and background agent that is running or finished, see its output, and stop one.", "personas": ["multi-agent-operator"], "viewports": ["desktop"]},
+    {"id": "projects", "start": "/#/projects", "goal": "Create a project for the handbook repo, file two existing sessions into it and start a thread there.", "personas": ["busy-lead", "newcomer"], "viewports": ["desktop"]},
+    {"id": "project-home", "start": "/#/projects", "goal": "Open the Acme web app project and understand its state: main thread, other threads, what each is doing.", "personas": ["amp-switcher", "multi-agent-operator"], "viewports": ["desktop", "phone"]},
+    {"id": "find-old-work", "start": "/", "goal": "Find the session from over a week ago about colliding ids, and what the fix was, without scrolling through everything.", "personas": ["power-user", "keyboard-only"], "viewports": ["desktop"]},
+    {"id": "archive-tidy", "start": "/", "goal": "Tidy the list: archive what is done, bring one archived session back, and mark things seen.", "personas": ["busy-lead"], "viewports": ["desktop", "phone"]},
+    {"id": "model-and-effort", "start": "/", "goal": "Switch one session to a different model and effort for its next turn and confirm the change applied only there.", "personas": ["power-user"], "viewports": ["desktop"]},
+    {"id": "palette", "start": "/", "goal": "Do three things with the keyboard only via the command palette: new session, jump to a session, open Hooks.", "personas": ["keyboard-only", "power-user"], "viewports": ["desktop"]},
+    {"id": "hooks", "start": "/#/hooks", "goal": "Understand which hooks run, try one against a sample input and turn one off.", "personas": ["skeptical-reviewer"], "viewports": ["desktop"]},
+    {"id": "me-page", "start": "/#/me", "goal": "Use the Me page to decide what to work on this morning.", "personas": ["busy-lead"], "viewports": ["desktop", "phone"]},
+    {"id": "wiki", "start": "/#/wiki", "goal": "Look up what bough knows about a topic and check where a claim came from.", "personas": ["skeptical-reviewer"], "viewports": ["desktop"]},
+    {"id": "context", "start": "/", "goal": "For one session, find out what context the agent had: instructions files, skills, tools, and how full the window is.", "personas": ["power-user", "amp-switcher"], "viewports": ["desktop"]},
+    {"id": "attachments", "start": "/", "goal": "Give a session a screenshot or file and ask about it.", "personas": ["newcomer"], "viewports": ["desktop"]},
+    {"id": "phone-check-in", "start": "/", "goal": "On a phone between meetings: see what finished, answer anything waiting, and send one short follow-up.", "personas": ["busy-lead", "low-vision"], "viewports": ["phone"]},
+    {"id": "read-only-folder", "start": "/", "goal": "Ask for a file to be written in the scratch folder (not a git repo) and understand what happened and what to do instead.", "personas": ["newcomer"], "viewports": ["desktop"]},
+    {"id": "accessibility", "start": "/", "goal": "Complete start-task and answer-ask with a screen reader's view of the page (accessibility tree only) and keyboard only.", "personas": ["screen-reader", "keyboard-only"], "viewports": ["desktop"]}
+  ]
+}

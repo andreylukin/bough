@@ -1,0 +1,14 @@
+{
+  "_doc": "Who walks the journeys. `base` names a persona of the user-testing-agent plugin (skills/user-testing/personas/<base>.json) whose timing and narration the tester borrows; `brief` is what makes them a bough user. The tester drives agent-browser, not claude --chrome, so any number run at once.",
+  "personas": [
+    {"id": "amp-switcher", "base": "developer-critic", "brief": "Uses Amp daily and is trying bough for a week. Compares every screen to Amp's threads, diffs and control plane; notices missing affordances, extra clicks and unclear state immediately."},
+    {"id": "busy-lead", "base": "busy-executive", "brief": "Runs five agents across three repos between meetings. Wants to know in ten seconds what needs them and what finished; abandons anything that needs reading a transcript to answer."},
+    {"id": "power-user", "base": "power-user", "brief": "Lives in the keyboard, expects shortcuts, search and precise control over model and effort; annoyed by animations, hidden state and confirmation dialogs."},
+    {"id": "newcomer", "base": "millennial-tech-skeptic", "brief": "Competent developer, first day with bough, has never used a coding agent's web UI. Reads labels literally; confused by jargon (orb, lease, turn, row)."},
+    {"id": "skeptical-reviewer", "base": "developer-critic", "brief": "Will not keep any change they have not read. Wants diffs, test output and evidence the agent did what it claims; distrusts summaries."},
+    {"id": "multi-agent-operator", "base": "power-user", "brief": "Runs background agents and jobs in parallel and needs to supervise, stop and collect them without losing track of which belongs to what."},
+    {"id": "keyboard-only", "base": "keyboard-only-user", "brief": "Cannot use a mouse. Every action must be reachable and visibly focused with Tab, arrows, Enter and Escape."},
+    {"id": "screen-reader", "base": "screen-reader-user", "brief": "Uses VoiceOver. Judges the page only by its accessibility tree (agent-browser snapshot): names, roles, live regions for streaming output."},
+    {"id": "low-vision", "base": "low-vision-user", "brief": "Zooms to 200% and relies on contrast and size; small grey text and icon-only buttons fail them."}
+  ]
+}

@@ -1,0 +1,24 @@
+# repo<TAB>prompts, " || " between turns<TAB>after: none|archive|rename:<t>|project:<slug>|interrupt|open
+acme-todo	Run the tests and tell me what fails. Do not change anything yet.	none
+acme-todo	The ids collide after a delete (see the TODO in src/todos.js). Fix it and make the test pass. || Now also add a test for toggling an id that does not exist.	project:acme-web-app
+acme-todo	overdue() is wrong when due has a time part like 2026-01-01T09:00. Fix it with a test. || Explain the fix in two sentences.	project:acme-web-app
+acme-todo	Add a clearDone(list) helper with tests, then run npm test.	rename:clearDone helper
+acme-todo	Before you change anything, ask me whether clearDone should keep the ids of the remaining items or renumber them.	open
+acme-todo	Start `python3 -m http.server 8765` in the background as a job, then check it answers with curl and tell me the job id.	none
+acme-todo	Review src/ for anything that would break with 10k todos. Use a subagent per file and summarise.	none
+ledger-cli	Run the tests with python3 -m pytest -q and fix whatever fails.	project:ledger-tools
+ledger-cli	Add a `month` command to the CLI that prints totals per YYYY-MM for sample.ledger. || Show me the output for sample.ledger. || Make the columns right-aligned.	project:ledger-tools
+ledger-cli	What happens if a line has a description with spaces in it? Just answer, no edits.	none
+ledger-cli	Rewrite the whole project in Rust.	interrupt
+ledger-cli	Parse amounts with a thousands separator like 1,450.00 and add a test.	archive
+pingd	Why does this leak connections? Fix it.	none
+pingd	Add a -timeout flag and a -json output mode, with a small table test for check() using httptest. || go vet and go test it.	rename:pingd flags + json
+pingd	Run `go test ./... ` and then `go build -o /nonexistent/dir/pingd .` and report both results.	none
+pingd	Start a background agent that writes a README section on flags while you add a -version flag.	none
+handbook	Proofread docs/ and fix typos and awkward sentences. Show me the diff.	none
+handbook	Add an incident-review template at docs/incident-review.md and link it from the README.	project:acme-web-app
+handbook	Which pages mention a link that is still TBD?	archive
+scratch	Write a haiku about on-call rotations.	none
+scratch	What is the difference between a git worktree and a branch? Keep it short.	none
+scratch	Create a file notes.md with three bullet points about this week.	none
+acme-todo	Hi	none
