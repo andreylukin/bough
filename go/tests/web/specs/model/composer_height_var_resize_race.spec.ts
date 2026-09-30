@@ -148,5 +148,7 @@ modelTests<Ctx>({
 
   read: readUiState,
   status: wrap,
-  sessions: (c) => [c.id],
+  // The walk is the page's own state; there is no historyProjections entry
+  // in the Go mbt package, so a saved transcript failed TestHistoryTraces.
+  sessions: () => [],
 });

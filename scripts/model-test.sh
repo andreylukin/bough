@@ -96,6 +96,8 @@ mbt_shard() {
   local tests run
   tests="$(cd "$root/go" && go test -list '.*' ./tests/model/mbt/ | grep '^Test')"
   if [ "${MODEL_COVER:-}" != transitions ]; then tests="$(grep -v 'WrongAdapter$' <<<"$tests")"; fi
+  # TestHistoryTraces replays the browser walks' transcripts: the history step's.
+  tests="$(grep -v '^TestHistoryTraces$' <<<"$tests")"
   run="$(TEST_SHARDS_TIMINGS="$root/go/scripts/mbt-timings.tsv" "$root/go/scripts/test-shards.sh" "$1" "$2" <<<"$tests" | paste -sd'|' -)"
   [ -n "$run" ] || { echo "model-test: mbt shard $1/$2 is empty" >&2; return 0; }
   gotest -run "^($run)\$" ./tests/model/mbt/
