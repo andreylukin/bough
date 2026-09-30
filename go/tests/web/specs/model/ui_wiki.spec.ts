@@ -420,9 +420,14 @@ modelTests<Ctx>({
   status: (c) => head(c),
   sessions: () => [],
   expectedError: (c, text) => c.missing && /status of 404/.test(text),
-  invariants: (c, where) => uiInvariants(c.page, {
-    // The palette is its own surface, walked by its own spec.
-    include: ['main.app-main'],
-    text: 'main.app-main .page-head *, main.app-main [role=status], .pal [role=status]',
-  }, where),
+  async invariants(c, where) {
+    await c.page.evaluate(() => Promise.all(Array.from(document.querySelectorAll('.state,.error-note,.empty-state'))
+      .flatMap((el) => el.getAnimations())
+      .map((a) => a.finished.catch(() => undefined))));
+    await uiInvariants(c.page, {
+      // The palette is its own surface, walked by its own spec.
+      include: ['main.app-main'],
+      text: 'main.app-main .page-head *, main.app-main [role=status], .pal [role=status]',
+    }, where);
+  },
 });
