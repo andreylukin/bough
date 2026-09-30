@@ -34,9 +34,14 @@ Everything below runs from `go/`. Go 1.27+.
 ```sh
 go build ./cmd/bough                 # ~2s warm
 go vet ./...                         # what CI gates on first
-go test -race -parallel 4 ./...      # ~3 min; plugins/ui alone is most of it
+go test -race -parallel 4 ./...      # ~4 min; internal/vtreal (PTY) is the long pole
 go test -race ./plugins/todo/        # one package, under a second
+../scripts/model-test.sh             # FizzBee models + walks; CI runs it as 13 parallel parts
 ```
+
+`tests/model/mbt` skips itself under a bare `./...`: its walks outlast
+go test's ten-minute default timeout. `scripts/model-test.sh` runs it
+(`mbt I N` for one shard), as does naming a test with `-run`.
 
 `GORACE=atexit_sleep_ms=0` in front of a race run drops the second
 every race test binary sleeps before it exits; CI sets it. On sixteen

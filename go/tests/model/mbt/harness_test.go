@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -41,6 +42,14 @@ func TestMain(m *testing.M) {
 	// The lib's flags (--max-seq-runs, --seq-seed, ...) override a
 	// test's options from the command line when reproducing a failure.
 	fmbt.ParseFlags()
+	// The package's walks take longer than go test's default ten-minute
+	// timeout, so a bare `go test ./...` failed on it every time. It runs
+	// under scripts/model-test.sh, which sets BOUGH_MODEL_TESTS, or when a
+	// test is named with -run (the browser walks start their backends so).
+	if os.Getenv("BOUGH_MODEL_TESTS") == "" && flag.Lookup("test.run").Value.String() == "" && flag.Lookup("test.list").Value.String() == "" {
+		fmt.Println("mbt: skipped; run scripts/model-test.sh, set BOUGH_MODEL_TESTS=1, or name tests with -run")
+		os.Exit(0)
+	}
 	restore := shortTempDir()
 	code := m.Run()
 	restore()

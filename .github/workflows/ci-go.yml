@@ -10,11 +10,14 @@
 #             build + test cache, so a PR reruns only what it changed.
 #   cross   — every release target compiles and vets, so a tag never
 #             discovers a build break on an architecture nobody ran
-#   model   — scripts/model-test.sh: the FizzBee models and their tests
+#   model   — scripts/model-test.sh: the FizzBee models and their tests,
+#             as a check part, six mbt shards and six browser-walk
+#             shards; model-history replays the walks' transcripts
 #   web-dist — bun test, typecheck + design check, and a rebuild of the
 #             committed dist/app.js that must match
-#   web-e2e — Playwright specs against real `bough --web` processes,
-#             sharded 4 ways; each shard uploads a blob report and
+#   web-e2e — Playwright specs against real `bough --web` processes
+#             (the model walks run under model), sharded 2 ways; each
+#             shard uploads a blob report and
 #             web-e2e-report merges them into one HTML report
 name: ci-go
 
@@ -181,13 +184,22 @@ jobs:
         run: git diff --exit-code --stat -- dist/app.js
 
   # The FizzBee models and the model-based tests that drive the real
-  # code from them. The script fetches its own pinned binaries.
+  # code from them. The script fetches its own pinned binaries. Its steps
+  # run as parallel parts: in one job, the mbt package and the browser
+  # walks took 47 minutes each and the job two to four hours.
   model:
+    name: model (${{ matrix.part }})
     runs-on: ubuntu-latest
     # A push walks every state; the nightly run takes every transition.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 180 }}
+    timeout-minutes: ${{ github.event_name == 'schedule' && 240 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [check, mbt 1 6, mbt 2 6, mbt 3 6, mbt 4 6, mbt 5 6, mbt 6 6,
+               walks 1 6, walks 2 6, walks 3 6, walks 4 6, walks 5 6, walks 6 6]
     env:
       MODEL_COVER: ${{ github.event_name == 'schedule' && 'transitions' || '' }}
+      MODEL_TRACE_DIR: ${{ github.workspace }}/model-traces
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -202,20 +214,45 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: go/tests/web/package-lock.json
-      # The script's last steps walk the model paths in a browser and
-      # check the transcripts they leave.
       - run: npm ci
         working-directory: go/tests/web
-      - run: npx playwright install --with-deps --only-shell chromium
+      - if: startsWith(matrix.part, 'walks')
+        run: npx playwright install --with-deps --only-shell chromium
         working-directory: go/tests/web
-      - run: scripts/model-test.sh
+      - run: scripts/model-test.sh ${{ matrix.part }}
+      # model-history replays every shard's transcripts against the specs.
+      - if: ${{ startsWith(matrix.part, 'walks') && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-traces-${{ strategy.job-index }}
+          path: model-traces/
+          retention-days: 3
+          if-no-files-found: ignore
+
+  model-history:
+    needs: model
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.sum
+      - uses: actions/download-artifact@v4
+        with:
+          path: model-traces
+          pattern: model-traces-*
+          merge-multiple: true
+      - run: scripts/model-test.sh history "$GITHUB_WORKSPACE/model-traces"
 
   web-e2e:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -250,10 +287,12 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
         working-directory: go/tests/web
-      - run: npx playwright test --shard=${{ matrix.shard }}/4
+      # The model walks run in the model job, which keeps their transcripts.
+      - run: npx playwright test --shard=${{ matrix.shard }}/2
         working-directory: go/tests/web
         env:
           BOUGH_BIN: ${{ github.workspace }}/bough-go-bin
+          BOUGH_WEB_SUITE: ui
       # Uploaded even when green: the merge job needs every shard's blob.
       - name: Upload blob report
         if: ${{ !cancelled() }}

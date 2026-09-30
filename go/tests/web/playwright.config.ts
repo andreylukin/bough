@@ -23,6 +23,12 @@ const heavy = [
 ];
 const file = (name: string) => new RegExp(`/specs/model/${name}\\.spec\\.ts$`);
 
+// CI's model job walks specs/model/ in shards of its own and keeps the
+// transcripts for TestHistoryTraces; web-e2e ran the same 892 walks a
+// second time, ~95 of its ~100 runner-minutes. BOUGH_WEB_SUITE=ui leaves
+// them out; unset runs everything, as locally.
+const uiOnly = process.env.BOUGH_WEB_SUITE === 'ui';
+
 // Every spec launches its own bough process (temp HOME, temp cwd, own
 // port) or works only in sessions it made on its worker's serve, so full
 // parallelism is safe and encouraged.
@@ -41,10 +47,12 @@ export default defineConfig({
     video: 'off',
     viewport: { width: 1100, height: 700 },
   },
-  projects: [
-    ...heavy.map((name) => ({ name, testMatch: file(name) })),
-    { name: 'rest', testIgnore: heavy.map(file) },
-  ],
+  projects: uiOnly
+    ? [{ name: 'rest', testIgnore: /\/specs\/model\// }]
+    : [
+        ...heavy.map((name) => ({ name, testMatch: file(name) })),
+        { name: 'rest', testIgnore: heavy.map(file) },
+      ],
   // CI shards write blob reports; the web-e2e-report job merges them.
   reporter: process.env.CI
     ? [['list'], ['github'], ['blob']]
