@@ -496,6 +496,7 @@ func (a *abpcAdapter) siblingEnd2(ok bool) error {
 	if !a.gate.pass(v.sibling == "running") {
 		return nil
 	}
+	hadRequest := len(a.held) > 0
 	a.sibSaid = "ok"
 	if !ok {
 		a.sibSaid = "fail"
@@ -507,6 +508,20 @@ func (a *abpcAdapter) siblingEnd2(ok bool) error {
 		return (a.tool == "js" && e.Kind == "result") || (e.Kind == "call" && str(e.Data["id"]) == a.sibCall && e.Data["phase"] != "start")
 	}); err != nil {
 		return err
+	}
+	if !hadRequest && len(a.held) > 0 {
+		// The result caused this request. Its .taken marker can arrive
+		// before the result is appended to history under CI load.
+		es, err := history.Read(filepath.Join(a.s.Home, ".bough", "history", a.id+".jsonl"))
+		if err != nil {
+			return err
+		}
+		for i := len(v.entries); i < len(es); i++ {
+			if (a.tool == "js" && es[i].Kind == "result") || (es[i].Kind == "call" && str(es[i].Data["id"]) == a.sibCall && es[i].Data["phase"] != "start") {
+				a.heldAt = i + 1
+				break
+			}
+		}
 	}
 	return a.settle()
 }
@@ -648,6 +663,14 @@ func (a *abpcAdapter) SendMessage() error {
 		if _, err := waitRow(a.s, a.id, "running", func(r serve.Row) bool { return r.Status == serve.StatusRunning }); err != nil {
 			return err
 		}
+	}
+	// The model step ends with a request in flight. The input can be
+	// recorded before the child reaches the provider on a busy runner.
+	if len(a.held) == 0 {
+		if err := waitTaken(a.dir, a.next); err != nil {
+			return err
+		}
+		a.absorb()
 	}
 	return a.settle()
 }
