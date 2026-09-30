@@ -180,11 +180,19 @@ function focusDestination() {
     focus();
     // The destination can replace its heading or composer after a read.
     const observer = new MutationObserver(() => {
-      if (document.activeElement !== document.body && document.activeElement !== focused) { observer.disconnect(); return; }
+      if (document.activeElement !== document.body && document.activeElement !== focused) { stop(); return; }
       focus();
     });
+    const stop = () => {
+      observer.disconnect();
+      document.removeEventListener("pointerdown", stop, true);
+      document.removeEventListener("keydown", stop, true);
+      clearTimeout(timer);
+    };
+    document.addEventListener("pointerdown", stop, true);
+    document.addEventListener("keydown", stop, true);
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
-    setTimeout(() => observer.disconnect(), 5000);
+    const timer = setTimeout(stop, 5000);
   });
 }
 
