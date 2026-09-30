@@ -29,11 +29,13 @@
 #   none        healthy
 #   cp_gone     the checkpoint objects are unreadable (refs/bough/turns
 #               GC'd or corrupt): every checkpoint diff fails
-#   snap_fails  snapshotting the tree now fails (index lock, disk): only
-#               reads that diff to "now" need it
+#   snap_fails  snapshotting the tree now fails (index lock, disk):
+#               finished turns use recorded end trees and remain readable
 #   slow        the tree is too big: every git read outlives
 #               changesTimeout
 #   cwd_gone    the session's cwd was removed (worktree removed)
+# A finished turn records its end tree, so later undo and snapshot faults
+# do not change the session's last recorded view.
 #
 # The page. open, scope (session | turn1 | turn2 | tree: what the page
 # was opened on; the tab switch is changes_review's), view:
@@ -73,10 +75,6 @@ def on_disk(p):
             fs.append(fileof(k))
     return fs
 
-# Turn k diffs to "now" (a snapshot) when no later input has a checkpoint.
-def last_turn(p, k):
-    return k == 2 or p.t2 == "none"
-
 def turn_of(scope):
     if scope == "turn1":
         return 1
@@ -98,13 +96,9 @@ def read(p):
         recorded = [k for k in [1, 2] if status(p, k) in ["done", "undone"]]
         if not recorded:
             return "no_changes", []
-        # The first checkpoint to a snapshot of now. (Product: a failed
-        # snapshot lists the files patch=false as if no checkpoint was
-        # taken; a failed git diff answers repo=true with no files.)
-        if p.fault in ["cp_gone", "snap_fails"]:
+        if p.fault == "cp_gone":
             return "error", []
-        # An undone turn's file is back at the checkpoint: it drops out.
-        fs = [fileof(k) for k in recorded if status(p, k) == "done"]
+        fs = p.end_files
         if fs:
             return "files", fs
         return "no_changes", []
@@ -113,7 +107,7 @@ def read(p):
     # a later one keeps listing its file from its checkpoint to the next.)
     if status(p, k) == "undone":
         return "undone", []
-    if p.fault == "cp_gone" or (p.fault == "snap_fails" and last_turn(p, k)):
+    if p.fault == "cp_gone":
         return "error", []
     return "files", [fileof(k)]
 
@@ -129,8 +123,6 @@ def patch(p):
         return "shown"
     if p.fault == "cp_gone":
         return "error"
-    if p.fault == "snap_fails" and (p.scope == "session" or last_turn(p, turn_of(p.scope))):
-        return "error"
     return "shown"
 
 def running(p):
@@ -144,6 +136,7 @@ role Page:
     action Init:
         self.t1 = "none"
         self.t2 = "none"
+        self.end_files = []
         self.fault = "none"
         self.open = False
         self.scope = "session"
@@ -249,6 +242,7 @@ role Page:
             self.t1 = "done"
         else:
             self.t2 = "done"
+        self.end_files = on_disk(self)
         self.tick()
 
     atomic action Undo:
@@ -296,6 +290,8 @@ always assertion GitFailureShowsError:
     # The tree is git diff HEAD: no checkpoint or snapshot in it.
     if page.scope == "tree":
         return True
+    if page.rfault == "snap_fails":
+        return True
     if page.scope == "session" and (page.t1 in ["done", "undone"] or page.t2 in ["done", "undone"]):
         return page.view == "error"
     return page.view != "no_changes"
@@ -309,9 +305,9 @@ always assertion NotRepoOnlyForNonRepo:
 always assertion UndoneTurnNotListed:
     if not fresh(page):
         return True
-    if page.t1 == "undone" and "a" in page.listed:
+    if page.scope == "turn1" and page.t1 == "undone" and "a" in page.listed:
         return False
-    if page.t2 == "undone" and "b" in page.listed:
+    if page.scope == "turn2" and page.t2 == "undone" and "b" in page.listed:
         return False
     return True
 

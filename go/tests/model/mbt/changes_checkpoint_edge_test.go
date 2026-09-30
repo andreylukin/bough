@@ -59,8 +59,9 @@ type cceAdapter struct {
 
 	// The world as the adapter drove it (read back from the transcript
 	// in GetState).
-	t12   [2]string
-	fault string
+	t12      [2]string
+	fault    string
+	endFiles []string
 
 	// The page.
 	open         bool
@@ -71,9 +72,9 @@ type cceAdapter struct {
 
 	taken map[string]int
 
-	// snapNothing is TestChangesCheckpointEdgeCatchesWrongAdapter's bug:
-	// SnapshotFails breaks nothing.
-	snapNothing bool
+	// cpNothing is TestChangesCheckpointEdgeCatchesWrongAdapter's bug:
+	// CorruptCheckpoint breaks nothing.
+	cpNothing bool
 }
 
 func newCCEAdapter(t *testing.T) *cceAdapter {
@@ -158,6 +159,7 @@ func (a *cceAdapter) Init() error {
 	a.ids = append(a.ids, row.ID)
 	a.seq, a.name = [2]int64{}, [2]string{}
 	a.t12, a.fault = [2]string{"none", "none"}, "none"
+	a.endFiles = []string{}
 	a.open, a.scope, a.view, a.listed = false, "session", "none", []string{}
 	a.rfault, a.diff, a.behind = "none", "none", false
 	a.gate.reset()
@@ -192,7 +194,7 @@ func (a *cceAdapter) GetState() (map[string]any, error) {
 	}
 	t := cceTurns(lines)
 	return map[string]any{
-		"t1": t[0], "t2": t[1], "fault": a.fault,
+		"t1": t[0], "t2": t[1], "fault": a.fault, "end_files": slices.Clone(a.endFiles),
 		"open": a.open, "scope": a.scope, "view": a.view, "listed": slices.Clone(a.listed),
 		"rfault": a.rfault, "behind": a.behind, "diff": a.diff,
 	}, nil
@@ -541,6 +543,12 @@ func (a *cceAdapter) TurnEnds() error {
 	if _, err := waitRow(a.s, a.id, "the turn to end", func(r serve.Row) bool { return r.Status != serve.StatusRunning }); err != nil {
 		return err
 	}
+	a.endFiles = []string{}
+	for i, st := range a.t12 {
+		if st == "done" {
+			a.endFiles = append(a.endFiles, string(rune('a'+i)))
+		}
+	}
 	a.tick()
 	return nil
 }
@@ -576,11 +584,11 @@ func (a *cceAdapter) fail(f string) error {
 	case "cwd_gone":
 		return os.RemoveAll(a.repo)
 	case "snap_fails":
-		if a.snapNothing {
-			return nil
-		}
 		return os.WriteFile(filepath.Join(a.flags, "snapfail"), nil, 0o644)
 	case "cp_gone":
+		if a.cpNothing {
+			return nil
+		}
 		return os.WriteFile(filepath.Join(a.flags, "cpgone"), nil, 0o644)
 	}
 	return os.WriteFile(filepath.Join(a.flags, "slow"), nil, 0o644)
@@ -862,16 +870,16 @@ func TestChangesCheckpointEdgeHistoryProjection(t *testing.T) {
 	}
 }
 
-// A run whose SnapshotFails breaks nothing must fail, or a green
+// A run whose CorruptCheckpoint breaks nothing must fail, or a green
 // TestChangesCheckpointEdgePaths proves nothing.
 func TestChangesCheckpointEdgeCatchesWrongAdapter(t *testing.T) {
 	t.Parallel()
 	fizzTools(t)
 	a := newCCEAdapter(t)
-	a.snapNothing = true
+	a.cpNothing = true
 	err := walkCCEPaths(t, []*cceAdapter{a}, tracecheck.CoverStates, true)
 	if err == nil {
-		t.Fatal("a run whose SnapshotFails breaks nothing passed; the paths are not checking state")
+		t.Fatal("a run whose CorruptCheckpoint breaks nothing passed; the paths are not checking state")
 	}
 	t.Logf("caught as expected: %v", err)
 }
