@@ -830,7 +830,10 @@ type runner struct {
 func (r *runner) note(emit func(kind, text string), kind, text string, extra map[string]any) {
 	data := map[string]any{"text": text}
 	maps.Copy(data, extra)
-	r.hist.Append(kind, data)
+	e := r.hist.Append(kind, data)
+	if tree, _ := data["checkpoint"].(string); kind == "done" && tree != "" && r.cp != nil {
+		r.cp.Pin(e.Seq, tree)
+	}
 	if h, ok := r.hist.(interface{ TakeErr() error }); ok {
 		if err := h.TakeErr(); err != nil {
 			emit("system", fmt.Sprintf("history not saved: %v", err))
@@ -1160,9 +1163,8 @@ func (r *runner) doneData() map[string]any {
 	}
 	// Only when a shell command ran: the diff exists to catch what the
 	// write tools could not see, so with nothing run there is nothing
-	// for them to have missed. It also keeps the snapshot — git work
-	// proportional to the repo, ~35ms here and more in a large one —
-	// off the end of every turn that never touched a shell.
+	// for them to have missed. The end checkpoint below is still needed
+	// to keep later edits out of this turn's diff.
 	if r.cp != nil && shell {
 		files = mergeFiles(files, r.cp.Changed(r.turnTree))
 	}
@@ -1170,6 +1172,13 @@ func (r *runner) doneData() map[string]any {
 		files = []string{}
 	}
 	data["files"] = files
+	// Later turns or sessions may change these files before this history
+	// is read; preserve the tree at this turn's boundary.
+	if r.cp != nil {
+		if tree := r.cp.Snapshot(); tree != "" {
+			data["checkpoint"] = tree
+		}
+	}
 	// The turn's wall time, saved so a resumed or replayed transcript
 	// shows what it took rather than the time since it was loaded.
 	if !r.turnStart.IsZero() {

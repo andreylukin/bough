@@ -201,6 +201,9 @@ func TestAdoptedCallWritesLandInTheWakeTurn(t *testing.T) {
 		var files [][]string
 		for _, e := range r.entries() {
 			if e.Kind == "done" {
+				if tree, _ := e.Data["checkpoint"].(string); tree == "" {
+					t.Fatalf("done has no end checkpoint: %v", e.Data)
+				}
 				var fs []string
 				b, _ := json.Marshal(e.Data["files"])
 				_ = json.Unmarshal(b, &fs)

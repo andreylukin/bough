@@ -71,6 +71,14 @@ func TestDoneFilesIncludeShellEditsTheToolsNeverSaw(t *testing.T) {
 	}
 }
 
+func TestDoneDataRecordsEndCheckpoint(t *testing.T) {
+	t.Parallel()
+	r := &runner{cp: &fakeCP{}}
+	if got := r.doneData()["checkpoint"]; got != "tree-before" {
+		t.Fatalf("end checkpoint = %v", got)
+	}
+}
+
 // Both seams contribute, the tools' record first, and a file both saw
 // appears once.
 func TestDoneFilesUnionToolsAndCheckpointsWithoutDuplicates(t *testing.T) {
@@ -144,9 +152,8 @@ func TestMergeFilesKeepsOrderAndDropsBlanks(t *testing.T) {
 	}
 }
 
-// Snapshotting the tree is real git work over every file in the repo,
-// so a turn that ran no shell command must not pay for it: the write
-// tools already saw everything such a turn did.
+// A turn without a shell command still records its end tree, but the
+// write tools already reported its paths, so no changed-file diff is needed.
 func TestDoneFilesSkipTheDiffWhenNoShellCommandRan(t *testing.T) {
 	t.Parallel()
 	cp := &fakeCP{changed: []string{"never-asked.go"}}

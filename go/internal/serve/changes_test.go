@@ -117,6 +117,48 @@ func TestSessionEditsNoCwd(t *testing.T) {
 	}
 }
 
+func TestSessionEditsStopsAtRecordedEnd(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	path := filepath.Join(dir, "a.go")
+	if err := os.WriteFile(path, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base, err := history.Snapshot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("one\nfrom A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	end, err := history.Snapshot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("one\nfrom A\nfrom B\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries := []history.Entry{
+		{Seq: 1, Kind: "input", Data: map[string]any{"checkpoint": base}},
+		{Seq: 2, Kind: "done", Data: map[string]any{"checkpoint": end, "files": []any{"a.go"}}},
+	}
+	edits, ok, err := SessionEdits(context.Background(), dir, entries)
+	if err != nil || !ok || len(edits) != 1 || edits[0].Add != 1 {
+		t.Fatalf("A edits = %+v ok=%v err=%v", edits, ok, err)
+	}
+	diff, err := SessionDiff(context.Background(), dir, entries, "a.go")
+	if err != nil || !strings.Contains(diff, "+from A") || strings.Contains(diff, "from B") {
+		t.Fatalf("A diff = %q, %v", diff, err)
+	}
+	turn, ok, err := TurnEdits(context.Background(), dir, entries, 1)
+	if err != nil || !ok || len(turn) != 1 || turn[0].Add != 1 {
+		t.Fatalf("A turn edits = %+v ok=%v err=%v", turn, ok, err)
+	}
+}
+
 // A repository with no commit yet still gets real patches: the
 // checkpoint is a tree object, not HEAD.
 func TestSessionEditsNoCommit(t *testing.T) {

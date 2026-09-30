@@ -204,7 +204,12 @@ func (a *actorState) note(kind, text string, extra map[string]any) {
 	if _, ok := data["text"]; !ok || text != "" {
 		data["text"] = text
 	}
-	a.r.d.History.Append(kind, data)
+	e := a.r.d.History.Append(kind, data)
+	if tree, _ := data["checkpoint"].(string); kind == "done" && tree != "" {
+		if cp := a.checkpoints(); cp != nil {
+			cp.Pin(e.Seq, tree)
+		}
+	}
 	a.r.d.Emit(kind, text, extra)
 }
 
@@ -1054,6 +1059,11 @@ func (a *actorState) doneData(running int, stop string) map[string]any {
 		files = []string{}
 	}
 	data["files"] = files
+	// The ending tree belongs to this turn even when a later session edits
+	// the same files before anyone opens Session edits.
+	if tree := a.snapshot(); tree != "" {
+		data["checkpoint"] = tree
+	}
 	if !a.turnStart.IsZero() {
 		data["ms"] = time.Since(a.turnStart).Milliseconds()
 	}

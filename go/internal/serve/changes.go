@@ -119,8 +119,9 @@ func (a *API) changes(w http.ResponseWriter, r *http.Request) {
 }
 
 // Edit is one file the session's own turns changed, measured from the
-// checkpoint taken before its first turn to the tree now. Patch is false
-// when no checkpoint was recorded: the path is known, its lines are not.
+// checkpoint taken before its first turn to its last recorded end tree.
+// Patch is false when no checkpoint was recorded: the path is known,
+// its lines are not.
 type Edit struct {
 	Change
 	Patch bool `json:"patch"`
@@ -149,6 +150,18 @@ func baseline(entries []history.Entry) (tree string, files []string) {
 	return tree, files
 }
 
+// sessionEnd is absent in older histories, whose edits still use the
+// current tree as they did before end checkpoints were recorded.
+func sessionEnd(entries []history.Entry) string {
+	var end string
+	for _, e := range entries {
+		if e.Kind == "done" {
+			end, _ = e.Data["checkpoint"].(string)
+		}
+	}
+	return end
+}
+
 // relPath is a recorded path relative to dir, as git --relative prints it.
 func relPath(dir, p string) string {
 	if filepath.IsAbs(p) {
@@ -167,18 +180,20 @@ func relPath(dir, p string) string {
 // git could not read or a tree it could not snapshot.
 func SessionEdits(ctx context.Context, dir string, entries []history.Entry) (edits []Edit, ok bool, err error) {
 	base, files := baseline(entries)
-	return editsBetween(ctx, dir, base, "", files)
+	return editsBetween(ctx, dir, base, sessionEnd(entries), files)
 }
 
-// turnSpan is one turn's checkpoint (its input's), the next turn's
-// checkpoint ("" when it is the last: the tree now), and the files the
-// turn recorded. found is false when no input has that seq.
+// turnSpan is one turn's input checkpoint, its done checkpoint (or the
+// next input's for older histories), and the files it recorded. An
+// absent end uses the tree now. found is false when no input has that seq.
 func turnSpan(entries []history.Entry, turn int) (base, end string, files []string, found bool) {
 	seen := map[string]bool{}
 	for _, e := range entries {
 		if e.Kind == "input" {
 			if found {
-				end, _ = e.Data["checkpoint"].(string)
+				if end == "" {
+					end, _ = e.Data["checkpoint"].(string)
+				}
 				break
 			}
 			if e.Seq == int64(turn) {
@@ -189,6 +204,9 @@ func turnSpan(entries []history.Entry, turn int) (base, end string, files []stri
 		}
 		if !found || e.Kind != "done" {
 			continue
+		}
+		if cp, _ := e.Data["checkpoint"].(string); cp != "" {
+			end = cp
 		}
 		fs, _ := e.Data["files"].([]any)
 		for _, f := range fs {
@@ -296,7 +314,7 @@ func SessionDiff(ctx context.Context, dir string, entries []history.Entry, path 
 		return "", fmt.Errorf("no working directory was recorded for this session")
 	}
 	base, _ := baseline(entries)
-	return diffBetween(ctx, dir, base, "", path)
+	return diffBetween(ctx, dir, base, sessionEnd(entries), path)
 }
 
 // TurnDiff is one file's patch across one turn (the seq of its input).
