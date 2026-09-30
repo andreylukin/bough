@@ -1,7 +1,15 @@
 import { test, expect } from '../helpers/serve';
 
+const id = '2026-09-19T08-00-00-00002';
+test.use({ serveOpts: { home: {
+  [`.bough/history/${id}.jsonl`]: [
+    { seq: 1, kind: 'meta', data: { cwd: '/w/work', origin: 'web' } },
+    { seq: 2, kind: 'input', data: { text: 'palette focus target' } },
+    { seq: 3, kind: 'done', data: {} },
+  ].map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+} } });
+
 test('palette actions focus their destination and mark only the visible session current', async ({ page, serve }) => {
-  const id = await serve.newSession('palette focus target');
   await page.goto(serve.url);
   await expect(page.locator('#composer')).toBeVisible();
 
@@ -14,8 +22,7 @@ test('palette actions focus their destination and mark only the visible session 
   await expect(composer).toHaveValue('hello');
 
   await page.goto(`${serve.url}/#/wiki`);
-  await expect(page.getByRole('heading', { name: 'Wiki', level: 1 })).toBeVisible();
-  await page.waitForTimeout(250);
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/wiki');
   await page.keyboard.press('ControlOrMeta+k');
   await expect(page.getByRole('dialog', { name: 'Quick access' })).toBeVisible();
   await page.getByRole('combobox', { name: 'Search sessions or run a command' }).fill('after:1d');
@@ -25,8 +32,7 @@ test('palette actions focus their destination and mark only the visible session 
   await expect(composer).toBeFocused();
 
   await page.goto(`${serve.url}/#/wiki`);
-  await expect(page.getByRole('heading', { name: 'Wiki', level: 1 })).toBeVisible();
-  await page.waitForTimeout(250);
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/wiki');
   await page.keyboard.press('ControlOrMeta+k');
   await expect(page.getByRole('dialog', { name: 'Quick access' })).toBeVisible();
 
