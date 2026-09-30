@@ -3826,6 +3826,7 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
   .proj-filter .field{height:var(--row-touch)}
   .proj-filter>svg{top:14px}
   .proj-empty-row{flex-direction:column;align-items:flex-start;max-height:none;gap:8px}
+  .proj-move,.proj-check input,.rp-pick input{opacity:1}
   .proj-body .proj-row{grid-template-columns:40px minmax(0,1fr) auto;column-gap:8px;min-height:56px;padding:6px 12px 6px 0}
   .proj-body .proj-row>.proj-check{width:40px;margin:0}
   .proj-body .proj-row>.proj-open{min-width:0;align-items:stretch;gap:0}
