@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -156,6 +157,20 @@ func TestSessionEditsStopsAtRecordedEnd(t *testing.T) {
 	turn, ok, err := TurnEdits(context.Background(), dir, entries, 1)
 	if err != nil || !ok || len(turn) != 1 || turn[0].Add != 1 {
 		t.Fatalf("A turn edits = %+v ok=%v err=%v", turn, ok, err)
+	}
+	f := newAPI(t)
+	f.seed(t, "a",
+		history.Entry{Seq: 1, Kind: "meta", Data: map[string]any{"cwd": dir}},
+		history.Entry{Seq: 2, Kind: "input", Data: map[string]any{"checkpoint": base}},
+		history.Entry{Seq: 3, Kind: "done", Data: map[string]any{"checkpoint": end, "files": []any{"a.go"}}},
+	)
+	if code, body := f.do(t, "GET", "/api/sessions/a/edits", ""); code != http.StatusOK {
+		t.Fatalf("GET edits: %d %v", code, body)
+	} else if files, ok := body["files"].([]any); !ok || len(files) != 1 || files[0].(map[string]any)["add"] != float64(1) {
+		t.Fatalf("GET edits: %v", body)
+	}
+	if code, body := f.do(t, "GET", "/api/sessions/a/diff?scope=session&path=a.go", ""); code != http.StatusOK || strings.Contains(fmt.Sprint(body["diff"]), "from B") {
+		t.Fatalf("GET session diff: %d %v", code, body)
 	}
 }
 
