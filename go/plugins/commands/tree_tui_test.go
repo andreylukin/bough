@@ -34,6 +34,9 @@ func TestUndoRendersSystemBlock(t *testing.T) {
 
 	d.Say("make a file")
 	d.WaitFor("wrote it")
+	// The reply can arrive before the end checkpoint is saved; /undo
+	// needs the turn's done record, not just its last assistant line.
+	d.WaitFor("✔ wrote made.txt")
 	if _, err := os.Stat("made.txt"); err != nil {
 		t.Fatalf("the turn should have written made.txt: %v", err)
 	}
