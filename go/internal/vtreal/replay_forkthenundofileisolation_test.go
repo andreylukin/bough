@@ -232,8 +232,8 @@ func TestForkThenUndoFileIsolation(t *testing.T) {
 		for i := 0; i+1 < len(fr); i += 2 {
 			byName[fr[i]] = fr[i+1]
 		}
-		if len(byName) != 2 || byName[forkRefs[0]] != forkRefs[1] {
-			t.Errorf("fork refs after a live turn = %v, want %v plus one new ref", fr, forkRefs)
+		if len(byName) != 3 || byName[forkRefs[0]] != forkRefs[1] {
+			t.Errorf("fork refs after a live turn = %v, want %v plus input and done refs", fr, forkRefs)
 		}
 		for name, tree := range byName {
 			// The live turn's checkpoint is the tree after the fork
