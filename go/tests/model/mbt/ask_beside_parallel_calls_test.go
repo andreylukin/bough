@@ -240,7 +240,7 @@ func (a *abpcAdapter) view() (abpcView, error) {
 	}
 	first := true
 	for i, e := range v.entries {
-		if len(a.held) > 0 && i >= a.heldAt && a.callEnd(e) {
+		if len(a.held) > 0 && (v.row.Status == serve.StatusRunning || v.row.Status == serve.StatusNeedsYou) && i >= a.heldAt && a.callEnd(e) {
 			v.unsent = true
 		}
 		switch e.Kind {
