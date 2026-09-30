@@ -721,7 +721,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const note = rowNote(r);
     const { failed, asking } = note;
     const why = failed
-      ? `${capital(failed)}${asking ? "; waiting for your answer" : failed === "tests failed" ? `; agent ${(STATUS[r.status]?.label ?? r.status).toLowerCase()}` : ""}`
+      ? `${capital(failed)}${asking ? "; waiting for your answer" : failed === "tests failed" ? `; review test results; agent ${(STATUS[r.status]?.label ?? r.status).toLowerCase()}` : ""}`
       : (STATUS[r.status]?.label ?? r.status) + (isUnseen(r) ? ", not seen yet" : "");
     // Where the query hit, kept on screen: a late title hit shifts the
     // title, a hit elsewhere gets its own line centred on it.

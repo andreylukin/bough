@@ -59,7 +59,7 @@ export function rowNote(r: Row): { failed: string; asking: boolean; label: strin
   const failed = r.trouble || (r.testsFailed ? "tests failed" : "") || (hasFailure(r) ? "failed" : "");
   const asking = hasQuestion(r);
   const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  const label = failed ? capital(failed) + (asking ? "; waiting for you" : "") : r.status === "done" ? "" : STATUS[r.status]?.label ?? r.status;
+  const label = failed ? capital(failed) + (asking ? "; waiting for you" : failed === "tests failed" ? " · review test results" : "") : r.status === "done" ? "" : STATUS[r.status]?.label ?? r.status;
   const plain = !failed && !asking && (r.status === "running" || r.status === "needs-you" || r.status === "done");
   return { failed, asking, label, plain };
 }

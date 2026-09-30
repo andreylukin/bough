@@ -31,3 +31,10 @@ test("a project thread's pin does not repeat the Seen its group row has", () => 
   const html = render([row("pt", { status: "error", trouble: "failed", turns: 1, mode: "project", project: "web" })]);
   expect(html.match(/aria-label="Mark session pt seen"/g)?.length).toBe(1);
 });
+
+test("a finished session with failed tests asks for review, not an answer", () => {
+  const html = render([row("tests", { status: "done", trouble: "tests failed", testsFailed: true, turns: 1 })]);
+  expect(html).toContain("Tests failed · review test results");
+  expect(html).toContain("Tests failed; review test results; agent done");
+  expect(html).not.toContain("waiting for your answer");
+});

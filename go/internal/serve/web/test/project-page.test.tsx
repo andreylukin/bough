@@ -166,7 +166,7 @@ test("groupThreads drops empty groups and keeps the urgency order", () => {
 // nothing for a plain running or done row. The page used to show the
 // agent's summary there and the sidebar did not, so one thread read two ways.
 test("a thread's second line is the sidebar's, and twins carry the sidebar's id tail", () => {
-  expect(rowNote(row("x", "x", { trouble: "tests failed" })).label).toBe("Tests failed");
+  expect(rowNote(row("x", "x", { trouble: "tests failed" })).label).toBe("Tests failed · review test results");
   expect(rowNote(threads[1]).plain).toBe(false);
   expect(rowNote(row("x", "x", { status: "done" })).label).toBe("");
   const html = page({ detail: { ...detail, threads: [

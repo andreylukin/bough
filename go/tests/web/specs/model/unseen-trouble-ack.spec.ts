@@ -102,10 +102,10 @@ async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
   const r = row(c);
   const label = (await r.getAttribute('aria-label')) ?? '';
   // "<title>, <why>[, not seen yet], <age> ago…"; why is the status word,
-  // or a failure's reason ("Failed", "Tests failed; agent <word>").
+  // or a failure's reason ("Failed", "Tests failed; review test results; agent <word>").
   const parts = label.split(', ');
   const why = parts[1] ?? '';
-  const tests = /^Tests failed; agent (\w+)/.exec(why);
+  const tests = /^Tests failed; review test results; agent (\w+)/.exec(why);
   const status = tests ? WORDS[tests[1][0].toUpperCase() + tests[1].slice(1)] : WORDS[why];
   const hasSeen = (await seen(c).count()) > 0;
   const hash = await c.page.evaluate(() => window.location.hash);
