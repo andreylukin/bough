@@ -74,7 +74,9 @@ type Row struct {
 	Title string `json:"title"`
 	// Summary is a few sentences on what the session is about, written by
 	// the small model as the conversation grows; "" before it has one.
-	Summary  string    `json:"summary,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	// Outcome is the last completed turn's summary, when it has landed.
+	Outcome  string    `json:"outcome,omitempty"`
 	Cwd      string    `json:"cwd"`
 	Repo     string    `json:"repo,omitempty"`
 	Branch   string    `json:"branch,omitempty"`
@@ -834,6 +836,7 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 		ID:         in.ID,
 		Title:      title,
 		Summary:    in.Summary,
+		Outcome:    d.outcome,
 		Cwd:        in.Cwd,
 		Repo:       in.Repo,
 		Branch:     in.Branch,

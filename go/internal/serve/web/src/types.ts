@@ -82,6 +82,8 @@ export interface Row {
   title: string;
   /** A few sentences on what the session is about; absent until the small model has named it. */
   summary?: string;
+  /** Last turn's recorded result, shown on finished sessions. */
+  outcome?: string;
   cwd: string;
   repo?: string;
   branch?: string;

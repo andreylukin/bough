@@ -39,6 +39,7 @@ type rowDigest struct {
 	testsFailed bool
 	testsAt     *time.Time
 	turns       int
+	outcome     string
 	hasInput    bool
 	// LastCache reads the same "done" entry whatever the model; only the
 	// TTL it reports is the model's. So the entry is found once and the
@@ -81,6 +82,15 @@ func digestOf(entries []history.Entry, fallback time.Time) *rowDigest {
 	// small-model call later: a Mark seen clicked on the failure in
 	// between was taken back when they landed. They are the turn already
 	// looked at, so trouble compares the ack with the entry before them.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == "done" {
+			break
+		}
+		if entries[i].Kind == "turn-summary" {
+			d.outcome, _ = entries[i].Data["text"].(string)
+			break
+		}
+	}
 	for i := len(entries) - 1; i >= 0; i-- {
 		if k := entries[i].Kind; k != "turn-summary" && k != "title" {
 			d.lastSeq, d.lastEntryAt = entries[i].Seq, entries[i].At

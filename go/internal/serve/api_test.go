@@ -183,6 +183,9 @@ func TestAPIListBookkeepingDoesNotMove(t *testing.T) {
 		t.Fatalf("ids = %v, want [a b]: a title entry moved b", ids)
 	}
 	b := body["sessions"].([]any)[1].(map[string]any)
+	if b["outcome"] != "b" {
+		t.Errorf("b outcome = %v, want its last turn summary", b["outcome"])
+	}
 	if at, _ := time.Parse(time.RFC3339Nano, b["lastAt"].(string)); !at.Equal(doneB) {
 		t.Errorf("b lastAt = %v, want its done at %v", b["lastAt"], doneB)
 	}

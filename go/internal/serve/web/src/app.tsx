@@ -736,10 +736,11 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     // Only the transcript held it: the line that did, so the row says why it is here.
     const saidLine = !hit && q ? said?.get(r.id)?.text.replace(/\s+/g, " ").trim() : undefined;
     const saidShown = saidLine ? excerpt(saidLine, Math.max(0, saidLine.toLowerCase().indexOf(q)), 6) : undefined;
-    // Done is what the check mark already says; the row keeps only the age then.
+    // Finished work has a result line when the turn summary has landed.
     // A background agent says its own lifecycle once, in its words; a parent says what its agents are doing.
     const life = child ? agentsFromRows({ ...r, id: r.spawnedBy ?? "" }, [r])[0]?.life ?? "unknown" : undefined;
-    const label = child ? "" : note.label;
+    const outcome = r.status === "done" && !failed && !asking ? r.outcome : "";
+    const label = child ? "" : note.label || outcome;
     const lines = log?.lines && !allTurns.has(r.id) && log.lines.length > 3 ? log.lines.slice(-3) : log?.lines;
     const children = kids.get(r.id);
     const bg = children ? workCounts(agentsFromRows(r, children)) : null;
@@ -747,12 +748,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const bgText = bg ? [bg.running && `${bg.running} running`, bg.failed && `${bg.failed} failed`].filter(Boolean).join(" · ") : "";
     // The project's environment failed to set up: its own indicator, always shown, never the session's status.
     const setup = r.mode === "project" && r.orb?.status === "failed" ? projectNames.get(r.orb.project) ?? r.orb.project : "";
-    // A second line only when it says more than the glyph: a failure's
-    // reason, a question, a background life or a setup failure. Plain
-    // running, waiting and done rows stay one line.
+    // A second line says what needs attention or what a finished turn did.
     const plain = note.plain;
     // A child's glyph says running, finished and stopped; only a failure or a wait takes a second line.
-    const stacked = Boolean((label && !plain) || life === "failed" || life === "queued" || setup);
+    const stacked = Boolean((label && (!plain || outcome)) || life === "failed" || life === "queued" || setup);
     const movable = Boolean(onMove) && r.mode !== "project";
     return (
       <Fragment key={r.id}>
@@ -769,7 +768,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                  aria-label={`${title}, ${life ? LIFE_WORD[life] : why}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}${setup ? `, ${setup}: setup failed` : ""}`}
+                  aria-label={`${title}, ${life ? LIFE_WORD[life] : why}${outcome ? `, ${outcome}` : ""}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}${setup ? `, ${setup}: setup failed` : ""}`}
                   className={"row" + (stacked ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q && !pin ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
                   title={`${title}\n${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}${setup ? `\n${setup}: setup failed` : ""}`}>

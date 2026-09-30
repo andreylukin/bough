@@ -59,6 +59,24 @@ func TestDigestKeepsBothLiveAnswers(t *testing.T) {
 	}
 }
 
+func TestDigestOutcomeWaitsForLatestTurnSummary(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	entries := []history.Entry{
+		{Seq: 1, Kind: "done", At: now},
+		{Seq: 2, Kind: "turn-summary", At: now, Data: map[string]any{"text": "First result"}},
+		{Seq: 3, Kind: "input", At: now, Data: map[string]any{"text": "next"}},
+		{Seq: 4, Kind: "done", At: now},
+	}
+	if got := digestOf(entries, now).outcome; got != "" {
+		t.Fatalf("outcome before latest summary = %q", got)
+	}
+	entries = append(entries, history.Entry{Seq: 5, Kind: "turn-summary", At: now, Data: map[string]any{"text": "Second result"}})
+	if got := digestOf(entries, now).outcome; got != "Second result" {
+		t.Fatalf("outcome after latest summary = %q", got)
+	}
+}
+
 // Trouble expires on the clock, so it is computed per request from the
 // last entry the digest kept, not frozen into it.
 func TestDigestTroubleStillExpires(t *testing.T) {
