@@ -42,7 +42,8 @@ type ckgfAdapter struct {
 
 	repo, id string
 	ids      []string
-	seq      int64 // the current checkpoint's turn seq
+	seq      int64 // the current checkpoint's input seq
+	doneSeq  int64 // the same turn's end checkpoint ref
 	tree     string
 	forks    []string // forked session files not yet resolved or abandoned
 	forkN    int
@@ -190,6 +191,13 @@ func (a *ckgfAdapter) pinCheckpoint() error {
 		return fmt.Errorf("checkpoint_ref_gc_vs_fork: turn %s pinned no checkpoint", name)
 	}
 	a.seq, a.tree = seq, tree
+	a.doneSeq = 0
+	for _, e := range entries {
+		if e.Seq > seq && e.Kind == "done" {
+			a.doneSeq = e.Seq
+			break
+		}
+	}
 	return nil
 }
 
@@ -284,13 +292,19 @@ func (a *ckgfAdapter) AbandonFork() error {
 }
 
 // DropRef plays the reaper (or the person clearing refs) bough itself
-// does not have: a real `git update-ref -d`, guarded exactly as the
-// spec guards it.
+// does not have. A turn now pins its input and end trees, so both refs
+// must go before git can collect a tree they both name.
 func (a *ckgfAdapter) DropRef() error {
 	if !a.gate.pass(a.refExists() && a.pending == 0) {
 		return nil
 	}
-	return a.git("update-ref", "-d", a.refName())
+	if err := a.git("update-ref", "-d", a.refName()); err != nil {
+		return err
+	}
+	if a.doneSeq != 0 {
+		return a.git("update-ref", "-d", history.TurnRef(a.id, a.doneSeq))
+	}
+	return nil
 }
 
 // GitGC plays the external `git gc` the spec says only ever runs once
