@@ -148,3 +148,79 @@ func TestWaitCreatePromptAcknowledgements(t *testing.T) {
 		})
 	}
 }
+
+// Archive intentionally ends an unread first prompt, but keeps the
+// visible session. The create waiter must not delete it as a failed boot.
+func TestCreateArchiveSettlesUnreadPrompt(t *testing.T) {
+	t.Parallel()
+	hold := filepath.Join(t.TempDir(), "input")
+	if err := os.WriteFile(hold, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t, envTurns+"=1", envHoldInput+"="+hold)
+	id := history.NewID()
+	answer := make(chan error, 1)
+	go func() {
+		_, err := f.sup.Create(CreateOptions{ID: id, Cwd: f.home, Prompt: "first prompt"})
+		answer <- err
+	}()
+	waitFor(t, "the unread first prompt", func() bool {
+		f.sup.mu.Lock()
+		defer f.sup.mu.Unlock()
+		ch := f.sup.kids[id]
+		return ch != nil && ch.unread
+	})
+	if err := f.sup.SetArchived(id, true); err != nil {
+		t.Fatal(err)
+	}
+	// Unarchive can race the waiter's next poll; it does not undo the
+	// intentional end of this child's unread prompt.
+	if err := f.sup.SetArchived(id, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-answer:
+		if err != nil {
+			t.Fatalf("intentional archive failed the create: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("archive did not settle the create")
+	}
+	entries, err := f.sup.Entries(id)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("archive lost the session history: %v %v", entries, err)
+	}
+	for _, e := range entries {
+		if e.Kind == "input" {
+			t.Fatal("the held child consumed the intentionally archived prompt")
+		}
+	}
+	if f.sup.Live(id) {
+		t.Fatal("archive left the first child live")
+	}
+}
+
+func TestArchiveFailedSaveDoesNotAcknowledgeCreate(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed(t, "archive-save")
+	if err := f.sup.SetTitle("archive-save", "kept"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.sup.Adopt("archive-save"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.sup.opt.MetaPath+".tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.sup.SetArchived("archive-save", true); err == nil {
+		t.Fatal("archive succeeded with the metadata write blocked")
+	}
+	f.sup.mu.Lock()
+	ch := f.sup.kids["archive-save"]
+	ended := ch != nil && ch.archiveEnded
+	f.sup.mu.Unlock()
+	if ch == nil || ended || !f.sup.Live("archive-save") || f.sup.Meta("archive-save").Archived {
+		t.Fatal("a failed archive changed the child or acknowledged its pending create")
+	}
+}
