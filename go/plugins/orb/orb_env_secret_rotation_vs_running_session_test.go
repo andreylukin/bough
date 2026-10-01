@@ -350,6 +350,19 @@ func (e *oesEnv) closeTurnLike() error {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	for {
+		injected, err := e.injectedSecret()
+		if err != nil {
+			return err
+		}
+		if injected == e.pendingSecret {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("waiting for injected secret %d, got %d", e.pendingSecret, injected)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	e.restartPending = false
 	return nil
 }
