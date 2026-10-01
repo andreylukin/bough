@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -124,6 +125,19 @@ func (a *abpcAdapter) absorb() bool {
 	a.heldAt = len(es)
 	a.queueNext()
 	return true
+}
+
+// awaitRequest observes the request an action must start. A quiet
+// transcript is not an acknowledgement: a busy child can still be between
+// recording the input or result and reaching llm-control's .taken marker.
+func (a *abpcAdapter) awaitRequest() error {
+	if len(a.held) == 0 {
+		if err := waitTaken(a.dir, a.next); err != nil {
+			return err
+		}
+		a.absorb()
+	}
+	return nil
 }
 
 // release answers the newest held request as turn says ("" answers with
@@ -465,6 +479,11 @@ func (a *abpcAdapter) reply(tool string) error {
 	// spec's reply includes that second, so a sibling's end in a later
 	// step asks the model again as it does in real time.
 	time.Sleep(abpcGrace)
+	if v.queued {
+		if err := a.awaitRequest(); err != nil {
+			return err
+		}
+	}
 	return a.settle()
 }
 
@@ -509,6 +528,9 @@ func (a *abpcAdapter) siblingEnd2(ok bool) error {
 	}); err != nil {
 		return err
 	}
+	if err := a.awaitRequest(); err != nil {
+		return err
+	}
 	if !hadRequest && len(a.held) > 0 {
 		// The result caused this request. Its .taken marker can arrive
 		// before the result is appended to history under CI load.
@@ -544,6 +566,11 @@ func (a *abpcAdapter) ProviderFails() error {
 		return e.Kind == "error" && strings.Contains(str(e.Data["text"]), abpcPerr)
 	}); err != nil {
 		return err
+	}
+	if v.queued || v.unsent {
+		if err := a.awaitRequest(); err != nil {
+			return err
+		}
 	}
 	return a.settle()
 }
@@ -595,6 +622,11 @@ func (a *abpcAdapter) HookErrorNote() error {
 	}); err != nil {
 		return err
 	}
+	if v.queued || v.unsent {
+		if err := a.awaitRequest(); err != nil {
+			return err
+		}
+	}
 	return a.settle()
 }
 
@@ -625,6 +657,9 @@ func (a *abpcAdapter) Answer() error {
 		return fmt.Errorf("answer: %d %s", code, msg)
 	}
 	if err := a.waitEntry(len(v.entries), "the answer", func(e history.Entry) bool { return e.Kind == "ask/answer" }); err != nil {
+		return err
+	}
+	if err := a.awaitRequest(); err != nil {
 		return err
 	}
 	return a.settle()
@@ -666,11 +701,8 @@ func (a *abpcAdapter) SendMessage() error {
 	}
 	// The model step ends with a request in flight. The input can be
 	// recorded before the child reaches the provider on a busy runner.
-	if len(a.held) == 0 {
-		if err := waitTaken(a.dir, a.next); err != nil {
-			return err
-		}
-		a.absorb()
+	if err := a.awaitRequest(); err != nil {
+		return err
 	}
 	return a.settle()
 }
@@ -692,6 +724,9 @@ func (a *abpcAdapter) Timeout() error {
 	if err := a.waitEntry(len(v.entries), "the ask's timed-out end", func(e history.Entry) bool {
 		return e.Kind == "call" && str(e.Data["id"]) == a.askCall && e.Data["phase"] != "start"
 	}); err != nil {
+		return err
+	}
+	if err := a.awaitRequest(); err != nil {
 		return err
 	}
 	return a.settle()
@@ -1027,6 +1062,83 @@ func TestAskBesideParallelCallsPathsCatchWrongAdapter(t *testing.T) {
 		return
 	}
 	t.Fatal("no path takes SiblingEndOk")
+}
+
+// History can be quiet while the next provider request is still starting.
+// Hold llm-control's snapshot write before its .taken marker: the action
+// must observe the request it promises instead of treating silence as done.
+func TestAskBesideParallelCallsWaitsForRequest(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"SiblingEndOk", "Answer", "Timeout"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			a := newAbpcAdapter(t)
+			defer a.Cleanup()
+			if err := a.Init(); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.ReplyWithAskAndRunJS(); err != nil {
+				t.Fatal(err)
+			}
+			act := a.SiblingEndOk
+			if action != "SiblingEndOk" {
+				if err := a.AskOpens(); err != nil {
+					t.Fatal(err)
+				}
+				if action == "Answer" {
+					act = a.Answer
+				} else {
+					act = a.Timeout
+				}
+			}
+			name := a.next
+			path := filepath.Join(a.dir, name+".request")
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- act() }()
+			deadline := time.Now().Add(actionTimeout)
+			for {
+				if _, err := os.Stat(filepath.Join(a.dir, name+".claimed")); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the result did not start a provider request")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			var early bool
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+				early = true
+			case <-time.After(500 * time.Millisecond):
+			}
+			// Opening both ends releases the writer without relying on a
+			// matching reader's scheduling; this snapshot fits in the pipe.
+			pipe, err := os.OpenFile(path, os.O_RDWR, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pipe.Close()
+			if err := waitTaken(a.dir, name); err != nil {
+				t.Fatal(err)
+			}
+			if early {
+				t.Fatal("the action returned before its provider request was observable")
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			state, err := a.GetState()
+			if err != nil || state["inflight"] != true {
+				t.Fatalf("request not reflected in the model state: %v, %v", state, err)
+			}
+		})
+	}
 }
 
 // TestAskBesideParallelCalls is the runner's random walks, part of the
