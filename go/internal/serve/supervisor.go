@@ -791,15 +791,9 @@ func (s *Supervisor) awaitExit(ch *child) {
 // paths in its transcript keep meaning; the supervisor's own cwd is
 // the fallback for sessions written before cwd was recorded.
 func (s *Supervisor) adoptDir(id string) string {
-	infos, err := history.List(s.opt.HistDir)
-	if err != nil {
-		return s.cwd
-	}
-	for _, in := range infos {
-		if in.ID == id && in.Cwd != "" {
-			if st, err := os.Stat(in.Cwd); err == nil && st.IsDir() {
-				return in.Cwd
-			}
+	if in, ok, _ := history.Lookup(s.opt.HistDir, id); ok && in.Cwd != "" {
+		if st, err := os.Stat(in.Cwd); err == nil && st.IsDir() {
+			return in.Cwd
 		}
 	}
 	return s.cwd

@@ -957,21 +957,9 @@ func (a *API) info(id string) (history.SessionInfo, bool) {
 	return in, ok
 }
 
-// lookup is info that tells a failed listing from an unknown id.
+// lookup is info that tells a failed read from an unknown id.
 func (a *API) lookup(id string) (history.SessionInfo, bool, error) {
-	if id == "" {
-		return history.SessionInfo{}, false, nil
-	}
-	infos, err := a.sup.List()
-	if err != nil {
-		return history.SessionInfo{}, false, err
-	}
-	for _, in := range infos {
-		if in.ID == id {
-			return in, true, nil
-		}
-	}
-	return history.SessionInfo{}, false, nil
+	return history.Lookup(a.sup.HistDir(), id)
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

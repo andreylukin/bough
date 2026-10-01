@@ -724,19 +724,8 @@ func (s *Supervisor) childTitle(id string) string {
 }
 
 func (s *Supervisor) infoOf(id string) (history.SessionInfo, bool) {
-	if id == "" {
-		return history.SessionInfo{}, false
-	}
-	infos, err := history.List(s.opt.HistDir)
-	if err != nil {
-		return history.SessionInfo{}, false
-	}
-	for _, in := range infos {
-		if in.ID == id {
-			return in, true
-		}
-	}
-	return history.SessionInfo{}, false
+	info, ok, _ := history.Lookup(s.opt.HistDir, id)
+	return info, ok
 }
 
 // Children lists a session's background agents, oldest first (ids are
