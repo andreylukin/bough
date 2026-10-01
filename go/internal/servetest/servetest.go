@@ -286,7 +286,7 @@ func start(t testing.TB, bin string, opts Options) (*Server, error) {
 // instead of spending tokens. BOUGH_WEB_ADDR is pinned off the user's
 // page server port for the same reason the e2e suite pins it.
 func childEnv(home string, extra []string) []string {
-	drop := map[string]bool{"HOME": true, "BOUGH_WEB_ADDR": true, "BOUGH_BIN": true}
+	drop := map[string]bool{"HOME": true, "BOUGH_WEB_ADDR": true, "BOUGH_BIN": true, "BOUGH_CONTAINER": true}
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
@@ -295,7 +295,9 @@ func childEnv(home string, extra []string) []string {
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "HOME="+home, "BOUGH_WEB_ADDR=127.0.0.1:0")
+	// Shutdown inspects even local sessions. Never reach the host's
+	// container engine unless a fixture explicitly opts back in.
+	env = append(env, "HOME="+home, "BOUGH_WEB_ADDR=127.0.0.1:0", "BOUGH_CONTAINER=none")
 	return append(env, extra...)
 }
 

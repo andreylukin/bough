@@ -96,7 +96,19 @@ func TestServeRoundTrip(t *testing.T) {
 // answers as the same build, and a copy of it as another one.
 func TestServeRestarts(t *testing.T) {
 	t.Parallel()
-	s := servetest.Start(t, servetest.Options{})
+	// Even local sessions are inspected during shutdown. A test must not
+	// start the host's container engine just because it is on PATH.
+	bin := t.TempDir()
+	called := filepath.Join(bin, "runtime-called")
+	for _, name := range []string{"podman", "container"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$BOUGH_TEST_CONTAINER_CALLS\"\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := servetest.Start(t, servetest.Options{Env: []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"BOUGH_TEST_CONTAINER_CALLS=" + called,
+	}})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	row, err := s.CreateSession(ctx, s.Dir(t, "work"), "say HI! please")
@@ -113,6 +125,11 @@ func TestServeRestarts(t *testing.T) {
 	s.Shutdown()
 	if s.GroupAlive() {
 		t.Fatal("a process of the stopped serve's group is still running")
+	}
+	if calls, err := os.ReadFile(called); err == nil {
+		t.Fatalf("test serve reached the host container runtime:\n%s", calls)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
 	if _, err := s.Build(ctx); err == nil {
 		t.Fatal("a stopped serve answered")

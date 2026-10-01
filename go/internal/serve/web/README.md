@@ -33,6 +33,15 @@ Two things about the wire that are easy to get wrong:
   register that exact name, and bough's kind vocabulary is open-ended.
   The kind rides in the JSON payload instead.
 
+Session event streams are shared across same-origin tabs using Web Locks
+and BroadcastChannel. One tab owns the connection per session; closing,
+navigating away, or freezing it hands ownership to a waiting tab. Late
+followers receive a bounded replay of sequenced events, like a new SSE
+connection; ephemeral streaming deltas are not replayed. Browsers without
+the required APIs use a direct stream. Sharing avoids duplicate sessions
+using Chrome's six HTTP/1.1 connection slots, but six distinct watched
+sessions can still exhaust that pool.
+
 ## Storybook
 
 The components under `src/` rendered in isolation, against the same

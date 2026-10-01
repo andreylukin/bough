@@ -177,23 +177,6 @@ export const api = {
   unarchive: (id: string) => post(`/api/sessions/${id}/unarchive`),
 };
 
-/**
- * Subscribe to a session's live events.
- *
- * The server deliberately sends unnamed frames, so one `message`
- * handler sees every kind — including kinds added after this code was
- * written. Returns an unsubscribe.
- */
-export function subscribe(id: string, onEvent: (ev: Event) => void): () => void {
-  const src = new EventSource(`/api/sessions/${id}/events`);
-  src.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data) as Event);
-    } catch {
-      /* a malformed frame is dropped, never fatal to the stream */
-    }
-  };
-  return () => src.close();
-}
+export { subscribe } from "./events";
 
 export type { Ask, Event, Line, Project, ProjectDetail, Row };
