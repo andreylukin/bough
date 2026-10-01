@@ -423,7 +423,7 @@ func attachLive(ctx *kernel.Context, inputs chan<- string, cfg *uiCfg) {
 	liveInputs = inputs
 	liveMu.Unlock()
 	ctx.On("loop/event", func(payload any) {
-		liveB.publish(eventOf(payload))
+		liveB.publish(cfg.eventOf(payload))
 	})
 	ctx.Effect(func() {
 		liveMu.Lock()
@@ -432,6 +432,17 @@ func attachLive(ctx *kernel.Context, inputs chan<- string, cfg *uiCfg) {
 		}
 		liveMu.Unlock()
 	})
+}
+
+// eventOf keeps the mount's session identity through the broadcaster
+// and Bubble Tea queues. Reading liveCfg here would retag an old
+// subscription's last event with the session that just replaced it.
+func (cfg *uiCfg) eventOf(payload any) Event {
+	ev := eventOf(payload)
+	if cfg.hist != nil {
+		ev.session = sessionID(cfg.hist.Path())
+	}
+	return ev
 }
 
 // smallRowConfigured reports whether the config tree means to provide
