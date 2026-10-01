@@ -171,22 +171,31 @@ func (a *API) startingRow(id string) Row {
 	return row
 }
 
-// pendingRows are the sessions history.List cannot see yet — queued
-// children, and live ones still booting — skipping ids in seen. Both
-// /api/sessions and a project's page add exactly these, so the sidebar
-// and the page never disagree about a thread that has not written yet.
+// pendingRows fills gaps in the caller's history.List snapshot. A child's
+// first file can appear after that scan, so current file existence must
+// not exclude a live child the snapshot missed. Both list endpoints use
+// this same union of persisted and pending rows.
 func (a *API) pendingRows(seen map[string]bool) []Row {
 	var rows []Row
+	added := map[string]bool{}
 	for _, id := range a.sup.queuedIDs() {
 		if !seen[id] {
 			rows = append(rows, a.queuedRow(id))
+			added[id] = true
 		}
 	}
-	for _, id := range a.sup.startingIDs() {
-		if seen[id] || a.sup.Meta(id).Archived {
+	for _, id := range a.sup.childIDs() {
+		// A queued child can start between these two ID snapshots.
+		if seen[id] || added[id] || a.sup.Meta(id).Archived {
 			continue
 		}
-		rows = append(rows, a.startingRow(id))
+		if in, ok := a.info(id); ok {
+			if row := a.row(in); !row.Archived {
+				rows = append(rows, row)
+			}
+		} else {
+			rows = append(rows, a.startingRow(id))
+		}
 	}
 	return rows
 }
