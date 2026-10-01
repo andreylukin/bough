@@ -187,6 +187,10 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	g.mu.Lock()
 	g.seq++
 	seq := g.seq
+	if g.r.closing.Load() {
+		g.mu.Unlock()
+		return g.answer(seq, project.Meta{Muted: true}, nil), nil
+	}
 	if g.parked {
 		var reasons []string
 		if g.reasons != nil {

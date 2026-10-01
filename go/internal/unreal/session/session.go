@@ -232,6 +232,7 @@ type Runtime struct {
 	submits   atomic.Int64
 
 	closeOnce sync.Once
+	closing   atomic.Bool // gates every coordinator, including child workers, during Close
 }
 
 // Open resumes, forks or seeds the harness session behind d and catches
@@ -447,14 +448,17 @@ func (r *Runtime) Context() string {
 func (r *Runtime) Children() Children { return children{r: r} }
 
 // Close flushes the projection, records the end of a turn still open,
-// stops Run and ends the session ctx.
+// then lets already-cancelled calls report within ctx before stopping
+// Run. Their cleanup grace can outlast the UI's shorter cancel window.
 func (r *Runtime) Close(ctx context.Context) error {
 	r.closeOnce.Do(func() {
+		r.closing.Store(true)
 		done := make(chan struct{})
-		if r.post(func() { r.a.shutdown(); close(done) }) {
+		if r.post(func() { r.a.beginShutdown(done) }) {
 			select {
 			case <-done:
 			case <-ctx.Done():
+				r.post(func() { r.a.shutdown() })
 			}
 		}
 		r.q.close()
