@@ -15,6 +15,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/unreallabsai/unreal-agent/harness/operation"
+	"github.com/unreallabsai/unreal-agent/harness/session"
+
 	"github.com/andreylukin/bough/internal/agentllm"
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/unreal/fake"
@@ -525,9 +528,35 @@ func TestCatchUp(t *testing.T) {
 // next coordinator re-Adds it and it fails as interrupted.
 func TestRestartFailsAwaitingCallAsInterrupted(t *testing.T) {
 	t.Parallel()
-	r := newRig(t,
+	for _, clm := range []bool{false, true} {
+		t.Run(fmt.Sprintf("clm=%v", clm), func(t *testing.T) {
+			t.Parallel()
+			restartFailsAwaitingCallAsInterrupted(t, clm, false, false)
+		})
+	}
+}
+
+func TestRestartPreservesPendingNativeResults(t *testing.T) {
+	t.Parallel()
+	for _, clm := range []bool{false, true} {
+		for _, canceling := range []bool{false, true} {
+			t.Run(fmt.Sprintf("clm=%v/canceling=%v", clm, canceling), func(t *testing.T) {
+				t.Parallel()
+				restartFailsAwaitingCallAsInterrupted(t, clm, canceling, true)
+			})
+		}
+	}
+}
+
+func restartFailsAwaitingCallAsInterrupted(t *testing.T, clm, canceling, reopen bool) {
+	want, wantStatus := "interrupted", operation.StatusFailed
+	if canceling {
+		want, wantStatus = "Cancelled", operation.StatusCanceled
+	}
+	opt := func(d *Deps) { d.Config.CLM = clm }
+	r := newRigWith(t, []rigOpt{opt},
 		fake.Step{Want: "long", Output: []ullmItem{fake.Call("h9", "hold", `{"text":"forever"}`)}},
-		fake.Step{Want: "interrupted", Output: []ullmItem{fake.Text("it was interrupted")}},
+		fake.Step{Want: want, Output: []ullmItem{fake.Text("it was interrupted")}},
 	)
 	r.rt.Submit("long thing")
 	r.waitFor("the call to start", func() bool {
@@ -543,23 +572,59 @@ func TestRestartFailsAwaitingCallAsInterrupted(t *testing.T) {
 	r.rt.q.close()
 	r.rt.cancel()
 	<-r.rt.exited
+	if canceling {
+		restored, err := r.rt.store.Resume(context.Background(), session.ID(r.rt.sid))
+		if err != nil || len(restored.Operations) != 1 {
+			t.Fatalf("restored operations: %v %v", restored.Operations, err)
+		}
+		op := restored.Operations[0]
+		op.Status = operation.StatusCanceling
+		if err := r.rt.store.SaveOperation(context.Background(), session.ID(r.rt.sid), op); err != nil {
+			t.Fatal(err)
+		}
+	}
 	path := r.hist.Path()
 	h, err := history.OpenExisting(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := &rig{t: t, dir: r.dir, hist: h, evs: &events{}, kit: newTestkit(t), fake: r.fake}
-	c.open()
+	c.open(opt)
+	restored, err := c.rt.store.Resume(context.Background(), session.ID(c.rt.sid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Operations) != 1 || restored.Operations[0].Status != wantStatus {
+		t.Fatalf("Open left an abandoned native call unsettled: %+v", restored.Operations)
+	}
+	if reopen {
+		// A second crash after SaveOperation but before reconciliation must
+		// still keep this terminal result with the next input, not wake alone.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := c.rt.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+		c.open(opt)
+	}
 	c.rt.Submit("go on")
 	c.waitFor("the interrupted call row", func() bool {
 		for _, e := range c.entries() {
-			if e.Kind == "call" && strings.Contains(fmt.Sprint(e.Data["error"]), "interrupted") {
+			if e.Kind == "call" && ((!canceling && strings.Contains(fmt.Sprint(e.Data["error"]), "interrupted")) || (canceling && e.Data["canceled"] == true)) {
 				return true
 			}
 		}
 		return false
 	})
 	c.waitFor("the reply", func() bool { return c.count("assistant") >= 1 })
+	if c.count("call") != 1 || len(c.fake.Requests()) != 2 {
+		t.Fatalf("resume duplicated a result or provider request:\n%s", c.dump())
+	}
+	c.kit.mu.Lock()
+	defer c.kit.mu.Unlock()
+	if slices.Contains(c.kit.calls, "hold") {
+		t.Fatal("resume re-executed the abandoned tool")
+	}
 }
 
 // A process that dies after the cancel, before the muted request took
