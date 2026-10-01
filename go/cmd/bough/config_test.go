@@ -55,6 +55,9 @@ func TestEmbeddedDefaultLoads(t *testing.T) {
 	ids := map[string]bool{}
 	for _, r := range rows {
 		ids[r.ID] = true
+		if r.ID == "loop" && r.Plugin != "engine-clm" {
+			t.Fatalf("default loop plugin = %q, want engine-clm", r.Plugin)
+		}
 	}
 	for _, want := range []string{"llm", "loop", "ui", "history"} {
 		if !ids[want] {

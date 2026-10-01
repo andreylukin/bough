@@ -43,8 +43,9 @@ import (
 var (
 	hlOnce    sync.Once
 	hlMu      sync.Mutex
-	hlInputs  chan<- string // current mount's inputs; nil while unmounted
-	hlCmds    commandsView  // current mount's commands service; nil = "/" is plain text
+	hlInputs  chan<- string   // current mount's inputs; nil while unmounted
+	hlReady   <-chan struct{} // initial mount barrier; nil outside the launcher
+	hlCmds    commandsView    // current mount's commands service; nil = "/" is plain text
 	hlHist    historyAppender
 	hlAnswer  askAnswers        // current mount's "ask-answers" service; nil = no asks
 	hlSteer   func(string) bool // current mount's "steer" service; nil = mid-turn lines queue
@@ -142,7 +143,7 @@ type hlAskState struct {
 // inputs so a reload never sends into a closed channel. The printer
 // goroutine for a disposed mount leaks quietly (its broadcaster stops
 // publishing); one idle goroutine per reload is accepted.
-func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers, steer func(string) bool, notify func(string) bool) func() {
+func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers, steer func(string) bool, notify func(string) bool, ready <-chan struct{}) func() {
 	events, _ := b.subscribe()
 	go func() {
 		for ev := range events {
@@ -152,6 +153,7 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 
 	hlMu.Lock()
 	hlInputs = inputs
+	hlReady = ready
 	hlCmds = cmds
 	hlHist = hlog
 	hlAnswer = ask
@@ -337,6 +339,9 @@ func hlPrint(ev Event) {
 }
 
 func headlessPump() {
+	// Even EOF must wait for startup: draining a half-mounted engine
+	// could interrupt the process before its services have settled.
+	hlAwaitStartup()
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
@@ -447,6 +452,7 @@ var hlTyped = os.Getenv("BOUGH_TYPED_ANSWERS") != ""
 
 // hlLineIn routes one stdin line and says where it went.
 func hlLineIn(line string) string {
+	hlAwaitStartup()
 	if hlStopped.Load() {
 		return "drop"
 	}
@@ -507,6 +513,18 @@ func hlLineIn(line string) string {
 	}
 	hlSubmit(line)
 	return "input"
+}
+
+// The engine queues early prompts, but slash commands bypass it. A
+// /model received on respawn must not Reconcile concurrently with the
+// launcher's initial Mount and tear down rows that are still mounting.
+func hlAwaitStartup() {
+	hlMu.Lock()
+	ready := hlReady
+	hlMu.Unlock()
+	if ready != nil {
+		<-ready
+	}
 }
 
 // hlNoticeWait bounds how long a notice waits for job-notices. serve

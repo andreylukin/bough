@@ -17,6 +17,7 @@ import (
 	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
 
 	"github.com/andreylukin/bough/internal/agentllm"
+	"github.com/andreylukin/bough/internal/unreal/clm"
 	"github.com/andreylukin/bough/internal/unreal/project"
 	"github.com/andreylukin/bough/plugins/loop"
 )
@@ -32,8 +33,14 @@ const overflowText = "the conversation no longer fits the model's context window
 // budget — comes back as an empty completed Response, with a Meta that
 // tells the actor what really happened.
 type Gate struct {
-	r      *Runtime
-	worker string
+	clmMu              sync.Mutex
+	contextID          string
+	contextFork        string
+	contextForkMissing bool
+	editable           *clm.Context
+	overflowRevision   string
+	r                  *Runtime
+	worker             string
 	// sink receives live deltas; nil for a child (its reply lands whole).
 	sink func(agentllm.Delta)
 	// meta receives one Meta per Respond, before Respond returns, so it
@@ -156,6 +163,27 @@ func (g *Gate) Model() (model, provider string) {
 }
 
 func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOptions) (ullm.Response, error) {
+	if g.worker == "" {
+		// The coordinator can start a pending call's request before the
+		// actor has handled the preceding response. Let its parking and
+		// turn-close decisions land before this request checks the gate;
+		// otherwise a provider error races a new wake and another request.
+		// Only the request goroutine waits: the store observer stays free.
+		ready := make(chan struct{})
+		if !g.r.post(func() { close(ready) }) {
+			return ullm.Response{}, context.Canceled
+		}
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return ullm.Response{}, ctx.Err()
+		case <-g.r.exited:
+			return ullm.Response{}, context.Canceled
+		}
+		if err := ctx.Err(); err != nil {
+			return ullm.Response{}, err
+		}
+	}
 	g.mu.Lock()
 	g.seq++
 	seq := g.seq
@@ -200,10 +228,28 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	g.mu.Lock()
 	g.lastModel = model
 	sticky := g.overflow != "" && g.overflow == model
+	failedRevision := g.overflowRevision
 	g.mu.Unlock()
+	if sticky && g.r.cfg.CLM {
+		revision, editErr := g.contextRevision()
+		if editErr != nil {
+			g.start(seq)
+			return g.answer(seq, project.Meta{Model: model, Provider: prov, Err: editErr.Error()}, nil), nil
+		}
+		if revision != failedRevision {
+			sticky = false
+			g.mu.Lock()
+			g.overflow = ""
+			g.mu.Unlock()
+		}
+	}
 	if sticky {
 		g.start(seq)
-		return g.answer(seq, project.Meta{Model: model, Provider: prov, Err: overflowText, Overflow: true}, nil), nil
+		text := overflowText
+		if g.r.cfg.CLM {
+			text = "engine-clm: the conversation no longer fits the model's context window; shorten the editable context file and send a new message to retry"
+		}
+		return g.answer(seq, project.Meta{Model: model, Provider: prov, Err: text, Overflow: true, ContextRevision: failedRevision}, nil), nil
 	}
 
 	child, cancel := context.WithCancel(agentllm.WithSeq(ctx, seq))
@@ -216,6 +262,7 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	latched := g.userStop == seq
 	g.mu.Unlock()
 	var resp ullm.Response
+	var contextRevision string
 	if latched {
 		// Esc landed while this request was being set up: it never
 		// reaches the provider, so no call it would make runs after Esc.
@@ -223,7 +270,15 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 		err = context.Canceled
 	} else {
 		g.start(seq)
-		resp, err = ad.Respond(child, req, o)
+		if g.r.cfg.CLM {
+			req, err = g.prepareContext(req)
+		}
+		if err == nil && g.r.cfg.CLM {
+			contextRevision, err = g.contextRevision()
+		}
+		if err == nil {
+			resp, err = ad.Respond(child, req, o)
+		}
 	}
 
 	g.mu.Lock()
@@ -255,8 +310,13 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 		if errors.Is(err, agentllm.ErrContextOverflow) {
 			g.mu.Lock()
 			g.overflow = model
+			g.overflowRevision = contextRevision
 			g.mu.Unlock()
 			m.Err, m.Overflow = overflowText, true
+			m.ContextRevision = contextRevision
+			if g.r.cfg.CLM {
+				m.Err = "engine-clm: the conversation no longer fits the model's context window; shorten the editable context file and send a new message to retry"
+			}
 		}
 		return g.answer(seq, m, nil), nil
 	}

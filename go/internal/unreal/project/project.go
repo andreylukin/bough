@@ -44,13 +44,14 @@ type Out struct {
 
 // Meta is one per real or gated Respond, keyed by Response.ID.
 type Meta struct {
-	ResponseID string
-	Model      string
-	Provider   string // the llm row's provenance name, as loop.go:819-834 records it
-	Muted      bool   // the Gate answered without the provider
-	Partial    bool   // a cancelled stream; Output holds its text
-	Err        string // provider error the Gate converted
-	Overflow   bool   // Err is Model's context overflow (sticky for it)
+	ContextRevision string // CLM file revision at an overflow; empty for unreal
+	ResponseID      string
+	Model           string
+	Provider        string // the llm row's provenance name, as loop.go:819-834 records it
+	Muted           bool   // the Gate answered without the provider
+	Partial         bool   // a cancelled stream; Output holds its text
+	Err             string // provider error the Gate converted
+	Overflow        bool   // Err is Model's context overflow (sticky for it)
 }
 
 type Config struct {

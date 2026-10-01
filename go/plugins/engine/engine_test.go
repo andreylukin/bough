@@ -5,6 +5,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -470,3 +471,59 @@ func TestAnotherFileIsAnotherSession(t *testing.T) {
 		t.Fatalf("new file: %v", got)
 	}
 }
+
+func TestCLMRegisteredOnLoopRowAndRemounts(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, func(ctx *kernel.Context) { ctx.Provide("scratch", clmScratch{dir: t.TempDir()}) })
+	rows := []kernel.Row{
+		{ID: "history", Plugin: "history", Config: map[string]any{"file": r.path}},
+		{ID: "commands", Plugin: "commands"},
+		{ID: "agent-tools", Plugin: "agent-tools"},
+		{ID: "llm", Plugin: "llm-echo"},
+		{ID: "loop", Plugin: "engine-clm", Config: map[string]any{"store": r.store}},
+	}
+	if err := r.ctx.Reconcile(rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, rs := range r.ctx.Rows() {
+		if rs.State != kernel.StateActive {
+			t.Fatalf("%s: %v", rs.ID, rs.Err)
+		}
+	}
+	in, err := kernel.Get[chan string](r.ctx, "inputs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in <- "hello"
+	h, err := kernel.Get[loop.History](r.ctx, "history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	done := false
+	for time.Now().Before(deadline) {
+		for _, e := range h.Entries() {
+			if e.Kind == "done" {
+				done = true
+			}
+		}
+		if done {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !done {
+		t.Fatal("CLM row did not complete a turn")
+	}
+	if _, err = os.Stat(filepath.Join(r.store, "01TEST.clm-state.json")); err != nil {
+		t.Fatal(err)
+	}
+	rows[len(rows)-1].Plugin = "engine-unreal"
+	if err = r.ctx.Reconcile(rows); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type clmScratch struct{ dir string }
+
+func (s clmScratch) Dir() string { return s.dir }

@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
@@ -49,6 +50,9 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 		worker = fmt.Sprint(n)
 	}
 	sid := session.ID(SID(fmt.Sprintf("%s-w%s-%d", r.sid, worker, n)))
+	if r.cfg.CLM {
+		sid = session.ID(SID(string(sid) + "-" + rand.Text()))
+	}
 	store, err := localfile.New(r.d.Store)
 	if err != nil {
 		return ChildResult{Status: "error"}, fmt.Errorf("engine-unreal: child store: %w", err)
@@ -89,6 +93,7 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 
 	q := newFIFO()
 	gate := newGate(r, worker, nil)
+	gate.contextID = string(sid)
 	gate.maxSteps = req.MaxSteps
 	metas := map[string]project.Meta{}
 	stopped := ""
@@ -107,6 +112,13 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 
 	obs := store.AddObserver(func(id session.ID, it sessionstore.Item) {
 		if id == sid {
+			if r.cfg.CLM {
+				if mr, ok := it.Data.(sessionstore.ModelResponse); ok && len(mr.Response.Output) > 0 {
+					if err := gate.appendContext(mr.Response.Output); err != nil {
+						q.push(func() { note("error", err.Error(), nil) })
+					}
+				}
+			}
 			q.push(func() { childItem(it, proj, metas, r, note) })
 		}
 	})

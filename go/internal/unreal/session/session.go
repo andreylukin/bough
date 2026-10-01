@@ -41,6 +41,8 @@ import (
 
 // Config is the engine row's config (§6.1), parsed by plugins/engine.
 type Config struct {
+	CLM             bool          // opt-in editable context projection; unreal stays append-only
+	CLMMaxBytes     int           // live context cap; zero = 1 MiB
 	Tools           string        // "native" | "both" (both adds run_js)
 	TurnSettle      time.Duration // idle wait on foreground calls before they become jobs
 	Heartbeat       time.Duration // harness ToolHeartbeatInterval; 0 = off
@@ -89,6 +91,7 @@ type Deps struct {
 	Scratch     func() string
 	Cwd         string
 	Config      Config
+	Ready       <-chan struct{} // optional startup barrier; closed after rows finish mounting
 
 	LLM         func() (agentllm.Source, string, error) // lazy "llm" (else an error naming the row)
 	Usage       func() llm.Usage                        // lazy "usage", else llm's UsageReporter
@@ -191,9 +194,10 @@ func DefaultStore() string {
 // Runtime is one bough session. It outlives coordinator restarts and
 // engine-row remounts; Close ends it.
 type Runtime struct {
-	d   Deps
-	cfg Config
-	sid string
+	contextFileMu sync.Mutex // serializes CLM projection with ordinary native write/patch calls
+	d             Deps
+	cfg           Config
+	sid           string
 
 	ctx    context.Context // the session's: the store, ops and actor live on it
 	cancel context.CancelFunc
@@ -270,10 +274,18 @@ func Open(ctx context.Context, d Deps) (*Runtime, error) {
 	r.a.init(r)
 	r.gate = newGate(r, "", nil)
 	r.gate.overflow = lastOverflow(d.History.Entries())
+	if d.Config.CLM {
+		es := d.History.Entries()
+		for i := len(es) - 1; i >= 0; i-- {
+			if es[i].Kind == "error" && es[i].Data["overflow"] != nil {
+				r.gate.overflowRevision, _ = es[i].Data["clm_revision"].(string)
+				break
+			}
+		}
+	}
 	r.ops = r.newOps(sctx, "")
-	// The observer is added once, before any Run: it only applies the
-	// sync mirror and queues the item, so a slow history write can never
-	// stall the coordinator goroutine it runs on.
+	// Add the observer before Run. Unreal keeps this O(1); opt-in CLM
+	// also mirrors persisted model responses before native tools dispatch.
 	store.AddObserver(r.observe)
 	if err := r.open(ctx); err != nil {
 		cancel()
@@ -462,6 +474,18 @@ func (r *Runtime) Close(ctx context.Context) error {
 
 // post queues f for the actor; false once the session is closed.
 func (r *Runtime) post(f func()) bool { return r.q.push(f) }
+
+func (r *Runtime) ready() bool {
+	if r.d.Ready == nil {
+		return true
+	}
+	select {
+	case <-r.d.Ready:
+		return true
+	default:
+		return false
+	}
+}
 
 func (r *Runtime) loop() {
 	defer close(r.exited)

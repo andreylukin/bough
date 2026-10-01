@@ -80,7 +80,18 @@ func renderCall(callID string, status tool.CallStatus, ops []operation.Operation
 func (r *Runtime) newHandler(worker string, progress func(id, text string)) *boughcall.Handler {
 	lookup := func(string) (agenttools.Tool, bool) { return agenttools.Tool{}, false }
 	if r.d.Tools != nil {
-		lookup = r.d.Tools.Lookup
+		lookup = func(name string) (agenttools.Tool, bool) {
+			t, ok := r.d.Tools.Lookup(name)
+			if ok && r.cfg.CLM && (name == "write" || name == "patch") {
+				call := t.Call
+				t.Call = func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
+					r.contextFileMu.Lock()
+					defer r.contextFileMu.Unlock()
+					return call(ctx, c)
+				}
+			}
+			return t, ok
+		}
 	}
 	return boughcall.New(boughcall.Options{
 		Tools:       lookup,
@@ -142,14 +153,28 @@ func (r *Runtime) open(ctx context.Context) error {
 	if eng != nil {
 		if parent, _ := eng.Data["session"].(string); parent != "" && parent != r.sid {
 			a.fork = forkAt(entries, parent)
+			if r.cfg.CLM {
+				r.gate.contextFork = a.fork.contextSnapshot
+				r.gate.contextForkMissing = a.fork.clm && a.fork.contextSnapshot == ""
+			}
 		}
 	} else if hasTurns(entries) {
 		a.seed, a.seeded = seedText(entries), "loop"
 	}
 	if _, err := os.Stat(r.StorePath()); err != nil {
+		if r.cfg.CLM {
+			if _, stateErr := os.Stat(filepath.Join(r.d.Store, r.sid+".clm-state.json")); stateErr == nil {
+				return fmt.Errorf("engine-clm: audit store is missing; restore it alongside the existing context cursor instead of reseeding discarded history")
+			}
+		}
 		return nil // built at the first input
 	}
 	if _, err := r.store.Resume(ctx, session.ID(r.sid)); err != nil {
+		if r.cfg.CLM {
+			if _, stateErr := os.Stat(filepath.Join(r.d.Store, r.sid+".clm-state.json")); stateErr == nil || eng != nil && eng.Data["engine"] == "clm" {
+				return fmt.Errorf("engine-clm: audit store is unreadable; restore it before resuming (no automatic history reseed): %w", err)
+			}
+		}
 		// Unreadable (a format bump, a torn file): keep it beside for a
 		// person to look at, and reseed from bough history, which is the
 		// record. The harness store is a cache that can be rebuilt.
@@ -320,11 +345,18 @@ func seedText(entries []history.Entry) string {
 // forked at.
 func forkAt(entries []history.Entry, parent string) *forkPoint {
 	fp := &forkPoint{parent: parent}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == "engine" {
+			fp.clm = entries[i].Data["engine"] == "clm"
+			break
+		}
+	}
 	start := -1
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
 		if e.Kind == "done" && fp.turn == "" {
 			fp.turn, _ = e.Data["engine_turn"].(string)
+			fp.contextSnapshot, _ = e.Data["clm_context"].(string)
 			fp.running, _ = toInt(e.Data["running"])
 			start = i
 			continue
@@ -379,6 +411,9 @@ func (a *actorState) ensureRun() error {
 			if _, err := r.replay(ctx, -1); err != nil {
 				return fmt.Errorf("engine-unreal: read forked session: %w", err)
 			}
+			if r.cfg.CLM {
+				r.gate.contextFork = fp.contextSnapshot
+			}
 			forkedFrom = fp
 			a.fork = nil
 		} else if _, err := r.store.Create(ctx, sid); err != nil {
@@ -393,6 +428,13 @@ func (a *actorState) ensureRun() error {
 	system, err := a.frozenPrompt()
 	if err != nil {
 		return err
+	}
+	// Restore a fork projection before publishing the child engine entry. A
+	// restart after that entry can safely use its own already-persisted cursor.
+	if r.cfg.CLM {
+		if _, err := r.gate.context(); err != nil {
+			return err
+		}
 	}
 	snap := r.snapshot()
 	reg := r.testReg
@@ -442,6 +484,9 @@ func (a *actorState) ensureRun() error {
 		"engine": "unreal", "pin": unreal.Pin, "sha": unreal.PinSHA[:8], "session": r.sid,
 		"store": r.StorePath(), "format": storeFormat, "system": hex.EncodeToString(sum[:]),
 		"system_file": r.systemFile(r.sid), "provider": provider, "model": model, "tools": hash,
+	}
+	if r.cfg.CLM {
+		data["engine"] = "clm"
 	}
 	if ttl := a.cacheTTL(); ttl > 0 {
 		data["cache_ttl"] = int(ttl.Seconds())
@@ -649,6 +694,16 @@ func (a *actorState) contextText() string {
 // resolved every second, since their rows mount and remount on their
 // own schedule.
 func (r *Runtime) watch() {
+	if r.d.Ready != nil {
+		select {
+		case <-r.d.Ready:
+			// Inputs queued before the initial mount settled can now
+			// freeze the complete tool set. Keep the actor free for Close.
+			r.post(func() {})
+		case <-r.ctx.Done():
+			return
+		}
+	}
 	var tools <-chan struct{}
 	if r.d.Tools != nil {
 		tools = r.d.Tools.Changed()

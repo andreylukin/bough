@@ -37,6 +37,7 @@ example in `plugins/example/`:
 | `codemode` | plugins/codemode   | tools, loop     |
 | `runner`   | plugins/loop       | (internal)      |
 | `inputs`   | plugins/loop       | ui              |
+| `startup-ready` | cmd/bough | engine-clm / engine-unreal, headless ui (initial mount barrier) |
 | `ui-mode`  | launcher           | ui              |
 | `session-mode` | launcher     | history, tools, orb |
 | `session-project` | launcher  | history, orb    |
@@ -58,7 +59,7 @@ example in `plugins/example/`:
 | `drain`    | plugins/engine     | ui (headless, at stdin EOF) |
 
 `runner`, `inputs`, `cancel`, `steer` and `prompt-sections` come from
-whichever plugin the `loop` row runs: `loop`, or `engine-unreal` (below),
+whichever plugin the `loop` row runs: `loop`, `engine-unreal`, or the default `engine-clm` (below),
 with the same types, so ui, serve and the rest do not change.
 
 The optional seams are resolved at mount time and no-op cleanly when
@@ -179,9 +180,14 @@ where each registered tool is a JS function. Tool output feeds back to
 the LLM until it's done, and every step is emitted as a `loop/event`
 (`assistant`, `code`, `result`, `error`, `done`) that any UI renders.
 
-## The unreal-agent engine (the default)
+## The native engines (CLM by default)
 
-The `loop` row runs `engine-unreal`: the session runs on
+The `loop` row defaults to `engine-clm`, which lets the model edit its own
+working-context file while preserving immutable system/tool contracts and the
+append-only audit transcript. See [docs/clm-engine.md](docs/clm-engine.md) for
+limits, image markers, provider compatibility, and recovery. Use
+`--set loop.plugin=engine-unreal` for the original append-only context engine.
+Both run on
 [unreal-agent](https://github.com/unreallabsai/unreal-agent), pinned by
 SHA in `go.mod`. `--set loop.plugin=loop` (or `plugin: loop` on the
 row) runs the codemode loop instead, on the same keys and history;
@@ -206,12 +212,13 @@ engine changes for the model:
   `<context-update>` block on the next input, which keeps the prompt
   cache warm.
 
-Row config (`- id: loop`, `plugin: engine-unreal`): `tools`
+Shared row config (`- id: loop`, `plugin: engine-clm` or `engine-unreal`): `tools`
 (`native`|`both`), `turn_settle`, `heartbeat`, `call_timeout` (10m),
 `max_output`, `row_output`, `max_steps`, `max_cost_usd`,
 `stop_retries`, `steer_interrupts`, `system_prompt`, `task_guidance`,
 `store`, `trace` (request and response bodies, keys redacted, to
-`~/.bough/engine/trace/`).
+`~/.bough/engine/trace/`). CLM also takes `context_max_bytes` (default
+1048576; a byte cap, not a token count).
 
 Providers: the `llm` row stays the source of truth for provider, model
 and effort, and `/model` and `/think` keep working mid-session.

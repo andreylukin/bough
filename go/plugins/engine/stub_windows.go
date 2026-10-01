@@ -15,6 +15,7 @@ const name = "engine-unreal"
 
 func init() {
 	kernel.Register(name, func() kernel.Plugin { return plugin{} })
+	kernel.Register("engine-clm", func() kernel.Plugin { return clmStub{} })
 }
 
 type plugin struct{}
@@ -24,4 +25,12 @@ func (plugin) Inject() []string { return nil }
 
 func (plugin) Apply(*kernel.Context, map[string]any) error {
 	return errors.New(name + ": not available on Windows: the unreal-agent harness at the pin is Unix-only (go/docs/unreal-engine.md §16); use plugin: loop")
+}
+
+type clmStub struct{}
+
+func (clmStub) Name() string     { return "engine-clm" }
+func (clmStub) Inject() []string { return nil }
+func (clmStub) Apply(*kernel.Context, map[string]any) error {
+	return errors.New("engine-clm: not available on Windows; use plugin: loop")
 }

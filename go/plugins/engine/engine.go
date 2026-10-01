@@ -40,11 +40,17 @@ const name = "engine-unreal"
 
 func init() {
 	kernel.Register(name, func() kernel.Plugin { return plugin{} })
+	kernel.Register("engine-clm", func() kernel.Plugin { return plugin{clm: true} })
 }
 
-type plugin struct{}
+type plugin struct{ clm bool }
 
-func (plugin) Name() string { return name }
+func (p plugin) Name() string {
+	if p.clm {
+		return "engine-clm"
+	}
+	return name
+}
 
 // Inject is only what Apply cannot do without. Every other service is
 // read lazily, off the apply goroutine: a Get during Apply is a remount
@@ -77,15 +83,16 @@ type sess struct {
 
 func remounting(kctx *kernel.Context) bool {
 	for _, rs := range kctx.Rows() {
-		if rs.Plugin == name && rs.State == kernel.StateActive {
+		if (rs.Plugin == name || rs.Plugin == "engine-clm") && rs.State == kernel.StateActive {
 			return true
 		}
 	}
 	return false
 }
 
-func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
+func (p plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	st, err := readSettings(cfg)
+	st.CLM = p.clm
 	if err != nil {
 		return err
 	}
@@ -139,7 +146,11 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	go func() {
 		for line := range inputs {
 			if s.cfg.keepWhole && s.noted.CompareAndSwap(false, true) {
-				s.emit("system", "engine-unreal: keep_whole_results is ignored; the engine's context is append-only and nothing is trimmed", nil)
+				text := "engine-unreal: keep_whole_results is ignored; the engine's context is append-only and nothing is trimmed"
+				if s.cfg.CLM {
+					text = "engine-clm: keep_whole_results is ignored; the editable context controls what is retained"
+				}
+				s.emit("system", text, nil)
 			}
 			s.rt.Submit(line)
 		}
@@ -165,6 +176,7 @@ func same(a, b settings) bool { return reflect.DeepEqual(a, b) }
 
 func openSess(kctx *kernel.Context, h loop.History, reg agenttools.Registry, st settings) (*sess, error) {
 	s := &sess{kctx: kctx, path: h.Path(), cfg: st, hist: &liveHistory{h: h}, tools: newLiveRegistry(reg)}
+	ready, _ := kernel.Get[<-chan struct{}](kctx, "startup-ready")
 	cwd, _ := os.Getwd()
 	id := strings.TrimSuffix(filepath.Base(h.Path()), ".jsonl")
 	bridge := hookbridge.New(func() (hookbridge.Firer, bool) {
@@ -174,6 +186,7 @@ func openSess(kctx *kernel.Context, h loop.History, reg agenttools.Registry, st 
 	bridge.Session = id
 	bridge.Notify = func(kind, text string) { s.emit(kind, text, nil) }
 	d := session.Deps{
+		Ready:       ready,
 		SessionID:   id,
 		HistoryPath: h.Path(),
 		Store:       st.Store,
