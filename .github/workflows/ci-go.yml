@@ -62,7 +62,7 @@ jobs:
       # miss, so after the first run its test results never refresh, and
       # nine jobs race to write the one key. Each job keeps its own cache
       # below instead.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: false
@@ -142,7 +142,7 @@ jobs:
         working-directory: go
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: true
@@ -202,7 +202,7 @@ jobs:
       MODEL_TRACE_DIR: ${{ github.workspace }}/model-traces
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: true
@@ -259,7 +259,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: true
@@ -293,7 +293,7 @@ jobs:
         shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: true
