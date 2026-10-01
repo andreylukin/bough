@@ -28,6 +28,7 @@ import { Palette, hiddenEmpty, idTail, isTypingTarget, startFolders, useFullText
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, EmptyState, ErrorNote, ErrorToast, InlineFail, Pending, RawDetails, Spinner, StartingStatus, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
+import { FeedbackDialog } from "./feedback";
 
 export type View = "sessions" | "me" | "projects" | "project" | "hooks" | "wiki";
 
@@ -337,7 +338,7 @@ export interface SidebarSeed {
   dragging?: string | null; dropAt?: string | null;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing, seed }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, onFeedback, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing, seed }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** The session on screen, when it is not simply `selected`: back on Home the row you left stays marked as your place, but nobody is looking at it. */
   viewing?: string;
@@ -356,6 +357,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   /** Transcript matches in sessions the list does not hold (archived); opens them in ⌘K. */
   saidElsewhere?: { count: number; open: () => void };
   view?: View; onView?: (v: View) => void;
+  onFeedback?: () => void;
   /** Claims the wiki's review is waiting on; shown beside the nav item. */
   wikiFlags?: number;
   /** Starting work is the other half of a control room; it opens the palette's Start group. */
@@ -978,7 +980,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     </div>
   );
 
-  const nav = onView && <ViewNav view={view} onView={onView} wikiFlags={wikiFlags} icons={folded} />;
+  const nav = onView && <><ViewNav view={view} onView={onView} wikiFlags={wikiFlags} icons={folded} />{onFeedback && <button type="button" className="side-feedback" onClick={onFeedback} title="Send feedback">{folded ? "?" : "Send feedback"}</button>}</>;
   if (folded) return <div className="sidebar sidebar-closed">{toolbar}<div className="rail-gap" />{nav}</div>;
 
   const total = recentAll.length + background.length + archived.length;
@@ -1090,8 +1092,8 @@ const PROJECT_SESSION = "A project session lives in its project's orb; start a t
  * pushes history the way the rest of the app does. `phone` adds Sessions:
  * there it is the shell's bottom bar, not the sidebar's foot.
  */
-export function ViewNav({ view, onView, wikiFlags = 0, icons = false, phone = false }: {
-  view: View; onView: (v: View) => void; wikiFlags?: number; icons?: boolean; phone?: boolean;
+export function ViewNav({ view, onView, onFeedback, wikiFlags = 0, icons = false, phone = false }: {
+  view: View; onView: (v: View) => void; onFeedback?: () => void; wikiFlags?: number; icons?: boolean; phone?: boolean;
 }) {
   const items = ([["sessions", "Sessions", ICONS.search], ["me", "Me", ICONS.me], ["projects", "Projects", ICONS.projects], ["hooks", "Hooks", ICONS.hooks], ["wiki", "Wiki", ICONS.wiki]] as const)
     .filter(([v]) => phone || v !== "sessions");
@@ -1110,6 +1112,7 @@ export function ViewNav({ view, onView, wikiFlags = 0, icons = false, phone = fa
           )}
         </a>
       ))}
+      {onFeedback && <button type="button" className="side-nav-item" onClick={onFeedback} aria-label="Send feedback" title="Send feedback">?<span className={icons ? "visually-hidden" : undefined}>Feedback</span></button>}
     </nav>
   );
 }
@@ -5367,6 +5370,7 @@ export default function App() {
   // it loaded with. The server says which build answered; when that
   // changes, the page offers the reload rather than looking unfixed.
   const [updated, setUpdated] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   useEffect(() => { watchBuild(() => setUpdated(true)); }, []);
   // Where the next new conversation runs; local unless someone picks a project.
   const [newMode, setNewMode] = useState<ModeValue>({ mode: "local" });
@@ -6222,7 +6226,7 @@ export default function App() {
                saidElsewhere={{ count: [...said.keys()].filter((id) => !rows.some((r) => r.id === id)).length, open: () => { setPalQuery(query.trim()); setPalette(true); } }}
                onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || sub) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
                view={view === "project" ? "projects" : view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
-               onView={onView}
+               onView={onView} onFeedback={() => setFeedbackOpen(true)}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={retryList}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
@@ -6326,8 +6330,9 @@ export default function App() {
         <PortalPane row={row} onClose={() => setSub(null)} onAsk={(t) => api.prompt(row.id, t)} />
       )}
       <DialogHost />
+      {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
       {phoneNav(narrow, pane, view) && (
-        <ViewNav phone view={pane === "list" ? "sessions" : view === "project" ? "projects" : view} onView={onView} wikiFlags={wikiFlags} />
+        <ViewNav phone view={pane === "list" ? "sessions" : view === "project" ? "projects" : view} onView={onView} onFeedback={() => setFeedbackOpen(true)} wikiFlags={wikiFlags} />
       )}
       {creating && <StartingStatus />}
       {updated && (

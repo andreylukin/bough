@@ -105,6 +105,10 @@ collect logs, paths, configuration values, environment variables, or
 session content. After posting, it can open the issue in a browser so
 you can review and attach a screenshot yourself.
 
+In bough web, **Send feedback** opens a report draft for a public GitHub
+issue. You can select and preview a PNG screenshot, copy it, then paste
+it into the GitHub issue. The page does not upload the image or report.
+
 Flags take `--long` or `-long`; `-c`/`--continue` and `-r`/`--resume`
 are the short pairs. Config comes from `./bough.yml`, else
 `~/.bough/bough.yml`, else an embedded default (`--config <path>` to
