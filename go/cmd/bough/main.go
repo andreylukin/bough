@@ -478,6 +478,11 @@ func main() {
 	}
 
 	ctx := kernel.NewContext()
+	// Headless input and stored notices can arrive from a row's Apply.
+	// Native engines must not freeze their tools during Mount's final
+	// optional-dependency remounts, when workers briefly unregisters spawn.
+	ready := make(chan struct{})
+	ctx.Provide("startup-ready", (<-chan struct{})(ready))
 	ctx.Provide("ui-mode", mode)
 	ctx.Provide("origin", sessionOrigin(mode))
 	ctx.Provide("session-mode", sessMode)
@@ -539,6 +544,7 @@ func main() {
 	if err := ctx.Mount(rows); err != nil {
 		fatal(err)
 	}
+	close(ready)
 	// Test hook (BOUGH_TEST_STEP_GATE, off unless set): a "cancel" file
 	// cancels the turn as the SIGINT below does, without the exit that
 	// follows it, so a model test can step the cancelled call.

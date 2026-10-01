@@ -857,9 +857,17 @@ func walkPFR(a *pfrAdapter, raw []byte) error {
 			names = append(names, strings.TrimPrefix(st.Action, "Session#0."))
 		}
 		fail := func(i int, format string, args ...any) error {
+			es, _ := a.entries()
+			var events []string
+			for len(a.events) > 0 {
+				ev := <-a.events
+				if ev.Kind == "error" || ev.Kind == "exit" {
+					events = append(events, ev.Kind+": "+ev.Text)
+				}
+			}
 			a.Cleanup()
 			lo := max(0, i-6)
-			return fmt.Errorf("walk %d, step %d (%s) after %v: %s", pi, i, names[i], names[lo:i], fmt.Sprintf(format, args...))
+			return fmt.Errorf("walk %d, step %d (%s) after %v: %s; child events: %v\n%s", pi, i, names[i], names[lo:i], fmt.Sprintf(format, args...), events, pfrDump(es))
 		}
 		for i, st := range p.Trace {
 			if i == 0 {

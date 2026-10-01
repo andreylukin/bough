@@ -89,10 +89,12 @@ type progressBuf struct {
 }
 
 type forkPoint struct {
-	parent  string
-	turn    string
-	running int
-	jobs    string // "job 3: go test ./..." for the refusal
+	clm             bool
+	contextSnapshot string
+	parent          string
+	turn            string
+	running         int
+	jobs            string // "job 3: go test ./..." for the refusal
 }
 
 // actorState belongs to the actor goroutine; nothing else touches it.
@@ -121,13 +123,14 @@ type actorState struct {
 	stopUsed    bool
 	tries       int
 
-	inputs     []string          // every input id sent this session (a cancel parks them)
-	unobserved map[string]queued // sent, not yet recorded by the coordinator
-	steerQ     []queued
-	noticeQ    []queued
-	notes      []string
-	pending    []string // lines that arrived while a turn was open
-	cancelAt   time.Time
+	inputs        []string          // every input id sent this session (a cancel parks them)
+	unobserved    map[string]queued // sent, not yet recorded by the coordinator
+	steerQ        []queued
+	noticeQ       []queued
+	notes         []string
+	pending       []string // lines that arrived while a turn was open
+	cancelAt      time.Time
+	cancelOnReady bool // a cancel while initial mounting delayed the queued input
 	// noticeWaits: job news arrived while a cancel was closing; it is
 	// taken once the cancel's done is written.
 	noticeWaits bool
@@ -177,9 +180,17 @@ func (a *actorState) init(r *Runtime) {
 }
 
 // observe is the store observer. It runs synchronously on the
-// coordinator goroutine, so it only applies the sync mirror (which the
-// Gate reads before the coordinator's next request) and queues the item.
+// coordinator goroutine. Unreal only updates the mirror and queues the item.
+// CLM additionally mirrors persisted responses before their tools can run,
+// preventing phantom context for a response the audit store never accepted.
 func (r *Runtime) observe(id session.ID, it sessionstore.Item) {
+	if r.cfg.CLM && string(id) == r.sid {
+		if mr, ok := it.Data.(sessionstore.ModelResponse); ok && len(mr.Response.Output) > 0 {
+			if err := r.gate.appendContext(mr.Response.Output); err != nil {
+				r.post(func() { r.a.live("error", err.Error(), nil) })
+			}
+		}
+	}
 	if string(id) != r.sid {
 		return
 	}
@@ -294,6 +305,9 @@ func (a *actorState) response(mr sessionstore.ModelResponse, meta project.Meta) 
 		if meta.Overflow {
 			// Read back at Open: the overflow outlives this process.
 			extra = map[string]any{"overflow": meta.Model}
+			if meta.ContextRevision != "" {
+				extra["clm_revision"] = meta.ContextRevision
+			}
 		}
 		a.providerError(meta.Err, extra)
 		return
@@ -444,12 +458,13 @@ func (a *actorState) submit(line string) {
 	if a.closed {
 		return
 	}
-	if a.open || a.cancelling != nil {
+	if !a.r.ready() || a.open || a.cancelling != nil {
 		a.pending = append(a.pending, line)
 		return
 	}
-	cancel := !a.cancelAt.IsZero() && time.Since(a.cancelAt) < pendingCancelFor
+	cancel := !a.cancelAt.IsZero() && (a.cancelOnReady || time.Since(a.cancelAt) < pendingCancelFor)
 	a.cancelAt = time.Time{}
+	a.cancelOnReady = false
 	a.startTurn(line)
 	if cancel && a.open {
 		a.cancelTurn("")
@@ -682,7 +697,7 @@ func (a *actorState) openWake() {
 // notice lands what job-notices queued: a turn of its own while idle,
 // a [notice] input inside the turn in flight otherwise.
 func (a *actorState) notice() {
-	if a.closed || a.r.d.Jobs == nil {
+	if a.closed || !a.r.ready() || a.r.d.Jobs == nil {
 		return
 	}
 	j := a.r.d.Jobs()
@@ -808,7 +823,7 @@ func (a *actorState) quiescent() bool {
 // closes on its own, so a decision never runs ahead of the entries
 // already written.
 func (a *actorState) evaluate() {
-	if a.closed {
+	if a.closed || !a.r.ready() {
 		return
 	}
 	if a.cancelling != nil {
@@ -1039,6 +1054,14 @@ func (a *actorState) markAdoptBase() {
 // doneData is loop.doneData plus the engine keys.
 func (a *actorState) doneData(running int, stop string) map[string]any {
 	data := map[string]any{}
+	if a.r.cfg.CLM {
+		path, err := a.r.gate.snapshotContext(string(a.m.LastTurn))
+		if err != nil {
+			a.live("error", err.Error(), nil)
+		} else if path != "" {
+			data["clm_context"] = path
+		}
+	}
 	var files []string
 	shell := true
 	if a.r.d.Stats != nil {
@@ -1160,6 +1183,7 @@ func (a *actorState) cancelTurn(stop string) {
 	if !a.open {
 		if stop == "" {
 			a.cancelAt = time.Now()
+			a.cancelOnReady = !a.r.ready() && (len(a.pending) > 0 || a.r.submits.Load() > 0)
 		}
 		return
 	}

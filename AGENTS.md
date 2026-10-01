@@ -9,10 +9,11 @@ part that is easy to get wrong from reading the code alone.
 ## What this is
 
 bough is a coding agent for the terminal. The `loop` row runs
-`engine-unreal`: the
+`engine-clm`: model-editable context on the
 [unreal-agent](https://github.com/unreallabsai/unreal-agent) harness
 with bough's tools as native tool calls that run asynchronously and in
-parallel ([`go/docs/unreal-engine.md`](go/docs/unreal-engine.md)).
+parallel ([`go/docs/clm-engine.md`](go/docs/clm-engine.md)).
+`--set loop.plugin=engine-unreal` retains the append-only unreal engine.
 Everything above the kernel — the LLM provider, the engine, the tools,
 the UI, history, MCP, hooks, skills — is a row in `bough.yml` that can
 be swapped, disabled, or hot-reloaded while a session runs.
@@ -193,7 +194,7 @@ is the todo list — see the Windows section of [`README.md`](README.md). Do not
 loosening an assertion that is correct on the platforms bough ships for;
 most of what fails is a test that hardcoded a POSIX path. The engine is
 not built there at all: the harness is Unix-only at the pin, so its
-packages carry `//go:build !windows` and `engine-unreal` is a stub row
+packages carry `//go:build !windows`; `engine-clm` and `engine-unreal` are stub rows
 that fails with the reason — and since it is the default `loop` row, a
 Windows build needs `--set loop.plugin=loop` (or that row in its
 config) to run a session at all. A new file that imports the harness, or a

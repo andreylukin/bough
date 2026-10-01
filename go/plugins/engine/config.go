@@ -41,6 +41,8 @@ func readSettings(cfg map[string]any) (settings, error) {
 	for k, v := range cfg {
 		var err error
 		switch k {
+		case "context_max_bytes":
+			s.CLMMaxBytes, err = positive(k, v)
 		case "tools":
 			str, _ := v.(string)
 			if str != "native" && str != "both" {

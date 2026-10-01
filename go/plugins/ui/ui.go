@@ -99,7 +99,8 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			n.Notify(text)
 			return true
 		}
-		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask, steer, notify))
+		ready, _ := kernel.Get[<-chan struct{}](ctx, "startup-ready")
+		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask, steer, notify, ready))
 		// Whether history is being saved is a "history" event, so serve
 		// can tell the page (and stop telling it): kept for the loop's
 		// TakeErr, a failed append only ever reached the transcript as a

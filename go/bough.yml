@@ -48,7 +48,7 @@
   plugin: cost
 
 # Native tool registry: each tool row registers its tools here as well
-# as into codemode. Inert under the loop; the engine-unreal row calls
+# as into codemode. Inert under the loop; the native engine row calls
 # them as native tools (docs/unreal-engine.md §6.2). It mounts before
 # codemode, which registers run_js here: a registry landing after it
 # would remount codemode, and a new VM remounts every tool row.
@@ -164,14 +164,16 @@
 #     service: llm-small
 #     model: z-ai/glm-5.3-flash
 
-# The engine: the unreal-agent harness with bough's tools as native
-# calls that run asynchronously and in parallel (docs/unreal-engine.md).
+# Default engine: model-editable context on the unreal-agent harness.
+# See docs/clm-engine.md; --set loop.plugin=engine-unreal restores the
+# append-only context engine. Both use the same native asynchronous tools.
 # The code-mode loop is still here: `--set loop.plugin=loop` (or
 # plugin: loop on this row) runs a session on it, same keys, same
 # history.
 - id: loop
-  plugin: engine-unreal
+  plugin: engine-clm
   # config:
+  #   context_max_bytes: 1048576 # editable context cap in bytes, not tokens
   #   tools: native           # native | both (both adds run_js: a JS block over the same tools)
   #   turn_settle: 60s        # a call still running this long after the model went quiet
   #                           # becomes a background job and the turn closes
