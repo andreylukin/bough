@@ -93,8 +93,17 @@ go build ./cmd/bough
 ./bough update               # git pull + rebuild + bounce the web session
 ./bough restart              # bounce the running --web session
 ./bough --version            # print "bough <version>"
+./bough feedback             # review and post a bug report to GitHub
 ./bough --help               # flags, subcommands, config locations
 ```
+
+`bough feedback` requires the GitHub CLI (`gh auth login`). It opens a
+Markdown draft in `$VISUAL` or `$EDITOR`, shows the exact public issue
+body, and posts only after confirmation. The draft includes the bough
+version, OS/architecture, and selected LLM/loop plugins; it does not
+collect logs, paths, configuration values, environment variables, or
+session content. After posting, it can open the issue in a browser so
+you can review and attach a screenshot yourself.
 
 Flags take `--long` or `-long`; `-c`/`--continue` and `-r`/`--resume`
 are the short pairs. Config comes from `./bough.yml`, else

@@ -198,7 +198,7 @@ func (s configSource) describe() string {
 }
 
 // commands are the subcommands `bough <name>` dispatches to.
-var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true, "serve": true, "project": true, "loop": true, "browser": true, "ci": true}
+var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "feedback": true, "update": true, "restart": true, "web": true, "serve": true, "project": true, "loop": true, "browser": true, "ci": true}
 
 // command splits argv into the subcommand (if any) and its args. A
 // first arg that is neither a flag nor a known subcommand is an error
@@ -289,6 +289,9 @@ func main() {
 	switch cmd {
 	case "log":
 		runLog(args)
+		return
+	case "feedback":
+		runFeedback(args)
 		return
 	case "sessions":
 		runSessions(args)
@@ -848,6 +851,7 @@ commands:
   search    find sessions by what was said in them; repo:/branch:/since:
             filter, e.g. bough search "rate limit repo:bough since:7d"
   log       pretty-print a session's history (latest when no arg)
+  feedback  review a metadata-only bug report, then post a GitHub issue
   update    git pull + rebuild this binary + restart the web session
   restart   bounce the running --web session onto the current binary
   web       [addr] start the browser UI detached and open it (default
