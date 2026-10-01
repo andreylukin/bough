@@ -481,87 +481,10 @@ func List(dir string) ([]SessionInfo, error) {
 			fmt.Fprintf(os.Stderr, "bough: history: skipping %s: %v\n", p, err)
 			continue
 		}
-		// Every serve request lists; re-reading a finished transcript
-		// each time made one long session slow every endpoint.
-		listMu.Lock()
-		c, hit := listCache[p]
-		listMu.Unlock()
-		if hit && c.size == st.Size() && c.mod.Equal(st.ModTime()) {
-			infos = append(infos, c.info)
-			continue
+		info, err := listedInfo(p, st, home)
+		if err == nil {
+			infos = append(infos, info)
 		}
-		entries, err := readEntries(p)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue // removed since the listing
-		}
-		if err != nil {
-			// Still a session: leaving it out made serve answer 404
-			// "unknown session" for a file that exists. Readers of it
-			// get the read error instead.
-			fmt.Fprintf(os.Stderr, "bough: history: %s: %v\n", p, err)
-			infos = append(infos, SessionInfo{ID: strings.TrimSuffix(filepath.Base(p), ".jsonl"), Path: p, ModTime: st.ModTime(), Mode: "local"})
-			continue
-		}
-		title, summary, cwd, from := "", "", "", ""
-		repo, branch := "", ""
-		mode, project, spawnedBy := "local", "", ""
-		var atSeq int64
-		origin := entriesOrigin(entries)
-		for _, e := range entries {
-			// A "title" entry is a name the session was given (the
-			// session-title plugin); it wins over the opening line.
-			if e.Kind == "title" {
-				if t, _ := e.Data["text"].(string); t != "" {
-					title = t
-					if s, _ := e.Data["summary"].(string); s != "" {
-						summary = s
-					}
-					continue
-				}
-			}
-			if e.Kind == "meta" && cwd == "" {
-				cwd, _ = e.Data["cwd"].(string)
-				mode, project = metaMode(e.Data)
-				repo, _ = e.Data["repo"].(string)
-				branch, _ = e.Data["branch"].(string)
-				spawnedBy, _ = e.Data["spawned_by"].(string)
-				if src, _ := e.Data["forked_from"].(string); src != "" {
-					from = strings.TrimSuffix(filepath.Base(src), ".jsonl")
-					// at_seq round-trips through JSON as a float64.
-					if n, ok := e.Data["at_seq"].(float64); ok {
-						atSeq = int64(n)
-					}
-				}
-			}
-			if e.Kind == "input" && title == "" {
-				title = Prompt(e)
-				if i := strings.IndexByte(title, '\n'); i >= 0 {
-					title = title[:i]
-				}
-			}
-		}
-		infos = append(infos, SessionInfo{
-			ID:      strings.TrimSuffix(filepath.Base(p), ".jsonl"),
-			Path:    p,
-			ModTime: st.ModTime(),
-			Entries: len(entries),
-			Title:   title,
-			Summary: summary,
-			Cwd:     cwd,
-			Repo:    repo,
-			Branch:  branch,
-
-			ForkedFrom: from,
-			AtSeq:      atSeq,
-			Origin:     origin,
-			Background: Classify(origin, cwd, firstInput(entries), home) != "",
-			Mode:       mode,
-			Project:    project,
-			SpawnedBy:  spawnedBy,
-		})
-		listMu.Lock()
-		listCache[p] = listed{size: st.Size(), mod: st.ModTime(), info: infos[len(infos)-1]}
-		listMu.Unlock()
 	}
 	for i := range infos {
 		infos[i].Cwd = projectCwd(home, infos[i])
@@ -570,6 +493,116 @@ func List(dir string) ([]SessionInfo, error) {
 		return cmp.Or(b.ModTime.Compare(a.ModTime), cmp.Compare(b.ID, a.ID))
 	})
 	return infos, nil
+}
+
+// Lookup reads one known session without listing or parsing unrelated
+// histories. Opening a thread used to wait for the entire fleet on a
+// cold server, even though its id already names the file to read.
+func Lookup(dir, id string) (SessionInfo, bool, error) {
+	if id == "" || id == "." || id == ".." || filepath.Base(id) != id {
+		return SessionInfo{}, false, nil
+	}
+	p := filepath.Join(dir, id+".jsonl")
+	st, err := os.Stat(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return SessionInfo{}, false, nil
+	}
+	if err != nil {
+		return SessionInfo{}, false, fmt.Errorf("history: lookup %s: %w", p, err)
+	}
+	home, _ := os.UserHomeDir()
+	info, err := listedInfo(p, st, home)
+	if errors.Is(err, fs.ErrNotExist) {
+		return SessionInfo{}, false, nil
+	}
+	if err != nil {
+		return SessionInfo{}, false, err
+	}
+	info.Cwd = projectCwd(home, info)
+	return info, true, nil
+}
+
+func listedInfo(p string, st fs.FileInfo, home string) (SessionInfo, error) {
+	// Every serve request lists; re-reading a finished transcript
+	// each time made one long session slow every endpoint.
+	listMu.Lock()
+	c, hit := listCache[p]
+	listMu.Unlock()
+	if hit && c.size == st.Size() && c.mod.Equal(st.ModTime()) {
+		return c.info, nil
+	}
+	entries, err := readEntries(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return SessionInfo{}, err // removed since the listing
+	}
+	if err != nil {
+		// Still a session: leaving it out made serve answer 404
+		// "unknown session" for a file that exists. Readers of it
+		// get the read error instead.
+		fmt.Fprintf(os.Stderr, "bough: history: %s: %v\n", p, err)
+		return SessionInfo{ID: strings.TrimSuffix(filepath.Base(p), ".jsonl"), Path: p, ModTime: st.ModTime(), Mode: "local"}, nil
+	}
+	title, summary, cwd, from := "", "", "", ""
+	repo, branch := "", ""
+	mode, project, spawnedBy := "local", "", ""
+	var atSeq int64
+	origin := entriesOrigin(entries)
+	for _, e := range entries {
+		// A "title" entry is a name the session was given (the
+		// session-title plugin); it wins over the opening line.
+		if e.Kind == "title" {
+			if t, _ := e.Data["text"].(string); t != "" {
+				title = t
+				if s, _ := e.Data["summary"].(string); s != "" {
+					summary = s
+				}
+				continue
+			}
+		}
+		if e.Kind == "meta" && cwd == "" {
+			cwd, _ = e.Data["cwd"].(string)
+			mode, project = metaMode(e.Data)
+			repo, _ = e.Data["repo"].(string)
+			branch, _ = e.Data["branch"].(string)
+			spawnedBy, _ = e.Data["spawned_by"].(string)
+			if src, _ := e.Data["forked_from"].(string); src != "" {
+				from = strings.TrimSuffix(filepath.Base(src), ".jsonl")
+				// at_seq round-trips through JSON as a float64.
+				if n, ok := e.Data["at_seq"].(float64); ok {
+					atSeq = int64(n)
+				}
+			}
+		}
+		if e.Kind == "input" && title == "" {
+			title = Prompt(e)
+			if i := strings.IndexByte(title, '\n'); i >= 0 {
+				title = title[:i]
+			}
+		}
+	}
+	info := SessionInfo{
+		ID:      strings.TrimSuffix(filepath.Base(p), ".jsonl"),
+		Path:    p,
+		ModTime: st.ModTime(),
+		Entries: len(entries),
+		Title:   title,
+		Summary: summary,
+		Cwd:     cwd,
+		Repo:    repo,
+		Branch:  branch,
+
+		ForkedFrom: from,
+		AtSeq:      atSeq,
+		Origin:     origin,
+		Background: Classify(origin, cwd, firstInput(entries), home) != "",
+		Mode:       mode,
+		Project:    project,
+		SpawnedBy:  spawnedBy,
+	}
+	listMu.Lock()
+	listCache[p] = listed{size: st.Size(), mod: st.ModTime(), info: info}
+	listMu.Unlock()
+	return info, nil
 }
 
 // PreferCwd reorders infos (stably) so sessions recorded in cwd come

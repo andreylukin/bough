@@ -26,6 +26,10 @@ func TestListProjectSessionCwdIsPrimaryWorktree(t *testing.T) {
 		}
 		m := map[string]SessionInfo{}
 		for _, in := range infos {
+			looked, ok, err := Lookup(dir, in.ID)
+			if err != nil || !ok || looked.Cwd != in.Cwd {
+				t.Fatalf("Lookup(%q) = %+v, %v, %v; List cwd = %q", in.ID, looked, ok, err, in.Cwd)
+			}
 			m[in.ID] = in
 		}
 		return m
