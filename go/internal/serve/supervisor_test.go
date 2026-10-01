@@ -60,6 +60,12 @@ const (
 	// before it writes any history, the way a hung init or an orb that
 	// never comes up leaves a real child.
 	envHangBoot = "BOUGH_FAKE_HANGBOOT"
+	// envHoldInput parks after meta, before stdin is consumed, so a
+	// create's pipe write cannot be mistaken for a durable first input.
+	envHoldInput = "BOUGH_FAKE_HOLDINPUT"
+	// envRecordInput gives the stdout-only fake durable input records
+	// without replacing its ask behavior with envTurns' canned turns.
+	envRecordInput = "BOUGH_FAKE_RECORDINPUT"
 )
 
 func TestMain(m *testing.M) {
@@ -117,6 +123,15 @@ func fakeChild() {
 		meta["session"] = id
 	}
 	say(meta)
+	if p := os.Getenv(envHoldInput); p != "" {
+		os.WriteFile(p+".at", nil, 0o644)
+		for {
+			if _, err := os.Stat(p); err != nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 
 	armed := false
 	sc := bufio.NewScanner(os.Stdin)
@@ -151,6 +166,10 @@ func fakeChild() {
 		if os.Getenv(envTurns) != "" && dir != "" && id != "" {
 			fakeTurn(filepath.Join(dir, id+".jsonl"), line)
 			continue
+		}
+		if os.Getenv(envRecordInput) != "" && dir != "" && id != "" {
+			path := filepath.Join(dir, id+".jsonl")
+			appendEntry(path, history.Entry{Seq: nextSeq(path), At: time.Now(), Kind: "input", Data: map[string]any{"text": line}})
 		}
 		if os.Getenv(envNoise) != "" {
 			fmt.Println("this line is not json")
@@ -419,7 +438,7 @@ func hasKind(evs []Event, kind string) bool {
 
 func TestSupervisorCreateAndPrompt(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t, envNewID+"=sess-create")
+	f := newFixture(t, envNewID+"=sess-create", envRecordInput+"=1")
 
 	id, err := f.sup.Create(CreateOptions{Cwd: f.home, Prompt: "hello"})
 	if err != nil {

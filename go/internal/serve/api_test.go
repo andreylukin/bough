@@ -399,7 +399,7 @@ func TestAPIAnswerWithNoAskIsConflict(t *testing.T) {
 
 func TestAPICreateAndPromptAndAsk(t *testing.T) {
 	t.Parallel()
-	f := newAPI(t, envNewID+"=created", envAsk+"=1")
+	f := newAPI(t, envNewID+"=created", envAsk+"=1", envRecordInput+"=1")
 
 	code, body := f.do(t, "POST", "/api/sessions", `{"cwd":"`+f.home+`","prompt":"hello"}`)
 	if code != http.StatusCreated {

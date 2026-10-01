@@ -105,6 +105,17 @@ func TestHookRewritesPrompt(t *testing.T) {
 	if len(llm.messages) != 1 || llm.messages[0].Content != "rewritten" {
 		t.Fatalf("llm saw %v, want single message %q", llm.messages, "rewritten")
 	}
+	// The create acknowledgement and prompt retry identify the line by
+	// what the person sent, before a hook rewrote it for the model.
+	for _, e := range r.hist.Entries() {
+		if e.Kind == "input" {
+			if e.Data["text"] != "rewritten" || e.Data["typed"] != "original" {
+				t.Fatalf("recorded input = %v, want rewritten text and original typed", e.Data)
+			}
+			return
+		}
+	}
+	t.Fatal("no recorded input")
 }
 
 func TestHookBlocksPrompt(t *testing.T) {

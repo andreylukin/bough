@@ -869,6 +869,7 @@ func (r *runner) provenance() map[string]any {
 // pending (the caller checks ctx.Err()); a steer still is, so the
 // next turn sees it under the cancelled note.
 func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(kind, text string)) (line, blocked string) {
+	typed := input
 	res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit)
 	if !steer && ctx.Err() != nil {
 		return input, ""
@@ -900,10 +901,10 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 	}
 	data := map[string]any{"text": msg.String()}
 	// What the user actually typed, when the message sent is not it:
-	// @file expansions and injected skills belong in the model's
-	// context, not in the composer's Up-arrow history.
-	if msg.String() != input {
-		data["typed"] = input
+	// hook rewrites, @file expansions and injected skills belong in the
+	// model's context, not in the composer's Up-arrow history.
+	if msg.String() != typed {
+		data["typed"] = typed
 	}
 	if steer {
 		data["steer"] = true

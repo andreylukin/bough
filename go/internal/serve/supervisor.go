@@ -596,10 +596,18 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 				return "", err
 			}
 			if prompt != "" {
+				var after int64
+				if entries, err := s.Entries(id); err == nil && len(entries) > 0 {
+					after = entries[len(entries)-1].Seq
+				}
 				if err := s.writePrompt(ch, prompt); err != nil {
 					// Answered with the id dropped, this left a live,
 					// claimed session behind a create the page was told
 					// had failed, and Retry made a second one.
+					s.failCreate(ch, path)
+					return "", err
+				}
+				if err := s.waitCreatePrompt(ch, id, prompt, after, deadline); err != nil {
 					s.failCreate(ch, path)
 					return "", err
 				}
@@ -650,6 +658,47 @@ func (s *Supervisor) waitMeta(ch *child, id string, deadline time.Time) {
 			return
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+// waitCreatePrompt keeps a successful create from acknowledging a line
+// that is only in the child's stdin pipe. Close can kill that child
+// immediately after the response, and a page which already landed the
+// session will never retry its create. A recorded rejection also settles
+// the prompt; slash and bang commands need not write an input at all.
+func (s *Supervisor) waitCreatePrompt(ch *child, id, prompt string, after int64, deadline time.Time) error {
+	want := strings.TrimSpace(prompt)
+	if want == "" || strings.HasPrefix(prompt, "/") || strings.HasPrefix(prompt, "!") {
+		return nil
+	}
+	for {
+		if entries, err := s.Entries(id); err == nil {
+			otherInput := false
+			for _, e := range entries {
+				switch e.Kind {
+				case "input":
+					if e.Seq > after && strings.TrimSpace(inputText(e.Data)) == want {
+						return nil
+					}
+					otherInput = true
+				case "done", "cancelled":
+					// A refusal before any input is still a result. An
+					// unrelated input's completion cannot acknowledge ours.
+					if e.Seq > after && !otherInput {
+						return nil
+					}
+				}
+			}
+		}
+		select {
+		case <-ch.done:
+			return fmt.Errorf("serve: supervisor: session exited before recording the first prompt")
+		default:
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("serve: supervisor: first prompt was not recorded in %s", createTimeout)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
