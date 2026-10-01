@@ -155,6 +155,7 @@ type actorState struct {
 	lastParts *prompt.Parts
 	caught    int // rows the catch-up recorded at Open
 	closed    bool
+	closing   chan struct{} // shutdown waits for cancelled calls, within Close's context
 }
 
 func (a *actorState) init(r *Runtime) {
@@ -276,6 +277,13 @@ func (a *actorState) item(it sessionstore.Item) {
 		return
 	case sessionstore.ItemToolCallStatus:
 		st, _ := it.Data.(sessionstore.ToolCallStatus)
+		// Esc can precede the first status that reveals a call's operation
+		// IDs. Keep following its cancellation after the bounded wait too.
+		if c := a.m.Outstanding[st.CallID]; c != nil && a.cancelled[st.CallID] {
+			for _, op := range c.Ops {
+				go func() { _ = a.r.ops.Cancel(op, "cancelled by the user") }()
+			}
+		}
 		a.flushProgress(st.CallID)
 		for _, o := range a.proj.Item(it) {
 			a.emit(o)
@@ -382,7 +390,7 @@ func (a *actorState) meta(m project.Meta) {
 }
 
 func (a *actorState) delta(d agentllm.Delta) {
-	if a.closed {
+	if a.closed || a.r.closing.Load() {
 		return
 	}
 	if d.Kind == agentllm.DeltaStart {
@@ -455,7 +463,7 @@ func (a *actorState) ended(st sessionstore.ToolCallStatus) {
 // ---- opening turns ----
 
 func (a *actorState) submit(line string) {
-	if a.closed {
+	if a.closed || a.r.closing.Load() {
 		return
 	}
 	if !a.r.ready() || a.open || a.cancelling != nil {
@@ -697,7 +705,7 @@ func (a *actorState) openWake() {
 // notice lands what job-notices queued: a turn of its own while idle,
 // a [notice] input inside the turn in flight otherwise.
 func (a *actorState) notice() {
-	if a.closed || !a.r.ready() || a.r.d.Jobs == nil {
+	if a.closed || a.r.closing.Load() || !a.r.ready() || a.r.d.Jobs == nil {
 		return
 	}
 	j := a.r.d.Jobs()
@@ -823,7 +831,21 @@ func (a *actorState) quiescent() bool {
 // closes on its own, so a decision never runs ahead of the entries
 // already written.
 func (a *actorState) evaluate() {
-	if a.closed || !a.r.ready() {
+	if a.closed {
+		return
+	}
+	if a.closing != nil {
+		if a.cancelling != nil {
+			a.checkCancel()
+		}
+		if a.cancelling == nil && len(a.cancelled) == 0 && !a.m.Inflight {
+			done := a.closing
+			a.shutdown()
+			close(done)
+		}
+		return
+	}
+	if !a.r.ready() {
 		return
 	}
 	if a.cancelling != nil {
@@ -1349,6 +1371,20 @@ func (a *actorState) restartRun() {
 		a.run.stopped = true
 		a.run.cancel()
 	}
+}
+
+func (a *actorState) beginShutdown(done chan struct{}) {
+	if a.closed {
+		close(done)
+		return
+	}
+	a.closing = done
+	// Keep the coordinator alive to persist late operation results, but
+	// never start provider work or another turn while the process exits.
+	if a.open && a.cancelling == nil {
+		a.cancelTurn("")
+	}
+	a.r.gate.CancelInflight()
 }
 
 func (a *actorState) shutdown() {

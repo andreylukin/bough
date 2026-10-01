@@ -918,6 +918,10 @@ func (m model) waitEvent() tea.Cmd {
 	}
 }
 
+func (m model) staleEvent(ev Event) bool {
+	return ev.session != "" && ev.session != m.sessID
+}
+
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.waitEvent(), tea.RequestBackgroundColor, m.cacheTick(), m.refreshWhere()}
 	return tea.Batch(cmds...)
@@ -960,6 +964,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case eventMsg:
+		if m.staleEvent(Event(msg)) {
+			return m, m.waitEvent()
+		}
 		was := m.running
 		m.addEvent(Event(msg))
 		if Event(msg).Kind == "done" {
@@ -973,6 +980,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.waitEvent()
 
 	case eventsMsg:
+		// Filter before deciding which delta renders the batch: a stale
+		// tail must not suppress the last current-session delta's paint.
+		msg = slices.DeleteFunc(msg, m.staleEvent)
 		done := false
 		was := m.running
 		for i, ev := range msg {

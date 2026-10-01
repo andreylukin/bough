@@ -1,13 +1,16 @@
 package orb
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // running writes a state.json whose IP is the loopback host the fake
@@ -83,24 +86,65 @@ func TestPortalReopenIsTheSameOne(t *testing.T) {
 }
 
 func TestClosePortalStopsListening(t *testing.T) {
-	home := t.TempDir()
-	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer guest.Close()
-	host, port, _ := net.SplitHostPort(strings.TrimPrefix(guest.URL, "http://"))
-	gp, _ := strconv.Atoi(port)
-	running(t, home, "s1", host)
+	t.Parallel()
+	testPortalStopsListening(t, ClosePortal)
+}
 
-	ps, err := OpenPortal(home, "s1", gp, "")
+func TestCloseSessionPortalsStopsListening(t *testing.T) {
+	t.Parallel()
+	testPortalStopsListening(t, func(home, session string, _ int) error {
+		CloseSessionPortals(home, session)
+		return nil
+	})
+}
+
+func testPortalStopsListening(t *testing.T, closePortal func(string, string, int) error) {
+	t.Helper()
+	home, session := t.TempDir(), t.Name()
+	const guest = 3000
+	running(t, home, session, "127.0.0.1")
+	if _, err := OpenPortal(home, session, guest, ""); err != nil {
+		t.Fatal(err)
+	}
+	portals.Lock()
+	original := portals.open[session][guest].ln
+	portals.Unlock()
+	t.Cleanup(func() { CloseSessionPortals(home, session) })
+	t.Cleanup(func() { original.Close() })
+	if err := closePortal(home, session, guest); err != nil {
+		t.Fatal(err)
+	}
+
+	// A successful dial to a released port says nothing about its former
+	// listener: another test process can already own the address.
+	reused, err := net.Listen("tcp", original.Addr().String())
+	if err == nil {
+		t.Cleanup(func() { reused.Close() })
+		c, err := net.DialTimeout("tcp", reused.Addr().String(), 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+	} else if !errors.Is(err, syscall.EADDRINUSE) {
+		t.Fatal(err)
+	}
+
+	// Bound the failure if Close regresses, without sleeping or probing
+	// whoever owns the old port now.
+	if err := original.(*net.TCPListener).SetDeadline(time.Now()); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	if c, err := original.Accept(); !errors.Is(err, net.ErrClosed) {
+		if c != nil {
+			c.Close()
+		}
+		t.Fatalf("original portal listener after Close: %v, want net.ErrClosed", err)
+	}
+	st, err := ReadState(home, session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ClosePortal(home, "s1", gp); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(ps.Host)); err == nil {
-		t.Fatal("the portal still accepts after Close")
-	}
-	if st, _ := ReadState(home, "s1"); len(st.Portals) != 0 {
+	if len(st.Portals) != 0 {
 		t.Fatalf("closed portal still in state.json: %+v", st.Portals)
 	}
 }

@@ -25,7 +25,7 @@ import (
 // on fifo and returns its path.
 func bgjobfinishesmidturnTape(t *testing.T, fifo, story string) string {
 	t.Helper()
-	cmd := fmt.Sprintf("cat %s >/dev/null; echo GATED-DONE", fifo)
+	cmd := fmt.Sprintf("IFS= read -r token < %q; [ \"$token\" = release ] && echo GATED-DONE", fifo)
 	code := fmt.Sprintf("console.log(tools.bash(%q, 120))\n", cmd)
 	wake := "[background job] A command you started in the background has finished while you were idle. Deal with it if it needs anything, then reply to the user with what happened.\n\njob 1 [exited 0] " + cmd + " (1s)\nGATED-DONE"
 	rows := []struct {
@@ -101,12 +101,19 @@ func TestBgjobFinishesMidTurn(t *testing.T) {
 	if a.doneCount() != 1 {
 		t.Fatalf("turn 2 finished before the gate opened; the stream is too fast:\n%s", a.text())
 	}
-	// Open the gate: cat is the reader, so this returns at once.
+	// Release one line explicitly: the job waits for this token, not
+	// an empty writer's open/close rendezvous to be observed as EOF.
 	f, err := os.OpenFile(fifo, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	if _, err := fmt.Fprintln(f, "release"); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if a.doneCount() != 1 {
 		t.Fatalf("gate opened after turn 2 finished: not a mid-turn finish")
 	}

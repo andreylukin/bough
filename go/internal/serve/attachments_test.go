@@ -13,7 +13,7 @@ import (
 
 func TestAPIAttachments(t *testing.T) {
 	t.Parallel()
-	f := newAPI(t, envNewID+"=created")
+	f := newAPI(t, envNewID+"=created", envRecordInput+"=1")
 	f.api.home = t.TempDir()
 	png := "\x89PNG\r\n\x1a\nfake"
 

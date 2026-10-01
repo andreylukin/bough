@@ -50,7 +50,8 @@ deadlock_detection: false
 
 role Session:
     action Init:
-        # POST /api/sessions: none (not sent) | waiting | ok (201) | failed
+        # POST /api/sessions: none | waiting (unclaimed) | claimed
+        # (first prompt unread, 201 still pending) | ok (201) | failed
         self.create = "none"
         # <id>.jsonl exists, so the row is listed and tab B knows the id
         self.file = False
@@ -92,7 +93,7 @@ role Session:
             self.create = "failed"
         else:
             self.c = "leased"
-            self.create = "ok"
+            self.create = "claimed"
             self.turn = "sent"
 
     # POST /prompt: 409 while archived, while Create holds the id
@@ -109,6 +110,8 @@ role Session:
     atomic fair action Record:
         require self.turn == "sent" and (self.c == "leased" or self.r == "leased")
         self.turn = "running"
+        if self.create == "claimed":
+            self.create = "ok"
 
     atomic fair action Finish:
         require self.turn == "running" and (self.c == "leased" or self.r == "leased")
@@ -120,6 +123,10 @@ role Session:
     atomic action ArchiveB:
         require self.file and not self.archived
         self.archived = True
+        # An intentional archive ends an unread first prompt too. Its
+        # create acknowledges that result without deleting the session.
+        if self.create == "claimed":
+            self.create = "ok"
         if self.c == "leased":
             self.c = "dying"
             self.turn = "none"
@@ -164,7 +171,7 @@ always eventually assertion ArchiveLeavesNoChild:
 
 # A create returns a claimed id or has killed its child.
 always eventually assertion CreateSettles:
-    return session.create != "waiting"
+    return session.create not in ("waiting", "claimed")
 
 # An accepted prompt is read (or ended by an archive), never left hanging.
 always eventually assertion PromptLands:

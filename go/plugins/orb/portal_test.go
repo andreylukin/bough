@@ -32,6 +32,7 @@ func TestNativePortal(t *testing.T) {
 	reg := agenttools.NewRegistry()
 	ctx.Provide("agent-tools", reg)
 	registerPortalTools(ctx, home, "s1")
+	t.Cleanup(ctx.Unmount)
 	tl, ok := reg.Lookup("portal")
 	if !ok {
 		t.Fatal("native portal not registered before the orb")
@@ -93,9 +94,14 @@ func TestNativePortal(t *testing.T) {
 	if _, ok := reg.Lookup("portal"); ok {
 		t.Fatal("unmount left the native portal")
 	}
-	// A dial, not a GET: the client's kept-alive connection outlives the listener.
-	if c, err := net.Dial("tcp", strings.TrimPrefix(opened.URL, "http://")); err == nil {
-		c.Close()
-		t.Fatal("unmount left the portal listening")
+	// The listener's old address may already belong to another parallel
+	// test. Check the cleanup wiring here; internal/orb checks the original
+	// listener itself, even after that address has been reused.
+	state, err := iorb.ReadState(home, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Portals) != 0 {
+		t.Fatalf("unmount left portals in state.json: %+v", state.Portals)
 	}
 }

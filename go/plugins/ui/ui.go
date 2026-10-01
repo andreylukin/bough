@@ -28,6 +28,10 @@ type Event struct {
 	Options []string
 	Secret  bool           // kind "ask": the answer is a credential (tools.secret)
 	Data    map[string]any // extra payload (e.g. done's files/exit); nil when absent
+
+	// The live bridge stamps the source session before queueing. A /new
+	// can replace the pane while its old stream still has queued events.
+	session string
 }
 
 type plugin struct{}

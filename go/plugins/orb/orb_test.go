@@ -75,7 +75,9 @@ func TestLocalSessionSetsReadOnlySection(t *testing.T) {
 // through, the row has chdir'd into the primary worktree and written
 // state.json.
 func TestProjectRowOpensOrb(t *testing.T) {
-	t.Parallel()
+	// These host seams are process-wide, including for local-session tests.
+	oldHome, oldChdir, oldFake := userHome, chdir, newFake
+	t.Cleanup(func() { userHome, chdir, newFake = oldHome, oldChdir, oldFake })
 	home := t.TempDir()
 	repo := filepath.Join(t.TempDir(), "app")
 	git := func(args ...string) {

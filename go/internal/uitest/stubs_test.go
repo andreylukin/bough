@@ -332,7 +332,9 @@ func TestToolOutputShapes(t *testing.T) {
 		{"tabs", "printf 'a\\tb\\tc'", []string{"a    b    c"}, nil},
 		{"unicode", "printf '日本語 🐛 e\\xcc\\x81 →'", []string{"日本語 🐛", "→"}, nil},
 		{"nul", "printf 'hello\\0world and more text after it'", []string{"helloworld and more"}, nil},
-		{"binary", "head -c 200 /dev/urandom", []string{"(binary, 200 bytes)"}, nil},
+		// Result rendering trims trailing newlines. Random bytes sometimes
+		// end in one, so use a fixed binary payload for the exact byte count.
+		{"binary", "head -c 200 /dev/zero", []string{"(binary, 200 bytes)"}, nil},
 		{"json", `printf '{"a":[1,2,{"b":"c"}]}'`, []string{`{"a":[1,2,{"b":"c"}]}`}, nil},
 		{"markdown-ish", "printf '# not a heading\\n- not a list\\n| not | table |'", []string{"# not a heading", "- not a list", "| not | table |"}, nil},
 		{"wide-cols", "printf '%s' " + strings.Repeat("日", 150), []string{"日日日日"}, nil},

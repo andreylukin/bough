@@ -169,7 +169,8 @@ func (r *Runtime) open(ctx context.Context) error {
 		}
 		return nil // built at the first input
 	}
-	if _, err := r.store.Resume(ctx, session.ID(r.sid)); err != nil {
+	restored, err := r.store.Resume(ctx, session.ID(r.sid))
+	if err != nil {
 		if r.cfg.CLM {
 			if _, stateErr := os.Stat(filepath.Join(r.d.Store, r.sid+".clm-state.json")); stateErr == nil || eng != nil && eng.Data["engine"] == "clm" {
 				return fmt.Errorf("engine-clm: audit store is unreadable; restore it before resuming (no automatic history reseed): %w", err)
@@ -183,6 +184,10 @@ func (r *Runtime) open(ctx context.Context) error {
 		a.seed, a.seeded = seedText(entries), "reseeded"
 		a.fork = nil
 		return nil
+	}
+	recovered, err := r.recoverNativeOperations(ctx, restored.Operations)
+	if err != nil {
+		return fmt.Errorf("engine-unreal: recover operations: %w", err)
 	}
 	a.fork = nil
 	max := int64(0) // sequences start at 1: a history with no hseq yet takes every row
@@ -212,10 +217,56 @@ func (r *Runtime) open(ctx context.Context) error {
 	// it: a full disk lost the input). Unparked, the coordinator sent it
 	// again beside the next input's, and the two took two model answers
 	// for one turn (tests/model/specs/history_io_failure.fizz).
-	if lost := lostInputs(a.m); cancelledLast(entries) || len(lost) > 0 {
+	// Freshly recovered call results are parked for the same reason:
+	// startup reconciliation must not answer them before the new input.
+	if lost := lostInputs(a.m); recovered || cancelledLast(entries) || len(lost) > 0 {
 		r.gate.Park(r.sync.calls(), lost)
 	}
 	return nil
+}
+
+// A fresh process cannot still be running an awaiting native call. Save
+// the handler's interrupted/cancelled result before the coordinator
+// starts: its startup reconciliation then includes that result in the
+// first resumed request. An asynchronous handler update raced that input
+// and briefly told the model the dead process's call was still running.
+// This runs only on Open, never an in-process coordinator rebuild.
+func (r *Runtime) recoverNativeOperations(ctx context.Context, operations []operation.Operation) (bool, error) {
+	recovered := false
+	for _, op := range operations {
+		if op.Type != operation.TypeRemoteJob || op.Status == operation.StatusReady {
+			continue
+		}
+		state, err := operation.DecodeRemoteJobState(op)
+		if err != nil {
+			return false, err
+		}
+		if state.Plan.Type != toolreg.PlanType || state.Plan.Version != toolreg.PlanVersion {
+			continue
+		}
+		var step operation.Step
+		switch op.Status {
+		case operation.StatusAwaiting:
+			step, err = operation.FailRemoteJob(op, boughcall.ErrInterrupted)
+		case operation.StatusCanceling:
+			step, err = operation.CancelRemoteJob(op)
+		case operation.StatusCompleted, operation.StatusFailed, operation.StatusCanceled:
+			// Resume also returns terminal states missing from call history.
+			// A crash after SaveOperation must keep that same result parked.
+			recovered = true
+			continue
+		default:
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if err := r.store.SaveOperation(ctx, session.ID(r.sid), *step.Operation); err != nil {
+			return false, err
+		}
+		recovered = true
+	}
+	return recovered, nil
 }
 
 // lostInputs are the inputs of the request a dead process left in flight.

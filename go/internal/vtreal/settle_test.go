@@ -1,8 +1,8 @@
 package vtreal
 
 // settled() is what nearly every assertion in this package waits on,
-// so its contract gets tests of its own against a scripted child
-// instead of bough: the child's output timing is then exact.
+// so its contract gets tests of its own against scripted children
+// instead of bough, with virtual time where bounded gaps are required.
 
 import (
 	"bufio"
@@ -11,7 +11,10 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/charmbracelet/x/vt"
 )
 
 // settleChildEnv names, in a re-exec'd test binary, the settleChildren
@@ -22,8 +25,8 @@ const settleChildEnv = "VTREAL_SETTLE_CHILD"
 // They were sh scripts once, and each `sleep` between two writes was a
 // fork+exec: on the macOS CI runner one of those stalled past settled's
 // 120ms quiet window often enough that settled rightly returned the
-// half-written screen, and the test blamed settled. A Go child's delays
-// are timers, so the only gaps in its output are the ones written here.
+// half-written screen, and the test blamed settled. Go timers avoid the
+// extra fork, but an OS child can still be descheduled between writes.
 var settleChildren = map[string]func(){
 	"TestSettledWaitsOutAShortPause": func() {
 		fmt.Print("FIRST")
@@ -49,13 +52,6 @@ var settleChildren = map[string]func(){
 			fmt.Printf("\r%c job 1 · %ds STEADY", []rune("⠋⠙⠹⠸")[i%4], i/20)
 			time.Sleep(50 * time.Millisecond)
 		}
-	},
-	"TestSettledWaitsOutChangingText": func() {
-		for i := range 30 {
-			fmt.Printf("\rcount %d", i)
-			time.Sleep(50 * time.Millisecond)
-		}
-		time.Sleep(30 * time.Second)
 	},
 }
 
@@ -218,12 +214,29 @@ func TestSettledSeesPastTickingChrome(t *testing.T) {
 }
 
 // Text that keeps changing is not chrome: a counter that runs for
-// 1.5 s holds settled until it stops.
+// 1.5 s holds settled until it stops. Drive the same emulator and byte
+// clock with virtual time: an OS child can be descheduled past the
+// quiet window between any two writes, even with Go timers, at which
+// point returning its current screen is correct. The other tests keep
+// the real PTY coverage; this one needs a guaranteed changing stream.
 func TestSettledWaitsOutChangingText(t *testing.T) {
 	t.Parallel()
-	a := settleApp(t)
-	a.waitFor("count 1")
-	if s := a.settled(); !strings.Contains(s, "count 29") {
-		t.Fatalf("settled returned while the text was still changing:\n%s", s)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		term := &Terminal{Emu: vt.NewSafeEmulator(40, 5), cols: 40, rows: 5}
+		done := make(chan struct{})
+		defer func() { <-done; term.Emu.Close() }()
+		a := &app{t: t, term: term, cols: 40, rows: 5}
+		go func() {
+			defer close(done)
+			w := stampWriter{term.Emu, &term.lastOut}
+			for i := range 30 {
+				fmt.Fprintf(w, "\rcount %d", i)
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		a.waitFor("count 1")
+		if s := a.settled(); !strings.Contains(s, "count 29") {
+			t.Fatalf("settled returned while the text was still changing:\n%s", s)
+		}
+	})
 }

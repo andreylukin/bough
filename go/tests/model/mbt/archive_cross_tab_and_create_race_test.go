@@ -38,7 +38,8 @@ import (
 //     (Timeout: the child dies before the file, the create's 500).
 //   - serve's claim hold (BOUGH_SERVE_TEST_HOLD, "claim") keeps Create
 //     between seeing the file and claiming the child, the window the
-//     race lives in; Claim removes it and reads the POST's answer.
+//     race lives in; Claim removes it and observes the lease. The POST
+//     answers only after Record, or an Archive intentionally ends it.
 //   - serve's reap hold ("reap") keeps a SIGKILLed lease holder's lease
 //     until KillReaped: archive's Kill blocks there, as it does in the
 //     real window between the SIGKILL and the reap, so the other tab
@@ -78,7 +79,7 @@ type acrAdapter struct {
 	// This walk's session.
 	before   map[string]bool // history ids before CreateStart
 	id       string          // learned from the listing once the file exists
-	create   string          // the spec's create: the POST as tab A sees it
+	create   string          // the POST lifecycle, including claim before its answer
 	resp     chan acrResult  // the create's answer until read
 	cpid     int             // Create's child
 	rpid     int             // the -r child Send spawned
@@ -108,6 +109,7 @@ func newACRAdapter(t *testing.T) *acrAdapter {
 	// A hold left behind would park serve's shutdown for a minute.
 	t.Cleanup(func() {
 		os.Remove(a.holdPath("claim"))
+		os.Remove(a.holdPath("create-prompt"))
 		os.Remove(a.holdPath("reap"))
 	})
 	return a
@@ -145,6 +147,7 @@ func (a *acrAdapter) Init() error {
 func (a *acrAdapter) Cleanup() error {
 	var errs []error
 	a.clearHold("reap")
+	a.clearHold("create-prompt")
 	if a.stopped != 0 {
 		syscall.Kill(a.stopped, syscall.SIGCONT)
 		a.stopped = 0
@@ -239,7 +242,7 @@ func (a *acrAdapter) state() (acrState, error) {
 		switch a.create {
 		case "waiting":
 			return "unclaimed"
-		case "ok":
+		case "claimed", "ok":
 			return "leased"
 		}
 		return "orphan" // a failed create's child is still running
@@ -321,6 +324,10 @@ func (a *acrAdapter) CreateStart() error {
 	if err := a.setHold("claim"); err != nil {
 		return err
 	}
+	if err := a.setHold("create-prompt"); err != nil {
+		return err
+	}
+	os.Remove(a.holdPath("create-prompt") + ".at")
 	a.before = map[string]bool{}
 	files, _ := filepath.Glob(filepath.Join(a.hist, "*.jsonl"))
 	for _, f := range files {
@@ -392,9 +399,11 @@ func (a *acrAdapter) Timeout() error {
 }
 
 // Claim lets Create claim: the child is paused first, so the first
-// message is written and not yet read ("sent").
+// message is written and not yet read ("sent"). Claim and the 201 are
+// separate phases: the latter now waits for that input to be durable.
 func (a *acrAdapter) Claim() error {
-	if _, ok := a.enabled(func(s acrState) bool { return s.c == "unclaimed" && s.file }); !ok {
+	st, ok := a.enabled(func(s acrState) bool { return s.c == "unclaimed" && s.file })
+	if !ok {
 		return nil
 	}
 	control.Queue(a.t, a.dir, a.name, control.Turn{Mode: "block", Text: "answered " + a.name})
@@ -403,6 +412,34 @@ func (a *acrAdapter) Claim() error {
 	}
 	if err := a.clearHold("claim"); err != nil {
 		return err
+	}
+	if !st.archived {
+		// A live lease can appear just before the pipe write. Observe
+		// the actual write before exposing the model's sent state.
+		deadline := time.Now().Add(actionTimeout)
+		for {
+			if _, err := os.Stat(a.holdPath("create-prompt") + ".at"); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				return errors.New("Claim: the first prompt was not written")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err := a.clearHold("create-prompt"); err != nil {
+			return err
+		}
+		if _, err := waitRow(a.s, a.id, "the create's lease", func(r serve.Row) bool { return r.Live }); err != nil {
+			return err
+		}
+		select {
+		case r := <-a.resp:
+			return fmt.Errorf("create answered before its held first input was recorded: %+v", r)
+		default:
+		}
+		a.create = "claimed"
+		a.holder, a.pending = a.cpid, "first "+a.name
+		return nil
 	}
 	if err := a.answer(); err != nil {
 		return err
@@ -522,7 +559,13 @@ func (a *acrAdapter) Record() error {
 		control.ReleaseStart(a.t, a.dir)
 	}
 	control.WaitTaken(a.t, a.dir, a.name, actionTimeout)
-	return a.waitTurn("running")
+	if err := a.waitTurn("running"); err != nil {
+		return err
+	}
+	if a.create == "claimed" {
+		return a.answer()
+	}
+	return nil
 }
 
 func (a *acrAdapter) Finish() error {
@@ -603,6 +646,11 @@ func (a *acrAdapter) ArchiveB() error {
 		control.ReleaseStart(a.t, a.dir)
 		if a.reapAtOnce {
 			a.holder = 0
+		}
+	}
+	if a.create == "claimed" {
+		if err := a.answer(); err != nil {
+			return err
 		}
 	}
 	_, err := waitRow(a.s, a.id, "the archive flag", func(r serve.Row) bool { return r.Archived })

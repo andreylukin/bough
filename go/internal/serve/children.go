@@ -835,6 +835,19 @@ func (s *Supervisor) queuedIDs() []string {
 // process died before writing is not listed — it would otherwise sit in
 // the lists as running forever.
 func (s *Supervisor) startingIDs() []string {
+	ids := s.childIDs()
+	out := ids[:0]
+	for _, id := range ids {
+		if !s.historyExists(id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// childIDs keeps leased children independent of when their history lands:
+// a list's earlier snapshot may not contain a file that exists by now.
+func (s *Supervisor) childIDs() []string {
 	s.mu.Lock()
 	var ids []string
 	for id := range s.kids {
@@ -843,14 +856,8 @@ func (s *Supervisor) startingIDs() []string {
 		}
 	}
 	s.mu.Unlock()
-	out := ids[:0]
-	for _, id := range ids {
-		if !s.historyExists(id) {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
+	sort.Strings(ids)
+	return ids
 }
 
 // WithdrawChild takes back a child whose create request was given up

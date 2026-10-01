@@ -156,7 +156,8 @@ type Options struct {
 	Home string
 	// HoldDir parks the supervisor at a named point while
 	// <HoldDir>/<point> exists, and says so with <point>.at. Points are
-	// "claim" (before claiming a created child), "reap" (before dropping
+	// "claim" (before claiming a created child), "create-prompt" (after
+	// writing its first prompt), "reap" (before dropping
 	// its lease), "archive-end-<id>" (before ending an archived child),
 	// archive-ending/killing/flagging, report-<id>, send-<id>, and close.
 	// Model tests need to act inside these otherwise sub-tick windows.
@@ -216,6 +217,7 @@ type child struct {
 	buffer           []pending
 	dropped          bool // the lease has already been handed back
 	dying            bool // killChild sent SIGKILL; the lease drops at the reap
+	archiveEnded     bool // a saved archive intentionally ended this child's prompt
 	// unread: a prompt was written that the child has not yet reported
 	// taking (no "input"/"steer" since). held: an interrupt that came in
 	// that gap, sent once the child takes the prompt. A SIGINT before
@@ -596,10 +598,19 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 				return "", err
 			}
 			if prompt != "" {
+				var after int64
+				if entries, err := s.Entries(id); err == nil && len(entries) > 0 {
+					after = entries[len(entries)-1].Seq
+				}
 				if err := s.writePrompt(ch, prompt); err != nil {
 					// Answered with the id dropped, this left a live,
 					// claimed session behind a create the page was told
 					// had failed, and Retry made a second one.
+					s.failCreate(ch, path)
+					return "", err
+				}
+				s.hold("create-prompt", ch.done)
+				if err := s.waitCreatePrompt(ch, id, prompt, after, deadline); err != nil {
 					s.failCreate(ch, path)
 					return "", err
 				}
@@ -650,6 +661,59 @@ func (s *Supervisor) waitMeta(ch *child, id string, deadline time.Time) {
 			return
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+// waitCreatePrompt keeps a successful create from acknowledging a line
+// that is only in the child's stdin pipe. Close can kill that child
+// immediately after the response, and a page which already landed the
+// session will never retry its create. A recorded rejection also settles
+// the prompt; slash and bang commands need not write an input at all.
+func (s *Supervisor) waitCreatePrompt(ch *child, id, prompt string, after int64, deadline time.Time) error {
+	want := strings.TrimSpace(prompt)
+	if want == "" || strings.HasPrefix(prompt, "/") || strings.HasPrefix(prompt, "!") {
+		return nil
+	}
+	for {
+		if entries, err := s.Entries(id); err == nil {
+			otherInput := false
+			for _, e := range entries {
+				switch e.Kind {
+				case "input":
+					if e.Seq > after && strings.TrimSpace(inputText(e.Data)) == want {
+						return nil
+					}
+					otherInput = true
+				case "done", "cancelled":
+					// A refusal before any input is still a result. An
+					// unrelated input's completion cannot acknowledge ours.
+					if e.Seq > after && !otherInput {
+						return nil
+					}
+				}
+			}
+		}
+		// An archive intentionally ends even an unread prompt and keeps
+		// its history. Observe its intent with the exit: a later unarchive
+		// must not turn this cancellation into failed-create cleanup.
+		s.mu.Lock()
+		archived, exited := ch.archiveEnded, false
+		select {
+		case <-ch.done:
+			exited = true
+		default:
+		}
+		s.mu.Unlock()
+		if archived {
+			return nil
+		}
+		if exited {
+			return fmt.Errorf("serve: supervisor: session exited before recording the first prompt")
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("serve: supervisor: first prompt was not recorded in %s", createTimeout)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -2212,6 +2276,10 @@ func (s *Supervisor) SetArchived(id string, archived bool) error {
 	err := s.saveMetaLocked()
 	if err != nil {
 		s.restoreMetaLocked(id, old, had)
+	} else if archived {
+		if ch := s.kids[id]; ch != nil {
+			ch.archiveEnded = true
+		}
 	}
 	s.mu.Unlock()
 	if err != nil || !archived {
