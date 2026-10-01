@@ -206,16 +206,40 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache: true
-          cache-dependency-path: go/go.sum
+          # Ordinary build jobs can save this key before the MBT-only
+          # modules are fetched. Keep a separate, complete model cache.
+          cache-dependency-path: |
+            go/go.sum
+            scripts/model-test.sh
+      - name: Populate the complete Go module cache
+        run: go mod download
+        working-directory: go
+      # Cache archives only: fizz.sh still verifies their pinned SHA256
+      # before extracting executables on each runner.
+      - name: Cache FizzBee release archives
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bough-fizz/*/dl
+          key: fizz-archives-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fizz.sh') }}
       # The runner's default node cannot strip TS types; the path
       # generator's tests run on node directly.
       - uses: actions/setup-node@v4
+        if: matrix.part == 'check' || startsWith(matrix.part, 'walks')
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: go/tests/web/package-lock.json
       - run: npm ci
+        if: matrix.part == 'check' || startsWith(matrix.part, 'walks')
         working-directory: go/tests/web
+      # Share the UI suite's browser cache. install --with-deps remains
+      # unconditional for walks: a browser cache cannot restore apt deps.
+      - name: Cache Playwright browsers
+        if: startsWith(matrix.part, 'walks')
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('go/tests/web/package-lock.json') }}
       - if: startsWith(matrix.part, 'walks')
         run: npx playwright install --with-deps --only-shell chromium
         working-directory: go/tests/web
@@ -239,7 +263,21 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache: true
-          cache-dependency-path: go/go.sum
+          # Ordinary build jobs can save this key before the MBT-only
+          # modules are fetched. Keep a separate, complete model cache.
+          cache-dependency-path: |
+            go/go.sum
+            scripts/model-test.sh
+      - name: Populate the complete Go module cache
+        run: go mod download
+        working-directory: go
+      # Cache archives only: fizz.sh still verifies their pinned SHA256
+      # before extracting executables on each runner.
+      - name: Cache FizzBee release archives
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bough-fizz/*/dl
+          key: fizz-archives-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fizz.sh') }}
       - uses: actions/download-artifact@v4
         with:
           path: model-traces
