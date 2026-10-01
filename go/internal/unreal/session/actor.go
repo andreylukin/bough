@@ -276,6 +276,13 @@ func (a *actorState) item(it sessionstore.Item) {
 		return
 	case sessionstore.ItemToolCallStatus:
 		st, _ := it.Data.(sessionstore.ToolCallStatus)
+		// Esc can precede the first status that reveals a call's operation
+		// IDs. Keep following its cancellation after the bounded wait too.
+		if c := a.m.Outstanding[st.CallID]; c != nil && a.cancelled[st.CallID] {
+			for _, op := range c.Ops {
+				go func() { _ = a.r.ops.Cancel(op, "cancelled by the user") }()
+			}
+		}
 		a.flushProgress(st.CallID)
 		for _, o := range a.proj.Item(it) {
 			a.emit(o)

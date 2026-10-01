@@ -33,13 +33,14 @@ import (
 // one session shares.
 type Manager struct {
 	ctx   context.Context
-	inner *operation.LocalOperationManager
+	inner operation.Manager
 	tap   func(operation.Operation)
 
 	mu      sync.Mutex
 	latest  map[operation.ID]operation.Operation
-	updated map[operation.ID]bool // latest came from an update, not only the Add
-	queue   []operation.ID        // first-enqueue order
+	updated map[operation.ID]bool   // latest came from an update, not only the Add
+	cancels map[operation.ID]string // retained until even a future Add can honor it
+	queue   []operation.ID          // first-enqueue order
 	pending map[operation.ID]operation.Operation
 	version map[operation.ID]int // bumped on every enqueue: feed can tell its head was replaced
 	kick    chan struct{}
@@ -50,13 +51,14 @@ var _ operation.Manager = (*Manager)(nil)
 
 // New wraps inner, which must live on ctx. tap (may be nil) sees every
 // update inner produces, before it is queued.
-func New(ctx context.Context, inner *operation.LocalOperationManager, tap func(operation.Operation)) *Manager {
+func New(ctx context.Context, inner operation.Manager, tap func(operation.Operation)) *Manager {
 	m := &Manager{
 		ctx:     ctx,
 		inner:   inner,
 		tap:     tap,
 		latest:  map[operation.ID]operation.Operation{},
 		updated: map[operation.ID]bool{},
+		cancels: map[operation.ID]string{},
 		pending: map[operation.ID]operation.Operation{},
 		version: map[operation.ID]int{},
 		kick:    make(chan struct{}, 1),
@@ -79,6 +81,14 @@ func (m *Manager) Add(op operation.Operation) error {
 		m.mu.Unlock()
 		return nil
 	}
+	// The coordinator publishes a call's start before registering its
+	// operations. An interrupt in that window must not start new work.
+	if _, canceled := m.cancels[op.ID]; canceled {
+		switch op.Status {
+		case operation.StatusReady, operation.StatusAwaiting:
+			op.Status = operation.StatusCanceling
+		}
+	}
 	m.latest[op.ID] = clone(op)
 	m.mu.Unlock()
 	if err := m.inner.Add(op); err != nil {
@@ -87,10 +97,26 @@ func (m *Manager) Add(op operation.Operation) error {
 		m.mu.Unlock()
 		return err
 	}
+	// Cancel may also race the unlocked inner.Add. The inner manager
+	// silently drops unknown IDs, so repeat the retained intent only
+	// after registration has succeeded. Never hold mu across its calls.
+	m.mu.Lock()
+	reason, canceled := m.cancels[op.ID]
+	m.mu.Unlock()
+	if canceled {
+		return m.inner.Cancel(op.ID, reason)
+	}
 	return nil
 }
 
 func (m *Manager) Cancel(id operation.ID, reason string) error {
+	m.mu.Lock()
+	if first, known := m.cancels[id]; known {
+		reason = first
+	} else {
+		m.cancels[id] = reason
+	}
+	m.mu.Unlock()
 	return m.inner.Cancel(id, reason)
 }
 
