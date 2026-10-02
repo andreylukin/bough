@@ -48,15 +48,30 @@ type foldRun struct {
 // folds, and a fold that dissolved when its own lead took focus could
 // never be unfolded by keyboard.
 func (m *model) foldable(i int) bool {
+	if !m.stepContent(i) {
+		return false
+	}
 	b := &m.blocks[i]
 	switch b.kind {
 	case "code", "result", "thinking":
 		return b.collapsed && !m.keepRow[b.id]
 	case "call":
-		// An engine call row is a step of its own (call.go). A finished
-		// one is a single line whether or not it has output behind it;
-		// a running one is what the user is watching and never folds.
-		return !b.live && (b.text == "" || b.collapsed) && !m.keepRow[b.id]
+		return (b.text == "" || b.collapsed) && !m.keepRow[b.id]
+	}
+	return true
+}
+
+// stepContent ignores row expansion and hand-closing. Those are display
+// choices, not a boundary of the running turn: opening its last row must
+// not fold the earlier steps away, nor leave them folded after closing it.
+func (m *model) stepContent(i int) bool {
+	b := &m.blocks[i]
+	switch b.kind {
+	case "code", "result", "thinking":
+		return true
+	case "call":
+		// A live call is what the user is watching and never folds.
+		return !b.live
 	case "assistant":
 		return !b.live && !strings.Contains(b.text, "\n") && m.leadsIntoStep(i)
 	}
@@ -98,7 +113,7 @@ func (m *model) runs() []foldRun {
 	if m.running {
 		last = 0
 		for i := len(m.blocks) - 1; i >= 0; i-- {
-			if !m.foldable(i) {
+			if !m.stepContent(i) {
 				last = i + 1
 				break
 			}

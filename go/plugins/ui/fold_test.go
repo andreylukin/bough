@@ -5,6 +5,7 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -228,5 +229,37 @@ func TestNarrationLedFoldOpens(t *testing.T) {
 		if p := d.plain(); !strings.Contains(p, "▾ 2 steps") {
 			t.Errorf("%s: the narration-led fold did not open:\n%s", how, p)
 		}
+	}
+}
+
+// A running tail stays as rows while a reader opens and closes one of
+// them. Display state is not a turn boundary for the preceding steps.
+func TestRunningTurnTailToggleKeepsEarlierRows(t *testing.T) {
+	t.Parallel()
+	for _, width := range []int{20, 80} {
+		t.Run(fmt.Sprintf("%dcols", width), func(t *testing.T) {
+			t.Parallel()
+			d := newDrv(t, width, 24, cfgWith(t, nil, nil, nil))
+			d.m.running = true
+			for _, command := range []string{"first", "second", "third"} {
+				d.event("code", `tools.bash("echo `+command+`")`)
+			}
+			d.m.focusID = d.m.blocks[2].id
+			d.m.refresh()
+			before := strings.Join(d.m.lines, "\n")
+			for press := 1; press <= 2; press++ {
+				d.feed(keyEnter())
+				if runs := d.m.foldRuns(); len(runs) != 0 {
+					t.Fatalf("toggle %d folded earlier steps of the running turn: %+v\n%s", press, runs, d.plain())
+				}
+			}
+			if after := strings.Join(d.m.lines, "\n"); after != before {
+				t.Fatalf("toggle twice changed the transcript:\n--- before\n%s\n--- after\n%s", stripANSI(before), stripANSI(after))
+			}
+			d.event("done", "")
+			if runs := d.m.foldRuns(); len(runs) != 1 || runs[0].from != 0 || runs[0].to != 2 {
+				t.Fatalf("finished steps should fold without swallowing the hand-closed third row: %+v\n%s", runs, d.plain())
+			}
+		})
 	}
 }
