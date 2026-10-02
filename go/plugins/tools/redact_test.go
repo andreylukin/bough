@@ -31,7 +31,7 @@ func TestBashRedactsOrbSecrets(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "sk-live-0") || !strings.Contains(err.Error(), "[redacted:API_KEY]") {
 		t.Fatalf("failed bash error = %v", err)
 	}
-	b, err := s.jobs.start("for c in sk- live -012 3456 789; do printf %s $c; sleep 0.05; done; echo", 60e9, "")
+	b, err := s.jobs.start("for c in sk- live -012 3456 789; do printf %s $c; sleep 0.05; done; echo", 60e9, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -221,7 +221,7 @@ func (s *Stats) nativeBash(ctx context.Context, c agenttools.Call) (agenttools.R
 		if limit == 0 {
 			limit = defaultJobLimit
 		}
-		b, err := s.jobs.start(a.Command, limit, a.Until)
+		b, err := s.jobs.start(a.Command, limit, a.Until, false)
 		if err != nil {
 			return fail(err.Error())
 		}
