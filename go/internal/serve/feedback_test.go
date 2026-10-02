@@ -235,7 +235,10 @@ func TestFeedbackCommandProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	arg := `$(touch should-not-exist); --repo other/repo`
 	out, err := feedbackExec(context.Background(), bin, dir, "-test.run=^TestFeedbackCommandProcess$", "--", arg, "feedback-process-helper")
 	if err != nil {
@@ -250,7 +253,7 @@ func TestFeedbackCommandProcess(t *testing.T) {
 	if canonicalGot != canonicalDir || got["arg"] != arg || got["host"] != "github.com" || got["prompt"] != "1" {
 		t.Fatalf("process: %v", got)
 	}
-	if strings.Contains(string(out), "private") {
+	if strings.Contains(string(out), "private failure text") {
 		t.Fatal("stderr leaked")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
