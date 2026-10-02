@@ -46,6 +46,13 @@ func inputGarbageRun(t *testing.T, gap time.Duration, extra string) {
 	a.key(uv.KeyEnter, 0)
 	time.Sleep(300 * time.Millisecond)
 	a.typeText("draftxyz")
+	// SendText reaches the PTY through the emulator's copy goroutine;
+	// WriteInput below bypasses it. Its first ESC can overtake the draft,
+	// turning the draft's d into Alt+d and the mouse tail into plain text.
+	// Observe the draft before switching writers, not just SendText's return.
+	a.waitUntil(func(string) bool {
+		return strings.Contains(a.keymapComposer(), "draftxyz")
+	}, "the draft before raw mouse input")
 	inputGarbageRaw(a, inputGarbageBurst(20)+extra, gap)
 	hurry(t, a.home) // the burst went in mid-stream: the rest of the 3000 words need not trickle
 	if !a.waitDone(1, 60*time.Second) {

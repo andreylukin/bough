@@ -105,6 +105,23 @@ func markdownWants(t *testing.T, a *app, want ...string) {
 	}
 }
 
+// Durable history can finish before the first busy frame is painted.
+// Seeing no spinner is only completion once the reply itself is visible.
+func markdownWaitForRenderedReply(t *testing.T, a *app, want ...string) {
+	t.Helper()
+	a.waitUntil(func(s string) bool {
+		if strings.ContainsAny(s, spinnerFrames) {
+			return false
+		}
+		for _, w := range want {
+			if !strings.Contains(s, w) {
+				return false
+			}
+		}
+		return true
+	}, "the rendered markdown reply and idle status bar")
+}
+
 // markdownNoRaw asserts nothing that should have been consumed by the
 // renderer or the emulator is showing as text: escape introducers, SGR
 // or OSC 8 remnants, fence markers, raw markdown punctuation.
@@ -263,6 +280,7 @@ func TestMarkdownForeignFences(t *testing.T) {
 		"Either prints the same thing."
 	markdownEachSize(t, func(t *testing.T, cols int) {
 		a := markdownRun(t, cols, "how do I print it?", reply)
+		markdownWaitForRenderedReply(t, a, "hello from python", "ls -la /tmp/demo", "Either prints the same thing.")
 		markdownWants(t, a, "hello from python", "ls -la /tmp/demo", "Either prints the same thing.")
 		if strings.Contains(a.text(), "Ran ") {
 			t.Errorf("a non-js fence was executed:\n%s", a.text())
