@@ -3,6 +3,7 @@ package serve
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -164,6 +165,17 @@ func TestCreateArchiveSettlesUnreadPrompt(t *testing.T) {
 		_, err := f.sup.Create(CreateOptions{ID: id, Cwd: f.home, Prompt: "first prompt"})
 		answer <- err
 	}()
+	// unread only acknowledges the pipe write: Create can claim the
+	// empty file before the child writes meta. Establish the history
+	// this test promises to preserve before archive kills its writer.
+	waitFor(t, "the child's pre-input gate", func() bool {
+		_, err := os.Stat(hold + ".at")
+		return err == nil
+	})
+	before, err := f.sup.Entries(id)
+	if err != nil || len(before) != 1 || before[0].Kind != "meta" {
+		t.Fatalf("history before archive = %v %v, want the initial meta", before, err)
+	}
 	waitFor(t, "the unread first prompt", func() bool {
 		f.sup.mu.Lock()
 		defer f.sup.mu.Unlock()
@@ -189,6 +201,9 @@ func TestCreateArchiveSettlesUnreadPrompt(t *testing.T) {
 	entries, err := f.sup.Entries(id)
 	if err != nil || len(entries) == 0 {
 		t.Fatalf("archive lost the session history: %v %v", entries, err)
+	}
+	if !reflect.DeepEqual(entries, before) {
+		t.Fatalf("archive changed the session history: before %v, after %v", before, entries)
 	}
 	for _, e := range entries {
 		if e.Kind == "input" {
