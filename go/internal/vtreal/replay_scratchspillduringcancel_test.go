@@ -4,8 +4,9 @@ package vtreal
 // esc lands while the next reply streams. The spill file must be
 // complete and closed (its size is the whole result), the history
 // result must end with the digest naming it, the transcript must show
-// that digest, no half-streamed fence may be left behind, and a resume
-// from the same log must name the same file.
+// that digest, no half-streamed fence may remain on screen or execute,
+// and a resume from the same log must name the same file. History keeps
+// the exact streamed prefix with partial:true, including incomplete fences.
 
 import (
 	"encoding/json"
@@ -24,6 +25,10 @@ import (
 // scratchSpillDuringCancelDigest matches the loop's digest line.
 var scratchSpillDuringCancelDigest = regexp.MustCompile(`\[full output saved to (\S+) — (\d+) lines; use tools\.view or grep it\]`)
 
+func scratchSpillDuringCancelReply() string {
+	return "SPILLSTART\n```js\n// " + strings.Repeat("filler ", 300) + "\nSPILLEND\n```"
+}
+
 // scratchSpillDuringCancelTape: one block whose result is 105 kB, then
 // a long reply that opens a js fence, so the cancel lands mid-fence.
 func scratchSpillDuringCancelTape(t *testing.T) (tape, big string) {
@@ -34,7 +39,7 @@ func scratchSpillDuringCancelTape(t *testing.T) (tape, big string) {
 	}
 	big = sb.String()
 	code := "console.log(tools.bash(\"cat big.log\"))\n"
-	long := "SPILLSTART\n```js\n// " + strings.Repeat("filler ", 300) + "\nSPILLEND\n```"
+	long := scratchSpillDuringCancelReply()
 	entries := []map[string]any{
 		{"kind": "meta", "data": map[string]any{"cwd": "/tmp/demo"}},
 		{"kind": "input", "data": map[string]any{"text": "dump the log"}},
@@ -149,10 +154,41 @@ func TestScratchSpillDuringCancel(t *testing.T) {
 	if n := len(scratchSpillDuringCancelEntries(log, "cancelled")); n != 1 {
 		t.Errorf("want one cancelled entry in history, got %d", n)
 	}
-	for _, s := range scratchSpillDuringCancelEntries(log, "assistant") {
-		if strings.Count(s, "```")%2 != 0 {
-			t.Errorf("history kept a partial fence: %q", s[:min(len(s), 120)])
+	a.waitUntil(func(string) bool {
+		return len(scratchSpillDuringCancelEntries(log, "done")) == 1
+	}, "the cancelled turn's done entry")
+	// Since Esc preserves streamed answers, an incomplete fence belongs
+	// in raw history. It must be marked partial, never balanced with
+	// invented text or executed as a second code block.
+	entries, err := history.Read(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partials, code := 0, 0
+	for i, e := range entries {
+		if e.Kind == "code" {
+			code++
 		}
+		if e.Kind != "assistant" {
+			continue
+		}
+		text, _ := e.Data["text"].(string)
+		if e.Data["partial"] != true {
+			if strings.Count(text, "```")%2 != 0 {
+				t.Errorf("complete assistant history kept a partial fence: %q", text)
+			}
+			continue
+		}
+		partials++
+		if !strings.HasPrefix(text, "SPILLSTART") || !strings.HasPrefix(scratchSpillDuringCancelReply(), text) || strings.Contains(text, "SPILLEND") {
+			t.Errorf("cancelled history is not the exact streamed prefix: %q", text)
+		}
+		if i+2 >= len(entries) || entries[i+1].Kind != "cancelled" || entries[i+2].Kind != "done" {
+			t.Errorf("partial answer not followed by cancelled and done: %v", entries[i:])
+		}
+	}
+	if partials != 1 || code != 1 {
+		t.Errorf("want one partial answer and only the original spill-producing code, got %d partials and %d code entries", partials, code)
 	}
 	a.scratchSpillDuringCancelFindDigest(spills[0])
 	a.check("digest shown")

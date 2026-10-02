@@ -108,6 +108,8 @@ func TestCwdDeletedUnderSession(t *testing.T) {
 		if !a.waitDone(2, 30*time.Second) {
 			t.Fatalf("turn with a deleted cwd hung:\n%s", a.text())
 		}
+		// The history's done precedes the queued tool-error repaint.
+		a.waitFor("getcwd")
 		s := a.settled()
 		t.Logf("screen after pwd in a deleted cwd:\n%s", s)
 		if !cwdDeletedUnderSessionError(s) {

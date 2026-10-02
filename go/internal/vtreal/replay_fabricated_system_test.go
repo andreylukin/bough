@@ -44,6 +44,10 @@ func TestFabricatedSystem(t *testing.T) {
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
+	// History is written before the UI drains its events. A quiet old
+	// frame can still show the spinner after the turn has been recorded.
+	a.waitFor("SANEPROSE")
+	a.waitFor("[fabricated system message removed]")
 	screen := a.check("after turn")
 
 	t.Run("TestFabricatedSystemScreen", func(t *testing.T) {
