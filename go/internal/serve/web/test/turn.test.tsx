@@ -177,9 +177,9 @@ test("a failed retry says Failed; a retry that recovered says Done", () => {
     { seq: 2, at: at(1), kind: "error", text: "429" },
     { seq: 3, at: at(2), kind: "system", text: "provider hiccup — retrying in 2s, attempt 2 of 3" }];
   const failed = [...base, { seq: 4, at: at(3), kind: "error", text: "429" }, { seq: 5, at: at(4), kind: "done", text: "", data: {} }];
-  expect(renderToStaticMarkup(<TurnView turn={groupTurns(failed)[0]} />)).not.toContain(">Done<");
+  expect(renderToStaticMarkup(<TurnView turn={groupTurns(failed)[0]} />)).not.toContain(">Completed<");
   const ok = [...base, { seq: 4, at: at(3), kind: "assistant", text: "Fixed." }, { seq: 5, at: at(4), kind: "done", text: "", data: {} }];
-  expect(renderToStaticMarkup(<TurnView turn={groupTurns(ok)[0]} />)).toContain(">Done<");
+  expect(renderToStaticMarkup(<TurnView turn={groupTurns(ok)[0]} />)).toContain(">Completed<");
 });
 
 test("an agent wake-up says a background agent finished, never 0 jobs", () => {
@@ -329,7 +329,7 @@ test("a turn that ended on an error states Failed once, in the error", () => {
 });
 
 // R4-B: the footer names the command that failed, not the file the program edited first.
-test("a failed chained command names its failing sub-command in the footer", () => {
+test("a completed turn keeps its failing sub-command in the issue disclosure", () => {
   const prog = 'console.log(tools.write("src/greet.go", "package main\\n"))\nconsole.log(tools.bash("gofmt -w src/greet.go && go test ./..."))';
   const out = "wrote src/greet.go (13 bytes, 1 lines)\n+package main\npattern ./...: directory prefix . does not contain main module";
   const lines: Line[] = [
@@ -339,7 +339,9 @@ test("a failed chained command names its failing sub-command in the footer", () 
     { seq: 4, at: at(3), kind: "done", text: "", data: { exit: 1, files: ["src/greet.go"] } },
   ];
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
-  expect(html).toContain("go test failed · exit 1");
+  expect(html).toContain("1 command failed");
+  expect(html).toContain(">go test</button>");
+  expect(html).toContain(">exit 1</span>");
   expect(html).not.toContain("src/greet.go failed");
 });
 
@@ -360,7 +362,7 @@ test("a failed card with a rendered diff does not repeat the -/+ lines as text",
   expect(diag).not.toContain("+\tfmt.Println");
 });
 
-test("a done session whose last turn failed says Failed in the header, not a checked Done", async () => {
+test("a command exit does not override a completed session in the header", async () => {
   const { Thread } = await import("../src/app");
   const props = { onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {},
     onModel: () => {}, onEffort: () => {}, onAssign: () => {}, onBack: () => {}, onContext: () => {}, onAck: () => {}, projects: [], busy: false, jump: null } as const;
@@ -368,8 +370,11 @@ test("a done session whose last turn failed says Failed in the header, not a che
   const html = renderToStaticMarkup(<Thread {...props} row={{ id: "s1", cwd: "/tmp/x", status: "done" } as never} lines={[
     { seq: 1, at: at(0), kind: "input", text: "fix" }, { seq: 2, at: at(1), kind: "code", text: prog },
     { seq: 3, at: at(2), kind: "result", text: "FAIL\tpkg", data: { code: prog, exit: 1 } }, { seq: 4, at: at(3), kind: "done", text: "", data: { exit: 1 } }] as never} />);
-  expect(html).toContain('class="status head-failed"');
-  expect(html).toContain("go test failed · exit 1");
+  expect(html).not.toContain('class="status head-failed"');
+  expect(html).toContain(">Completed<");
+  expect(html).toContain("1 command failed");
+  expect(html).toContain(">go test</button>");
+  expect(html).toContain(">exit 1</span>");
 });
 
 // R4-C: the cut is marked where the prose stops, not only in the footer.

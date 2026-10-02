@@ -148,12 +148,15 @@ test("ER: a wake turn opens on a quiet line, holding the call that finished, not
   expect(renderToStaticMarkup(<TurnView turn={later[0]} />)).not.toContain("still running");
 });
 
-test("ER: a turn that ended on a failed native call opens it and names it in the footer", () => {
+test("ER: a completed turn keeps a failed native call open and in its issue disclosure", () => {
   const lines: Line[] = [input, view, patch, test1, { seq: 5, at: at(10), kind: "assistant", text: "The test still fails." },
     { seq: 6, at: at(11), kind: "done", text: "", data: { files: ["a.go"] } }];
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
   expect(html).toMatch(new RegExp(`<details class="block thin toolcall call-native block-failed" data-seq="${test1.seq}" open`));
-  expect(html).toContain("TestA failed · exit 1");
+  expect(html).toContain("1 command failed");
+  expect(html).toContain(">go test ./...</button>");
+  expect(html).toContain(">exit 1</span>");
+  expect(html).toContain("--- FAIL: TestA");
   // The footer names the model from the reply's provenance when the done does not.
   const said = [input, { seq: 2, at: at(1), kind: "assistant", text: "Done.", data: { model: "anthropic/claude-opus-5-5", provider: "llm-anthropic" } }, { seq: 3, at: at(2), kind: "done", text: "" }];
   expect(renderToStaticMarkup(<TurnView turn={groupTurns(said)[0]} />)).toContain('title="anthropic/claude-opus-5-5">claude-opus-5-5</span>');

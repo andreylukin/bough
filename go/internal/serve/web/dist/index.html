@@ -3059,6 +3059,27 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .err-card .err-actions{display:flex;justify-content:flex-start;gap:var(--s-2);margin-top:4px}
 .err-card .err-actions .btn{height:var(--ctl);min-height:0;padding:0 12px;gap:6px}
 @media (max-width:720px),(pointer:coarse){.err.err-card{padding:12px}.err-card .err-actions .btn{height:44px;flex:1 1 0}}
+/* Hook failures name their own source; call failures remain a quiet turn ledger. */
+.hook-error{margin-block:12px}
+.hook-error .hook-error-name{margin:0;font-size:var(--fs-sm);color:var(--text-2);overflow-wrap:anywhere}
+.hook-error .err-head{white-space:normal;overflow-wrap:anywhere}
+.hook-error-details .hk-inspect{margin-top:12px}
+.hook-error-details .hk-inspect pre{max-height:240px}
+.turn-issues{min-width:0;max-width:100%;font:var(--fs-sm)/20px var(--sans);color:var(--text-2)}
+.turn-issues>summary{display:flex;align-items:center;gap:6px;min-height:32px;cursor:pointer;list-style:none;border-radius:var(--r-sm)}
+.turn-issues>summary::-webkit-details-marker{display:none}
+.turn-issues>summary::after{content:"▾";color:var(--text-3)}
+.turn-issues[open]>summary::after{content:"▴"}
+.turn-issues>summary:hover{color:var(--text-1)}
+.turn-issues-body{margin-block:4px 8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);max-width:min(600px,100%)}
+.turn-issues-body p{margin:0;color:var(--text-2)}
+.turn-issues-body ul{margin:4px 0 0;padding:0;list-style:none}
+.turn-issues-body li{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.turn-issues-body .link{min-width:0;min-height:32px;text-align:start;overflow-wrap:anywhere;color:var(--text-2);text-decoration:underline}
+.turn-issues-body .num{white-space:nowrap;color:var(--text-3)}
+@media (max-width:720px),(pointer:coarse){
+  .turn-issues>summary,.turn-issues-body .link,.hook-error-details>summary{min-height:44px;height:auto}
+}
 /* toast: raised, hairline in the shadow, glyph + title + human sentence, text Retry and × */
 .toast{position:fixed;left:auto;top:auto;right:16px;bottom:calc(var(--composer-h,16px) + 16px);width:360px;max-width:calc(100vw - 32px);
   display:grid;grid-template-columns:16px 1fr auto;column-gap:8px;align-items:start;padding:12px;background:var(--raised);border:0;
