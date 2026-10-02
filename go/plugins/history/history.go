@@ -458,6 +458,17 @@ var (
 )
 
 func List(dir string) ([]SessionInfo, error) {
+	return ListWithRead(dir, nil)
+}
+
+// ListWithRead is List with an observer for transcripts it decodes on
+// metadata cache misses. A caller deriving other small summaries can use
+// the same parse without retaining whole transcripts. Cached files and
+// failed reads do not call observe; the observer must not mutate entries.
+// Calls are synchronous and receive file-derived metadata before project
+// CWD resolution. A concurrent List or Lookup may already have warmed a
+// file, so the observer is not a complete per-session stream.
+func ListWithRead(dir string, observe func(SessionInfo, []Entry)) ([]SessionInfo, error) {
 	// Not filepath.Glob: it ignores I/O errors, so a sessions dir that
 	// could not be read listed as no sessions at all, an empty 200.
 	ents, err := os.ReadDir(dir)
@@ -481,7 +492,7 @@ func List(dir string) ([]SessionInfo, error) {
 			fmt.Fprintf(os.Stderr, "bough: history: skipping %s: %v\n", p, err)
 			continue
 		}
-		info, err := listedInfo(p, st, home)
+		info, err := listedInfo(p, st, home, observe)
 		if err == nil {
 			infos = append(infos, info)
 		}
@@ -511,7 +522,7 @@ func Lookup(dir, id string) (SessionInfo, bool, error) {
 		return SessionInfo{}, false, fmt.Errorf("history: lookup %s: %w", p, err)
 	}
 	home, _ := os.UserHomeDir()
-	info, err := listedInfo(p, st, home)
+	info, err := listedInfo(p, st, home, nil)
 	if errors.Is(err, fs.ErrNotExist) {
 		return SessionInfo{}, false, nil
 	}
@@ -522,7 +533,7 @@ func Lookup(dir, id string) (SessionInfo, bool, error) {
 	return info, true, nil
 }
 
-func listedInfo(p string, st fs.FileInfo, home string) (SessionInfo, error) {
+func listedInfo(p string, st fs.FileInfo, home string, observe func(SessionInfo, []Entry)) (SessionInfo, error) {
 	// Every serve request lists; re-reading a finished transcript
 	// each time made one long session slow every endpoint.
 	listMu.Lock()
@@ -602,6 +613,9 @@ func listedInfo(p string, st fs.FileInfo, home string) (SessionInfo, error) {
 	listMu.Lock()
 	listCache[p] = listed{size: st.Size(), mod: st.ModTime(), info: info}
 	listMu.Unlock()
+	if observe != nil {
+		observe(info, entries)
+	}
 	return info, nil
 }
 
