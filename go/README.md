@@ -107,8 +107,18 @@ session content. After posting, it can open the issue in a browser so
 you can review and attach a screenshot yourself.
 
 In bough web, **Send feedback** opens a report draft for a public GitHub
-issue. You can select and preview a PNG screenshot, copy it, then paste
-it into the GitHub issue. The page does not upload the image or report.
+issue. Select or paste a PNG screenshot, review it, and explicitly consent to
+publish the report and image. **Submit with screenshot** uses `gh issue create
+--attach` on the machine running Bough. It requires a GitHub CLI that supports
+`--attach`, an existing GitHub login, and push access to `andreylukin/bough`.
+Nothing uploads before submission; an uploaded image may remain public even
+if issue creation fails. Bough checks CLI support, authentication, and repository
+access first, keeps temporary files private, and removes them after the attempt.
+If a submission cannot be confirmed, check GitHub before trying again to avoid
+a duplicate. No text-only issue is substituted when screenshot submission fails.
+
+Without that access, use **Copy screenshot** or **Download screenshot**, then
+**Open GitHub issue** and attach the image there before submitting the draft.
 
 Flags take `--long` or `-long`; `-c`/`--continue` and `-r`/`--resume`
 are the short pairs. Config comes from `./bough.yml`, else

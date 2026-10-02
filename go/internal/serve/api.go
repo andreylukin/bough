@@ -30,6 +30,10 @@ import (
 type API struct {
 	sup *Supervisor
 	mux *http.ServeMux
+
+	// Only one image submission runs at once, bounding decode memory and gh work.
+	feedbackGH   feedbackCommand
+	feedbackBusy atomic.Bool
 	// home is where the skill pools are looked up. A field rather than
 	// a call to os.UserHomeDir() inside the handler, so a test lists a
 	// seeded pool instead of whatever the developer happens to have.
@@ -219,6 +223,7 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/sessions/{id}/ack", a.ack)
 	a.mux.HandleFunc("POST /api/sessions/{id}/model", a.setModel)
 	a.mux.HandleFunc("POST /api/sessions/{id}/effort", a.setEffort)
+	a.mux.HandleFunc("POST /api/feedback", a.feedback)
 	a.mux.HandleFunc("POST /api/attachments", a.upload)
 	a.mux.HandleFunc("GET /api/attachments", a.attachment)
 	a.mux.HandleFunc("POST /api/sessions/{id}/files", a.uploadFile)
