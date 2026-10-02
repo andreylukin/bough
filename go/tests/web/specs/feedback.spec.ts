@@ -222,3 +222,100 @@ test('late clipboard writes cannot mark a replaced, removed or reopened screensh
   await expect(dialog.getByLabel('Issue title')).toHaveValue('');
   await expect(dialog.getByLabel('What happened')).toHaveValue('');
 });
+
+test('explicit screenshot submission sends the reviewed PNG and opens the created issue', async ({ sharedServe, page }) => {
+  await page.goto(sharedServe.url);
+  let submissions = 0;
+  await page.route('**/api/feedback', async (route) => {
+    submissions++;
+    const request = route.request();
+    expect(request.method()).toBe('POST');
+    expect(request.headers()['content-type']).toContain('multipart/form-data; boundary=');
+    const payload = request.postDataBuffer()!;
+    expect(payload.includes(Buffer.from(PNG, 'base64'))).toBe(true);
+    expect(payload.toString()).toContain('Public synthetic report');
+    expect(payload.toString()).toContain('Reviewed details');
+    expect(payload.toString()).toContain('name="share"\r\n\r\npublic');
+    expect(payload.toString()).not.toContain('blob:');
+    await route.fulfill({ status: 201, json: { url: 'https://github.com/andreylukin/bough/issues/123', retryable: false } });
+  });
+  await page.locator('.side-feedback').click();
+  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  await dialog.getByLabel('Issue title').fill('Public synthetic report');
+  await dialog.getByLabel('What happened').fill('Reviewed details');
+  await pasteScreenshot(dialog);
+  await expect(copy(dialog)).toBeEnabled();
+  const submit = dialog.getByRole('button', { name: 'Submit with screenshot' });
+  await expect(submit).toBeDisabled();
+  expect(submissions).toBe(0);
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByLabel('What happened').fill('Reviewed details updated');
+  await expect(dialog.getByRole('checkbox')).not.toBeChecked();
+  await expect(submit).toBeDisabled();
+  await dialog.getByRole('checkbox').check();
+  await submit.click();
+  await expect(dialog.getByRole('status')).toContainText('Issue created with screenshot');
+  await expect(dialog.getByRole('link', { name: 'View GitHub issue' })).toHaveAttribute('href', 'https://github.com/andreylukin/bough/issues/123');
+  await expect(submit).toHaveCount(0);
+  await expect(dialog.getByRole('link', { name: 'Open GitHub issue' })).toHaveCount(0);
+  expect(submissions).toBe(1);
+  await expect(preview(dialog)).toBeVisible();
+});
+
+test('unavailable gh preserves the screenshot; an uncertain submission cannot be retried', async ({ sharedServe, page }) => {
+  await page.goto(sharedServe.url);
+  let submissions = 0;
+  await page.route('**/api/feedback', async (route) => {
+    submissions++;
+    if (submissions === 1) await route.fulfill({ status: 503, json: { error: 'Update GitHub CLI to support --attach.', retryable: true } });
+    else await route.abort();
+  });
+  await page.locator('.side-feedback').click();
+  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  await dialog.getByLabel('Issue title').fill('Synthetic submission failure');
+  await dialog.getByLabel('What happened').fill('Keep the reviewed image');
+  await pasteScreenshot(dialog);
+  await expect(copy(dialog)).toBeEnabled();
+  await dialog.getByRole('checkbox').check();
+  const submit = dialog.getByRole('button', { name: 'Submit with screenshot' });
+  await submit.click();
+  await expect(dialog.getByRole('alert')).toContainText('Update GitHub CLI');
+  await expect(submit).toBeEnabled();
+  await expect(preview(dialog)).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Download screenshot' })).toBeVisible();
+  await submit.click();
+  await expect(dialog.getByRole('alert')).toContainText('Check andreylukin/bough issues before submitting again');
+  await expect(submit).toHaveCount(0);
+  await expect(dialog.getByRole('link', { name: 'Open GitHub issue' })).toHaveCount(0);
+  await expect(preview(dialog)).toBeVisible();
+  expect(submissions).toBe(2);
+});
+
+test('pending submission locks the reviewed report and prevents duplicate submits', async ({ sharedServe, page }) => {
+  await page.goto(sharedServe.url);
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  let submissions = 0;
+  await page.route('**/api/feedback', async (route) => {
+    submissions++;
+    await pending;
+    await route.fulfill({ status: 201, json: { url: 'https://github.com/andreylukin/bough/issues/123' } });
+  });
+  await page.locator('.side-feedback').click();
+  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  await dialog.getByLabel('Issue title').fill('One synthetic submission');
+  await dialog.getByLabel('What happened').fill('Keep this exact report');
+  await pasteScreenshot(dialog);
+  await expect(copy(dialog)).toBeEnabled();
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Submit with screenshot' }).click();
+  await expect(dialog.getByRole('button', { name: 'Submitting…' })).toBeDisabled();
+  await expect(dialog.getByLabel('Issue title')).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Remove screenshot' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  expect(submissions).toBe(1);
+  finish();
+  await expect(dialog.getByRole('status')).toContainText('Issue created with screenshot');
+});
