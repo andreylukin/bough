@@ -110,7 +110,7 @@ const edits: Line[] = [
 test("a mixed fold is named by its edits, never by its first command", () => {
   const html = renderToStaticMarkup(<ToolRun lines={edits} codes={[]} />);
   expect(html).not.toContain("Tool group");
-  expect(html).toContain("Edited math.ts, index.ts");
+  expect(html).toContain("Includes: edited math.ts, index.ts");
   expect(html).toContain("+3</span>");
   expect(html).toContain("−1</span>");
   expect(html).toContain("read 1 file · ran 2 commands");
@@ -299,7 +299,7 @@ test("a group counts no failed edit, times under a second as <1s, and keeps its 
   expect(summary).toContain("&lt;1s");
   expect(summary).not.toContain(" 0s");
   expect(summary).not.toContain("<button");
-  expect(html).toContain("1 failed");
+  expect(html).toContain("1 code block failed");
 });
 
 test("a group's and a turn's edit counts come from the checkpoint diff when given", async () => {

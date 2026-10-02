@@ -858,17 +858,19 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
 
 /** "ran 2 commands · read 1 file · edited 2 files": an engine segment's calls, counted by what they did. */
 export function nativeWhat(lines: Line[]): string {
-  const n = { bash: 0, view: 0, edit: 0, job: 0 };
+  const n = { bash: 0, view: 0, edit: 0, other: 0 };
   for (const l of lines) {
     if (!isNativeCall(l) || callRunning(l)) continue;
     const tool = String(l.data?.tool ?? "");
     if (tool === "bash") n.bash++;
     else if (tool === "view") n.view++;
     else if (tool === "patch" || tool === "write") n.edit++;
+    else n.other++;
   }
   const one = (k: number, sing: string, plural: string) => k ? `${k} ${k === 1 ? sing : plural}` : "";
   return [n.bash ? "ran " + one(n.bash, "command", "commands") : "", n.view ? "read " + one(n.view, "file", "files") : "",
-    n.edit ? "edited " + one(n.edit, "file", "files") : ""].filter(Boolean).join(" · ");
+    n.edit ? "edited " + one(n.edit, "file", "files") : "",
+    one(n.other, "other tool call", "other tool calls")].filter(Boolean).join(" · ");
 }
 
 /** "Worked for 12s · 6 actions", "Worked for 12s · ran 2 commands", "Thought for 9s": a finished segment's row. */

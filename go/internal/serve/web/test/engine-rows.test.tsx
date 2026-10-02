@@ -45,11 +45,11 @@ test("ER: splitWork counts each native call as an action and its failure", () =>
 test("ER: the walker renders a run of native calls as rows under one header, named from their records", () => {
   const html = renderToStaticMarkup(<ToolRun lines={[view, patch, test1]} codes={[]} />);
   expect((html.match(/class="block thin toolcall call-native/g) ?? []).length).toBe(3);
-  expect(html).toContain('<span class="block-label">Edited a.go</span>');
+  expect(html).toContain('<span class="block-label">Includes: edited a.go</span>');
   expect(html).toContain('<span class="num rt-add">+2</span>');
   expect(html).toContain("read 1 file · ran 1 command");
-  expect(html).toContain("3 calls · 4s");
-  expect(html).toContain("1 failed");
+  expect(html).toContain("3 tool calls · 4s");
+  expect(html).toContain("1 call failed");
   // Two commands of one kind read as that verb and the first target.
   const two = renderToStaticMarkup(<ToolRun lines={[call(5, 1, "bash", "ls"), call(6, 2, "bash", "pwd")]} codes={[]} />);
   expect(two).toContain('<span class="block-label">Ran</span>');
@@ -241,4 +241,55 @@ test("a turn the step budget stopped reads Stopped, not Done", () => {
   expect(budget.stopped).toBe(true);
   expect(renderToStaticMarkup(<TurnView turn={budget} />)).toContain("turn-stopped");
   expect(failed.stopped).toBeFalsy();
+});
+
+// Synthetic reproduction of #89's visible totals, not the user's transcript.
+test("tool totals include context calls while the work description is explicitly partial", () => {
+  const lines = [call(1, 1, "view", "A.ts"), call(2, 2, "view", "B.ts"),
+    ...Array.from({ length: 18 }, (_, i) => call(i + 3, i + 3, "bash", "grep example", { exit: 1 })),
+    ...Array.from({ length: 124 }, (_, i) => call(i + 21, i + 21, "context_inspect", "Inspect context"))];
+  const before = JSON.stringify(lines);
+  const html = renderToStaticMarkup(<ToolRun lines={lines} codes={[]} />);
+  expect(html).toContain("Includes: read 2 files · ran 18 commands");
+  expect(html).toContain("144 tool calls");
+  expect(html).toContain("18 calls failed");
+  expect(html).toContain("Recorded errors or non-zero exits in this group");
+  expect((html.match(/class="block thin toolcall call-native/g) ?? []).length).toBe(144);
+  const [seg] = splitWork(groupTools(lines.map(line => ({ kind: "line" as const, seq: line.seq, line })), []), [], false);
+  if (seg.kind !== "work") throw new Error("want work");
+  expect(seg.what).toBe("ran 18 commands · read 2 files · 124 other tool calls");
+  expect(seg.actions).toBe(144);
+  expect(seg.failed).toBe(18);
+  expect(JSON.stringify(lines)).toBe(before);
+});
+
+test("unknown native tools retain totals and exclude cancelled or running failures", () => {
+  const lines = [call(1, 1, "context_read", "Read context", { error: "unavailable" }),
+    call(2, 2, "future_tool", "Future tool", { canceled: true, exit: 130, error: "cancelled" }),
+    call(3, 3, "context_search", "Search context", { phase: "start", error: "stale" })];
+  const html = renderToStaticMarkup(<ToolRun lines={lines} codes={[]} live />);
+  expect(html).toContain("3 tool calls");
+  expect(html).toContain("1 call failed");
+  expect(html).not.toContain("3 calls failed");
+  const [seg] = splitWork(groupTools(lines.map(line => ({ kind: "line" as const, seq: line.seq, line })), []), [], true);
+  if (seg.kind !== "work") throw new Error("want work");
+  expect(seg.what).toBe("2 other tool calls");
+});
+
+test("legacy blocks and interleaved native calls name their counting units", () => {
+  const code = 'tools.bash("ls"); tools.bash("pwd")';
+  const block: Line = { seq: 1, at: at(1), kind: "code", text: code };
+  const recorded = { ...call(2, 2, "bash", "ls"), data: { id: 1, tool: "bash" } };
+  const result: Line = { seq: 4, at: at(4), kind: "result", text: "failed", data: { code, exit: 1 } };
+  const second = { ...block, seq: 5 };
+  const legacy = renderToStaticMarkup(<ToolRun lines={[block, recorded, result, second]} codes={[code]} />);
+  expect(legacy).toContain("2 code blocks");
+  expect(legacy).toContain("1 code block failed");
+  const native = call(3, 3, "context_inspect", "Inspect context");
+  const mixed = renderToStaticMarkup(<ToolRun lines={[block, recorded, native, result]} codes={[code]} />);
+  expect(mixed).toContain("2 actions");
+  expect(mixed).toContain("1 action failed");
+  expect((mixed.match(/call-native/g) ?? []).length).toBe(1);
+  const nested = renderToStaticMarkup(<ToolRun lines={[{ ...native, kind: "sub:call" }, { ...call(6, 6, "view", "A.ts"), kind: "sub:call" }]} codes={[]} />);
+  expect(nested).toContain("2 tool calls");
 });
