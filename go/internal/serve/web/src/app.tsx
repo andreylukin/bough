@@ -29,6 +29,7 @@ import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wi
 import { Elapsed, EmptyState, ErrorNote, ErrorToast, InlineFail, Pending, RawDetails, Spinner, StartingStatus, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
 import { FeedbackDialog } from "./feedback";
+import { turnIssues } from "./turn-issues";
 
 export type View = "sessions" | "me" | "projects" | "project" | "hooks" | "wiki";
 
@@ -2468,25 +2469,49 @@ function hookEventLabel(fires: Line[]): string {
   return events.size === 1 && only ? `${only[0].toUpperCase()}${only.slice(1)} hooks` : "Hooks";
 }
 
+/** A hook failure is local to that hook, with its original record one disclosure away. */
+function HookErrorCard({ line, load, save }: { line: Line; load?: Load; save?: Save }) {
+  const d = line.data ?? {};
+  const error = str(d.error).trim();
+  const event = str(d.event);
+  const title = event ? `${capital(event)} hook failed` : "Hook failed";
+  const message = cleanError(error).split(/\r?\n/).find((part) => part.trim()) ?? error;
+  return (
+    <section className="err err-card hook-error" aria-label={title}>
+      <StateIcon kind="alert" />
+      <p className="err-head">{title}</p>
+      {str(d.name) && <p className="hook-error-name mono">{str(d.name)}</p>}
+      <p className="err-msg">{message}</p>
+      <details className="err-raw hook-error-details">
+        <summary>Show details</summary>
+        <pre className="mono" tabIndex={0}>{error}</pre>
+        {str(d.notice) && <p className="hook-why">{str(d.notice)}</p>}
+        <FireInspection fire={d as Partial<Fire>} load={load} save={save} />
+      </details>
+    </section>
+  );
+}
+
 export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; save?: Save }) {
   // A fire that decided nothing, changed nothing and said nothing is not
   // news: the built-in rules hook runs after every result, so every turn
   // carried "1 fired" about a hook that did nothing. Those stay in the
   // Hooks view's ledger, which keeps every invocation.
-  const fires = lines.filter((l) => l.kind === "hook" &&
+  const allFires = lines.filter((l) => l.kind === "hook" &&
     (str(l.data?.decision) || str(l.data?.error) || str(l.data?.notice) || (l.data?.output !== null && l.data?.output !== undefined)));
+  const failures = allFires.filter((l) => str(l.data?.error));
+  const fires = allFires.filter((l) => !str(l.data?.error));
   // A "hook <event>: notice" line a fire already carries is that fire,
   // said twice; one no fire carries is shown once, here.
-  const carried = new Set(fires.map((l) => str(l.data?.notice)).filter(Boolean));
+  const carried = new Set(allFires.map((l) => str(l.data?.notice)).filter(Boolean));
   const loose = lines.filter((l) => l.kind === "system" && !carried.has(l.text.replace(/^hook [^:]*:\s*/, "")));
-  if (!fires.length && !loose.length) return null;
+  if (!allFires.length && !loose.length) return null;
   // What the decisions were ("1 blocked"), not that there were some.
   const outcomes = new Map<string, number>();
   for (const l of fires) {
     const d = str(l.data?.decision);
     if (d) outcomes.set(d, (outcomes.get(d) ?? 0) + 1);
   }
-  const errored = fires.filter((l) => str(l.data?.error)).length;
   const rules = new Set<string>();
   for (const l of fires) {
     const n = str(l.data?.notice);
@@ -2499,12 +2524,13 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
   for (const [d, n] of outcomes) (REFUSED.has(d) ? bad : parts).push(`${n} ${DECIDED[d] ?? d}`);
   if (rules.size) parts.push(`${rules.size} ${rules.size === 1 ? "rule" : "rules"} applied`);
   return (
-    <details className="block thin turn-hooks">
+    <>
+    {failures.map((line) => <HookErrorCard key={line.seq} line={line} load={load} save={save} />)}
+    {(fires.length > 0 || loose.length > 0) && <details className="block thin turn-hooks">
       <summary>
         <span className="block-label">{hookEventLabel(fires)}</span>{" "}
         <span className="block-detail">{parts.join(" · ")}</span>{" "}
         {bad.length > 0 && <span className="num toolrun-failed">{bad.join(" · ")}</span>}
-        {errored > 0 && <span className="num toolrun-failed">{errored} errored</span>}
       </summary>
       <div className="turn-hooks-body">
         {fires.map((l) => {
@@ -2528,6 +2554,44 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
         })}
         {loose.map((l) => <p key={l.seq} className="hook-line hook-why">{l.text}</p>)}
       </div>
+    </details>}
+    </>
+  );
+}
+
+function TurnIssueDetails({ turn }: { turn: Turn }) {
+  const { failures, commands, tools, unknownExit } = turnIssues(turn);
+  const parts = [commands && `${commands} ${commands === 1 ? "command" : "commands"} failed`,
+    tools && `${tools} ${tools === 1 ? "tool" : "tools"} failed`,
+    unknownExit !== undefined && `Exit ${unknownExit} recorded`].filter(Boolean);
+  if (!parts.length) return null;
+  const show = (seq: number, button: HTMLButtonElement) => {
+    // History seqs repeat across sessions: stay inside this rendered turn.
+    const el = button.closest(".turn")?.querySelector<HTMLElement>(`details.block[data-seq="${seq}"]`);
+    if (!el) return;
+    for (let node: HTMLElement | null = el; node; node = node.parentElement?.closest("details") ?? null) {
+      if (node instanceof HTMLDetailsElement) node.open = true;
+    }
+    const head = el.querySelector<HTMLElement>("summary") ?? el;
+    head.scrollIntoView({ block: "nearest" });
+    head.focus({ preventScroll: true });
+  };
+  return (
+    <details className="turn-issues">
+      <summary><WarnMark /><span>{parts.join(" · ")}</span></summary>
+      <div className="turn-issues-body">
+        <p>Recorded during this turn</p>
+        {failures.length > 0 && <ul>{failures.map((line) => {
+          const native = isNativeCall(line);
+          const command = native ? str(line.data?.cmd) || line.text : failNameOf(str(line.data?.code), resultBody(line)) || gistOf(parseCall(str(line.data?.code)).gist);
+          const label = command || (native ? callVerb(str(line.data?.tool)) : "Tool call");
+          return <li key={line.seq}>
+            <button type="button" className="link mono" onClick={(event) => show(line.seq, event.currentTarget)}>{label}</button>
+            {typeof line.data?.exit === "number" && line.data.exit !== 0 && <span className="num">exit {line.data.exit}</span>}
+          </li>;
+        })}</ul>}
+        {unknownExit !== undefined && <p>Exit code {unknownExit} was recorded without a matching command result.</p>}
+      </div>
     </details>
   );
 }
@@ -2538,8 +2602,8 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
  * changed. A bare "Finished" told a programmer none of that. Nothing is
  * estimated — a provider that recorded no usage shows only the outcome.
  */
-function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, extra, edits, acts }: {
-  turn: Turn; /** The turn's checkpoint diff, once read. */ edits?: Change[] | null; /** The result the turn's failure came from, when recorded. */ fail?: Line;
+function TurnFooter({ turn, longest = 0, failedWork = 0, unknownSubs = 0, extra, edits, acts }: {
+  turn: Turn; /** The turn's checkpoint diff, once read. */ edits?: Change[] | null;
   /** The longest recorded run of the turn's jobs and subagents, so wall time never reads shorter than its work. */ longest?: number;
   failedWork?: number; unknownSubs?: number;
   /** The turn's own controls (Expand all), before the usage on the right. */ extra?: React.ReactNode;
@@ -2548,56 +2612,20 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   const done = turn.done!;
   const u = usageOf(done);
   const files = Array.isArray(done.data?.files) ? (done.data!.files as string[]) : [];
-  const exit = typeof done.data?.exit === "number" ? done.data.exit : fail?.data?.exit;
-  const failed = typeof exit === "number" && exit !== 0;
   // A turn whose last word was an error (a 401, a retry that failed again) failed, whatever its exit.
   const errored = turn.body.filter((l) => !["system", "usage", "job", "hook", "meta"].includes(l.kind)).at(-1)?.kind === "error";
   const facts: string[] = [];
   const worked = turn.prompt?.at ? Math.max(Date.parse(done.at) - Date.parse(turn.prompt.at), longest) : 0;
   // Under a second is not a fact worth a slot ("Worked for 0s").
   if (worked >= 1000) facts.push("Worked for " + duration(worked));
-  // What failed, said where the turn ends: a phone has no hover to read it from.
-  // A native call is its own record: the command, and the output it kept.
-  const native = fail && isNativeCall(fail);
-  const failCmd = !fail ? "" : native ? str(fail.data?.cmd) || fail.text : gistOf(parseCall(str(fail.data?.code)).gist);
-  const failBody = !fail ? "" : native ? str(fail.data?.output) : resultBody(fail);
-  const failOut = failBody.split("\n").filter((l) => l.trim()).slice(-3);
-  const failName = !fail ? "" : native ? (fail.data?.tool === "bash" ? failNameOf(`tools.bash(${JSON.stringify(failCmd)})`, failBody) : callVerb(str(fail.data?.tool))) || failCmd
-    : failNameOf(str(fail.data?.code), resultBody(fail)) || failCmd;
   const work = useWork();
   // The engine closed the turn with calls still running: they ran on as jobs, in Work.
   // Jobs run in the session's process: with none (a Stop's exit took them)
   // nothing is running, though no end is recorded until the next child
   // reports it.
   const stillRunning = typeof done.data?.running === "number" && work?.live !== false ? Math.max(0, done.data.running - (turn.settled ?? 0)) : 0;
-  // The failed call already open on screen says it all; the footer then only points at it.
-  const [shownOpen, setShownOpen] = useState(Boolean(fail));
-  useEffect(() => {
-    if (!fail) return;
-    const check = () => {
-      const el = document.querySelector<HTMLDetailsElement>(`details.block[data-seq="${fail.seq}"]`);
-      let open = Boolean(el?.open);
-      for (let d = el?.parentElement?.closest("details") ?? null; d && open; d = d.parentElement?.closest("details") ?? null) open = (d as HTMLDetailsElement).open;
-      setShownOpen(open);
-    };
-    check();
-    document.addEventListener("toggle", check, true);
-    return () => document.removeEventListener("toggle", check, true);
-  }, [fail]);
   // The engine's done names no model: its replies carry their own provenance.
   const model = str(done.data?.model) || str([...turn.body].reverse().find((l) => l.kind === "assistant" && str(l.data?.model))?.data?.model);
-  const show = () => {
-    const el = document.querySelector<HTMLElement>(`details.block[data-seq="${fail?.seq}"]`);
-    if (!el) return;
-    for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) if (d instanceof HTMLDetailsElement) d.open = true;
-    const head = el.querySelector<HTMLElement>("summary") ?? el;
-    head.scrollIntoView({ block: "start" });
-    head.focus({ preventScroll: true });
-    head.classList.remove("turn-flash");
-    void head.offsetWidth;
-    head.classList.add("turn-flash");
-    setTimeout(() => head.classList.remove("turn-flash"), 1700);
-  };
   // The strip above owns session totals; a turn says what it took, with
   // its tokens on the price rather than as a third figure.
   // An older transcript recorded usage as its own line; the footer says it instead.
@@ -2607,19 +2635,14 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   if (unknownSubs) facts.push(`${unknownSubs} ${unknownSubs === 1 ? "subagent" : "subagents"} unknown`);
   return (
     <div className="turn-foot">
-      {failed && fail && shownOpen && !(turn.stopped || done.kind === "cancelled") ? (
-        <span className="turn-fail-row">
-          <span className="turn-failed">{failName || "Command"} failed · exit {exit}</span>
-          <span aria-hidden="true">·</span>
-          <button type="button" className="link turn-fail-jump" onClick={show}>Jump to command</button>
-        </span>
-      ) : (errored && !(turn.stopped || done.kind === "cancelled")) || cutAfterProse(turn) ? null : (
-        // R3-F: a turn that ended on an error says so in the error itself, not again under it.
-        <span className={"turn-outcome" + (turn.stopped || done.kind === "cancelled" ? " turn-stopped" : failed || failedWork ? " turn-failed" : "")}>
+      {(errored && !(turn.stopped || done.kind === "cancelled")) || cutAfterProse(turn) ? null : (
+        <span className={"turn-outcome" + (turn.stopped || done.kind === "cancelled" ? " turn-stopped" : "")}>
           {(turn.stopped || done.kind === "cancelled") && <StopMark />}
-          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
+          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : "Completed"}
         </span>
       )}
+      <TurnIssueDetails turn={turn} />
+      {failedWork > 0 && <span className="num">{failedWork} {failedWork === 1 ? "worker" : "workers"} failed</span>}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
       {files.length > 0 && <TurnFiles files={files} turn={turn} edits={edits} />}
       {stillRunning > 0 && (
@@ -2632,12 +2655,6 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
         {u?.cost !== undefined ? <span className="num" title={tokens}>{money(u.cost)}</span> : tokens && <span className="num">{tokens}</span>}
         {model && <span className="mono" title={model}>{(u?.cost !== undefined || tokens) ? " · " : ""}{model.split("/").pop()}</span>}
       </span>}
-      {failed && fail && !shownOpen && (
-        <div className="turn-fail" role="note">
-          <button type="button" className="link mono turn-fail-cmd" onClick={show}>{failCmd || "Show the failed command"}</button>
-          {failOut.length > 0 && <pre className="mono">{failOut.join("\n")}</pre>}
-        </div>
-      )}
       {acts}
     </div>
   );
@@ -3393,7 +3410,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
         const seqs = turn.body.map((l) => l.seq);
         const lo = Math.min(...seqs), hi = Math.max(...seqs);
         const mine = (ctx?.workers ?? []).filter((w) => (w.subrunSeq ?? w.seq) >= lo && (w.subrunSeq ?? w.seq) <= hi);
-        return <TurnFooter turn={turn} fail={fail} edits={turnEdits} longest={Math.max(0, ...mine.map((w) => w.ms ?? 0))}
+        return <TurnFooter turn={turn} edits={turnEdits} longest={Math.max(0, ...mine.map((w) => w.ms ?? 0))}
                            failedWork={mine.filter((w) => w.life === "failed").length}
                            unknownSubs={mine.filter((w) => w.kind !== "job" && w.life === "unknown").length}
                            acts={answerActs}
@@ -4388,15 +4405,6 @@ export function Thread({ row: shown, lines: given, loading = false, loadError, p
   }, []);
   const turns = useMemo(() => groupTurns(lines), [lines]);
   const stored = useMemo(() => storedNotices(lines), [lines]);
-  // R4-B: the last finished turn ended on a failed command: the header says Failed, as its footer does, never a checked Done.
-  const lastFail = useMemo(() => {
-    const t = [...turns].reverse().find((u) => u.done);
-    if (!t?.done || t.stopped || t.done.kind === "cancelled") return null;
-    const exit = t.done.data?.exit;
-    const r = [...t.body].reverse().find((l) => l.kind === "result" && typeof l.data?.exit === "number" && l.data.exit !== 0);
-    if (typeof exit === "number" ? exit === 0 : !r || r !== [...t.body].reverse().find((l) => l.kind === "result")) return null;
-    return r ? failNameOf(str(r.data?.code), resultBody(r)) || "Command" : "Command";
-  }, [turns]);
   // Numbered by prompt, as the turn log counts; once per transcript, not a rescan per turn per render.
   const turnNums = useMemo(() => { let n = 0; return turns.map((t) => (t.prompt ? ++n : undefined)); }, [turns]);
 
@@ -4912,9 +4920,7 @@ export function Thread({ row: shown, lines: given, loading = false, loadError, p
             : row.status === "done" && counts.failed > 0
               // The mark carries the red and the Work button the count, once: "12 failed" twice on one line named no subject.
               ? <span className="status head-trouble" title={`${counts.failed} ${counts.failed === 1 ? "worker" : "workers"} failed`}><StatusMark status="error" bare />{statusWord("done")}<span className="visually-hidden">, {counts.failed} {counts.failed === 1 ? "worker" : "workers"} failed</span></span>
-              : row.status === "done" && lastFail
-                ? <span className="status head-failed" title={`${lastFail} failed`}><WarnMark />Failed</span>
-                : <StatusMark status={row.status} />}
+              : <StatusMark status={row.status} />}
           {/* MB-HDR: the settings popover has no "Where" line, so the repo stays here, quiet, after the status. */}
           {(row.repo || row.branch) && (
             <span className="mono head-repo">
