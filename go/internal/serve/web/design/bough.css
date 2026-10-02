@@ -2882,7 +2882,7 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .block.thin.toolrun>.toolrun-body,.block.thin.work-seg>.work-seg-body{display:flex;flex-direction:column;gap:2px;margin-inline-start:11px;padding:2px 0 4px 12px;border:0;border-left:1px solid var(--line);background:none}
 .block.thin[open]>:not(summary){animation:mbtr-in var(--dur) var(--ease-out)}
 @keyframes mbtr-in{from{opacity:0}to{opacity:1}}
-.toolrun-has-failed>.block.thin.toolrun>summary{padding-inline-end:96px}
+.toolrun-has-failed>.block.thin.toolrun>summary{padding-inline-end:176px}
 .toolrun-wrap>button.toolrun-failed{position:absolute;top:0;right:8px;margin:0;height:28px;display:inline-flex;align-items:center;gap:4px;
   font-size:var(--fs-sm);font-weight:500;font-style:normal;color:var(--red);white-space:nowrap}
 /* T3 bodies: one surface; the call is a footer strip on it */
@@ -2956,6 +2956,10 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
   .fail-actions button{min-height:44px}
 }
 @media (max-width:720px){
+  /* Totals and failures share the first line; the description can wrap below. */
+  .block.thin.toolrun>summary,.toolrun-has-failed>.block.thin.toolrun>summary{position:relative;flex-wrap:wrap;padding:44px 8px 4px 4px}
+  .block.thin.toolrun>summary>.block-label{flex:1;min-width:0;white-space:normal}
+  .block.thin.toolrun>summary>.tool-meta{position:absolute;top:0;left:22px;height:44px;display:flex;align-items:center}
   .block.thin>summary .tool-meta>.tool-meta-failed~*,.block.thin.toolcall>summary .tool-thrown{display:none}
 }
 @media (max-width:480px){

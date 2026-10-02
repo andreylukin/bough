@@ -2237,6 +2237,9 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
   const { handlers, pop } = useThinPop(facts);
   const box = useRef<HTMLDetailsElement>(null);
   const calls = facts.length;
+  const blocks = lines.filter((l) => l.kind === "code").length;
+  const unit = blocks === 0 ? "tool call" : blocks === calls ? "code block" : "action";
+  const units = `${unit}s`;
   const holdsFail = failSeq !== undefined && lines.some((l) => l.seq === failSeq);
   if (calls < 2) return <>{rows}</>;
   const failed = facts.filter((f) => f.failed).length;
@@ -2263,7 +2266,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
   // Mixed work is named from counts, edits first; never after its first command.
   const mixed = !known || verbs.length > 2;
   const summary = mixed ? runSummary(lines.filter((l) => l.kind === "code").map((l) => l.text), facts, turnEdits, okCodes, lines.filter(isNativeCall)) : null;
-  const label = summary ? summary.label : mixed ? "Tool group" : verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" and ");
+  const label = summary ? `Includes: ${summary.label.replace(/^./, (c) => c.toLowerCase())}` : mixed ? "Tool group" : verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" and ");
   const targets = [...new Set(facts.map((f) => f.gist).filter(Boolean))];
   const fileish = verbs.every((v) => v === "Wrote" || v === "Patched" || v === "Read");
   // A path keeps its filename: the leading directories are what gets cut.
@@ -2284,13 +2287,13 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
           {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}{" "}
           {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}{" "}
         </>}
-        <span className="num tool-meta">{calls} calls{timed ? ` · ${totalMs < 1000 ? "<1s" : duration(totalMs)}` : ""}</span>
+        <span className="num tool-meta">{calls} {units}{timed ? ` · ${totalMs < 1000 ? "<1s" : duration(totalMs)}` : ""}</span>
       </summary>
       {pop}
       <div className="toolrun-body">{rows}</div>
     </details>
     {/* R3-F: the button that opens the failure sits beside the summary, not inside it, pinned to the row's end so it never wraps alone. */}
-    {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}><FailMark />{failed} failed</button>}
+    {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed} title={`Recorded errors or non-zero exits in this group; cancelled and running calls are excluded. Open the first failure.`}><FailMark />{failed} {blocks === 0 ? (failed === 1 ? "call" : "calls") : (failed === 1 ? unit : units)} failed</button>}
     </div>
   );
 }
