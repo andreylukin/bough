@@ -30,7 +30,7 @@ export interface ContextSkill {
   id: string;
   name: string;
   summary: string;
-  source: "plugin" | "pool";
+  source: "plugin" | "pool" | "builtin";
   off: boolean;
 }
 
@@ -115,7 +115,7 @@ function SkillRow({ s, off, setOff, onOff }: {
     <Row
       name={`/${s.name}`}
       off={off}
-      tags={[s.source === "plugin" ? "Plugin" : "Pool"]}
+      tags={[s.source === "builtin" ? "Built-in" : s.source === "plugin" ? "Plugin" : "Pool"]}
       facts={s.summary}
       actions={<OffToggle id={offId("skill", s.id)} off={off} what={`the skill ${s.name}`}
                           setOff={setOff} onChange={onOff} />}

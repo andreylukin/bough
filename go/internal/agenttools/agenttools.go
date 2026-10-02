@@ -11,22 +11,41 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+
+	"github.com/andreylukin/bough/internal/contextkit"
 )
 
 // Tool is one native tool. Name is what the model calls; both Anthropic
 // and OpenAI reject names outside ^[a-zA-Z0-9_-]{1,64}$.
 type Tool struct {
-	Name        string
-	Description string
-	Schema      map[string]any // JSON Schema, "type": "object"
+	registration *registration
+	Name         string
+	Description  string
+	Schema       map[string]any // JSON Schema, "type": "object"
 	// Blocking marks a call whose wait is on the user (ask, secret): it
 	// holds its turn with no settle, as tools.ask does today.
 	Blocking bool
+	// Context tools are scoped by the engine to the calling Gate, not a
+	// shared registry closure (children may reuse their display names).
+	RequiresContext bool
+	MutatesContext  bool
+	// WriteAllowed is the file row's existing path policy. Context tools
+	// reuse it rather than gaining an independent filesystem privilege.
+	WriteAllowed func(context.Context, string) error
 	// Detail is the call row's text: bash's first command line, the path
 	// for write/patch/view, "path:start-end" for a ranged view.
 	Detail func(args json.RawMessage) string
 	Call   func(ctx context.Context, c Call) (Result, error)
 }
+
+// SameRegistration is a synchronous policy epoch check. Changed may be
+// forwarded asynchronously by a live registry, so it cannot alone prove
+// that a queued write still has the tool that authorized it.
+func (t Tool) SameRegistration(other Tool) bool {
+	return t.registration != nil && t.registration == other.registration
+}
+
+type registration struct{ marker byte }
 
 type Call struct {
 	ID       string          // provider call id; the call row's id
@@ -34,6 +53,7 @@ type Call struct {
 	Session  string          // bough session id
 	Worker   string          // "" for the main agent, else the subagent's name
 	Progress func(text string)
+	Context  contextkit.Capability // exact calling session's capability; nil outside CLM
 }
 
 // Emit sends live output for the call row (a call-delta); nil-safe.
@@ -88,6 +108,7 @@ func (r *registry) Register(t Tool) (func(), error) {
 	if _, taken := r.tools[t.Name]; taken {
 		return nil, fmt.Errorf("agent-tools: tool %q is already registered", t.Name)
 	}
+	t.registration = &registration{}
 	e := &entry{tool: t}
 	r.tools[t.Name] = e
 	r.bump()

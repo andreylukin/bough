@@ -32,6 +32,7 @@ import (
 	"github.com/andreylukin/bough/internal/agentllm"
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/schema"
+	"github.com/andreylukin/bough/internal/unreal/clm"
 	"github.com/andreylukin/bough/internal/unreal/ops"
 	"github.com/andreylukin/bough/internal/unreal/project"
 	"github.com/andreylukin/bough/internal/unreal/prompt"
@@ -194,10 +195,11 @@ func DefaultStore() string {
 // Runtime is one bough session. It outlives coordinator restarts and
 // engine-row remounts; Close ends it.
 type Runtime struct {
-	contextFileMu sync.Mutex // serializes CLM projection with ordinary native write/patch calls
-	d             Deps
-	cfg           Config
-	sid           string
+	contextsMu sync.RWMutex // registry only; file work holds the owning Context's lock
+	contexts   map[string]*clm.Context
+	d          Deps
+	cfg        Config
+	sid        string
 
 	ctx    context.Context // the session's: the store, ops and actor live on it
 	cancel context.CancelFunc
@@ -320,7 +322,7 @@ func (r *Runtime) newOps(ctx context.Context, worker string) *ops.Manager {
 		r.testReg = reg
 		hs = handlers
 	} else if worker == "" {
-		hs = []operation.RemoteJobHandler{r.newHandler(worker, func(id, text string) {
+		hs = []operation.RemoteJobHandler{r.newHandler(r.gate, worker, func(id, text string) {
 			r.post(func() { r.a.onProgress(id, text) })
 		})}
 	}

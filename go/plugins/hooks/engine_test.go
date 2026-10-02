@@ -81,6 +81,35 @@ func TestEnginePreToolThroughJSHooks(t *testing.T) {
 	}
 }
 
+func TestEngineContextToolkitPreHooks(t *testing.T) {
+	s := fixture(t)
+	writeHook(t, ".", "pre-code-exec", "context.js", `
+		if (event.tool.indexOf("context_") !== 0) return null;
+		if (event.code.indexOf("BLOCKED_EXCERPT") >= 0) return {deny: "context text refused"};
+		if (event.args.expected_revision === "denied") return {deny: "context mutation refused"};
+		event.args.dry_run = true;
+		return {args: event.args};`)
+	b, _ := engineBridge(s)
+	for _, tool := range []string{"context_edit", "context_offload", "context_restore"} {
+		if _, deny := b.PreTool(t.Context(), tool, agenttools.Call{ID: "denied", Args: json.RawMessage(`{"expected_revision":"denied"}`)}, ""); deny != "context mutation refused" {
+			t.Fatalf("%s ignored hook refusal: %q", tool, deny)
+		}
+		args, deny := b.PreTool(t.Context(), tool, agenttools.Call{ID: "rewrite", Args: json.RawMessage(`{"expected_revision":"current","dry_run":false}`)}, "")
+		var got map[string]any
+		if err := json.Unmarshal(args, &got); err != nil || deny != "" || got["expected_revision"] != "current" || got["dry_run"] != true {
+			t.Fatalf("%s lost hook argument rewrite: %s %q %v", tool, args, deny, err)
+		}
+	}
+	for _, tc := range []struct{ tool, args string }{
+		{"context_edit", `{"expected_revision":"current","edits":[{"start":0,"end":0,"text":"BLOCKED_EXCERPT"}]}`},
+		{"context_offload", `{"expected_revision":"current","start":0,"end":1,"replacement":"BLOCKED_EXCERPT"}`},
+	} {
+		if _, deny := b.PreTool(t.Context(), tc.tool, agenttools.Call{ID: "text", Args: json.RawMessage(tc.args)}, ""); deny != "context text refused" {
+			t.Fatalf("%s hid its structured text from the hook: %q", tc.tool, deny)
+		}
+	}
+}
+
 // The engine refuses what the ledger records as refused, and records a
 // rewrite only of the key it applies ("args", not the call's "code").
 func TestEnginePreToolDecisionsMatchLedger(t *testing.T) {

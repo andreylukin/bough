@@ -80,6 +80,11 @@
 - id: tools
   plugin: tools-basic
 
+# Session-scoped native context operations; exposed only by engine-clm.
+# Disable this row to retain only ordinary file-tool context editing.
+- id: context-tools
+  plugin: context-tools
+
 # Subagents: tools.spawn(task) runs a bounded child agent (depth 1)
 # whose final plain-text reply is the tool's return value.
 - id: workers

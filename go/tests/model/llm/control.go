@@ -303,8 +303,16 @@ func Booting(dir string) map[string]string {
 		if _, err := os.Stat(filepath.Join(bootDir(dir), id+".release")); err == nil {
 			continue
 		}
-		b, _ := os.ReadFile(filepath.Join(bootDir(dir), e.Name()))
-		out[id] = string(b)
+		b, err := os.ReadFile(filepath.Join(bootDir(dir), e.Name()))
+		if err != nil {
+			continue
+		}
+		// WriteFile creates the marker before writing its role. Only the
+		// complete protocol token acknowledges a held session, not a path
+		// that a concurrent reader can still find empty or partially written.
+		if role := string(b); role == "session" || role == "main" {
+			out[id] = role
+		}
 	}
 	return out
 }

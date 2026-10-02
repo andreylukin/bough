@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -407,6 +408,72 @@ func TestControlBlockStream(t *testing.T) {
 	r.waitFor(`"kind":"assistant","text":"whole reply"`)
 	if code, out := r.finish(); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// os.WriteFile publishes the path before its role bytes. An empty or
+// partial marker is not the held-session acknowledgement callers need.
+func TestBootingIgnoresUnpublishedRoles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(bootDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"", "s", "sessio", "m", "mai", "unknown", "session", "main"} {
+		if err := os.WriteFile(filepath.Join(bootDir(dir), "id.waiting"), []byte(role), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, held := Booting(dir)["id"]
+		wantHeld := role == "session" || role == "main"
+		if held != wantHeld || held && got != role {
+			t.Errorf("marker %q: role=%q held=%v, want held=%v", role, got, held, wantHeld)
+		}
+	}
+	ReleaseBoot(t, dir, "id")
+	if _, held := Booting(dir)["id"]; held {
+		t.Fatal("a released session still appeared held")
+	}
+}
+
+// A reader can run between create/truncate and write, or between writes.
+// Virtual time holds both windows open without relying on scheduler luck.
+func TestWaitBootingWaitsForCompleteRole(t *testing.T) {
+	t.Parallel()
+	for _, role := range []string{"session", "main"} {
+		t.Run(role, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.MkdirAll(bootDir(dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				f, err := os.Create(filepath.Join(bootDir(dir), "id.waiting"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { f.Close() })
+				done := make(chan error, 1)
+				go func() {
+					time.Sleep(time.Second)
+					if _, err := f.WriteString(role[:1]); err != nil {
+						done <- err
+						return
+					}
+					time.Sleep(time.Second)
+					_, err := f.WriteString(role[1:])
+					done <- err
+				}()
+				began := time.Now()
+				got := WaitBooting(t, dir, "id", 3*time.Second)
+				elapsed := time.Since(began)
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+				if got != role || elapsed < 2*time.Second {
+					t.Fatalf("booting role=%q after %s, want complete %q after publication", got, elapsed, role)
+				}
+			})
+		})
 	}
 }
 

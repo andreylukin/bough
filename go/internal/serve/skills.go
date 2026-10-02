@@ -20,14 +20,14 @@ import (
 // of one would send an "unknown command". The session's context view
 // still lists them, for the switch.
 func (a *API) skills(w http.ResponseWriter, r *http.Request) {
-	sk := skills.Default(a.home)
+	sk := a.skillSet(a.start)
 	if id := r.URL.Query().Get("session"); id != "" {
 		in, ok := a.info(id)
 		if !ok {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
 			return
 		}
-		sk = skills.DefaultFor(a.home, in.Cwd)
+		sk = a.skillSet(in.Cwd)
 	}
 	cat := []skills.SkillInfo{} // an empty list, never a JSON null
 	for _, s := range sk.Catalog() {
@@ -37,3 +37,11 @@ func (a *API) skills(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"skills": cat})
 }
+
+func (a *API) skillSet(cwd string) *skills.Skills {
+	sk := skills.DefaultFor(a.home, cwd)
+	return sk.WithContextToolkit(a.contextTools != nil && a.contextTools(cwd))
+}
+
+// SetContextTools keeps web discovery aligned with the child’s composed rows.
+func (a *API) SetContextTools(enabled func(dir string) bool) { a.contextTools = enabled }

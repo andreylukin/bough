@@ -221,6 +221,11 @@ func codeOf(tool string, raw json.RawMessage, detail string) string {
 		return a.Path + "\n" + a.Content
 	case "patch":
 		return a.Path + "\n" + a.New
+	case "context_edit", "context_offload", "context_restore":
+		// These operations have no caller-controlled file path. Keep their
+		// complete structured intent visible to text-based pre-code hooks,
+		// while event.args carries the decoded edits/revision/archive fields.
+		return string(raw)
 	}
 	return detail
 }

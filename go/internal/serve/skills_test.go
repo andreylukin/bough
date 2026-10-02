@@ -101,3 +101,32 @@ func TestSkillCatalogueEmpty(t *testing.T) {
 		t.Fatalf("skills is not a list: %#v", body["skills"])
 	}
 }
+
+func TestBuiltinContextSkillCatalogueFollowsSessionConfig(t *testing.T) {
+	t.Parallel()
+	f := newHooksAPI(t)
+	work := filepath.Join(f.home, "clm-project")
+	other := filepath.Join(f.home, "legacy-project")
+	seedAt(t, f, "clm", work)
+	seedAt(t, f, "legacy", other)
+	f.api.SetContextTools(func(dir string) bool { return dir == work })
+	for _, id := range []string{"clm", "legacy"} {
+		code, body := f.do(t, "GET", "/api/skills?session="+id, "")
+		if code != http.StatusOK {
+			t.Fatalf("catalogue: %d %v", code, body)
+		}
+		found := false
+		for _, raw := range body["skills"].([]any) {
+			row := raw.(map[string]any)
+			if row["name"] == "context-toolkit" {
+				found = true
+				if row["source"] != "builtin" {
+					t.Errorf("source = %v", row["source"])
+				}
+			}
+		}
+		if found != (id == "clm") {
+			t.Errorf("%s builtin presence = %v", id, found)
+		}
+	}
+}

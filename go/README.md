@@ -187,6 +187,12 @@ working-context file while preserving immutable system/tool contracts and the
 append-only audit transcript. See [docs/clm-engine.md](docs/clm-engine.md) for
 limits, image markers, provider compatibility, and recovery. Use
 `--set loop.plugin=engine-unreal` for the original append-only context engine.
+CLM also ships six session-scoped `context_*` tools: bounded snapshot
+inspection/read/search, revision-checked batch edits and dry runs, and durable
+offload/restore. Read-only calls can run in parallel; commits coordinate only
+their own context. The built-in `/context-toolkit` skill explains the workflow
+without installing anything in HOME. Disable the `context-tools` row to use
+only ordinary file tools for context editing.
 Both run on
 [unreal-agent](https://github.com/unreallabsai/unreal-agent), pinned by
 SHA in `go.mod`. `--set loop.plugin=loop` (or `plugin: loop` on the
