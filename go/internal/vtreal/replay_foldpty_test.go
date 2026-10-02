@@ -421,6 +421,30 @@ func foldPtyDelay(tape string, ms int) string {
 	return strings.Replace(replayConfig(tape), fmt.Sprintf("{file: %q}", tape), fmt.Sprintf("{file: %q, delay_ms: %d}", tape, ms), 1)
 }
 
+// A quiet screen does not acknowledge a key: a busy child can leave
+// the old frame up past settled's quiet window. The leader hint and
+// its dismissal acknowledge ordered input even when Tab wraps around
+// a single focus stop or Enter has nothing to toggle. CSI-u Escape
+// dismisses only the leader, without the bare-ESC parser ambiguity.
+func foldPtyKeyFrame(a *app, key rune) string {
+	a.t.Helper()
+	before := a.text()
+	a.key(key, 0)
+	a.key('x', uv.ModCtrl)
+	a.waitFor("ctrl+x …")
+	a.typeText("\x1b[27u")
+	a.waitUntil(func(s string) bool { return !strings.Contains(s, "ctrl+x …") }, "the key acknowledgement to clear")
+	after := a.settled()
+	if key == uv.KeyEnter && after == before {
+		for _, line := range strings.Split(before, "\n") {
+			if strings.HasPrefix(line, "> ▸ ") || strings.HasPrefix(line, "> ▾ ") {
+				a.t.Errorf("enter did not toggle the focused header:\n%s", before)
+			}
+		}
+	}
+	return after
+}
+
 // Real recordings: replay, then fold/unfold every header on screen by
 // click, every focus stop by key, and collapse_all/expand_all.
 func TestFoldPtyHistoryTapes(t *testing.T) {
@@ -455,19 +479,15 @@ func TestFoldPtyHistoryTapes(t *testing.T) {
 
 			// Keys: tab to each stop, enter twice returns the screen.
 			for i := range 6 {
-				a.key(uv.KeyTab, 0)
-				before := a.settled()
-				a.key(uv.KeyEnter, 0)
-				toggled := a.settled()
+				before := foldPtyKeyFrame(a, uv.KeyTab)
+				toggled := foldPtyKeyFrame(a, uv.KeyEnter)
 				foldPtyFrameOn(a, fmt.Sprintf("stop %d toggled", i), toggled)
-				a.key(uv.KeyEnter, 0)
-				after := a.settled()
+				after := foldPtyKeyFrame(a, uv.KeyEnter)
 				// A tail-windowed result takes a third enter: one of the
 				// three shows it all (open → all → closed, or all →
 				// closed → open).
 				if after != before && strings.Contains(before+toggled, "enter to view all") {
-					a.key(uv.KeyEnter, 0)
-					after = a.settled()
+					after = foldPtyKeyFrame(a, uv.KeyEnter)
 				}
 				if after != before {
 					t.Errorf("stop %d: enter twice did not restore the screen:\nbefore:\n%s\nafter:\n%s", i, before, after)

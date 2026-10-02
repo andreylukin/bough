@@ -70,6 +70,13 @@ func line(s string, n int) string {
 	return s
 }
 
+func (m *model) spawnTime() time.Time {
+	if m.spawnNow != nil {
+		return m.spawnNow()
+	}
+	return time.Now()
+}
+
 // subState is a spawn card's live state.
 type subState struct {
 	worker  int
@@ -112,7 +119,7 @@ func (m *model) spawnCard(worker int) *block {
 	// transcript they were supposed to summarise.
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "spawn",
 		collapsed: m.cfg.Load().collapse != "none",
-		sub:       &subState{worker: worker, status: "running", started: time.Now()}})
+		sub:       &subState{worker: worker, status: "running", started: m.spawnTime()}})
 	m.nextID++
 	return &m.blocks[len(m.blocks)-1]
 }
@@ -164,7 +171,7 @@ func (m *model) addSubEvent(ev Event) {
 		// A replayed history lands in one burst: its cards would all
 		// claim "<1s". No real subagent finishes inside a second, so
 		// that reads as "unknown" and the header omits it.
-		if s.elapsed = time.Since(s.started); s.elapsed < time.Second {
+		if s.elapsed = m.spawnTime().Sub(s.started); s.elapsed < time.Second {
 			s.elapsed = 0
 		}
 		if st, _ := ev.Data["status"].(string); st != "" {
@@ -219,7 +226,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 	}
 	elapsed := s.elapsed
 	if s.status == "running" {
-		elapsed = time.Since(s.started)
+		elapsed = m.spawnTime().Sub(s.started)
 	}
 	parts := []string{fmt.Sprintf("subagent %d", s.worker)}
 	if b.collapsed {

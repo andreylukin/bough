@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -202,6 +203,9 @@ func foldModelEvent(rt *rapid.T, d *drv) string {
 func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 	ref := &foldModelState{w: rapid.IntRange(20, 200).Draw(rt, "w0"), h: rapid.IntRange(6, 50).Draw(rt, "h0"), collapsed: map[int]bool{}}
 	d := newDrv(t, ref.w, ref.h, cfgWith(t, nil, nil, nil))
+	// A live card's first elapsed chip can appear between toggles.
+	// Keep rendering time fixed without masking any transcript text.
+	d.m.spawnNow = func() time.Time { return time.Unix(0, 0) }
 	cfg := d.cfgp.Load()
 	n := rapid.IntRange(1, maxSteps).Draw(rt, "n")
 	for range n {
@@ -305,7 +309,7 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 					}
 					ref.collapsed[b.id] = b.collapsed
 				}
-				if after := strings.Join(d.m.lines, "\n"); !refolded && foldModelNoClock(after) != foldModelNoClock(before) {
+				if after := strings.Join(d.m.lines, "\n"); !refolded && after != before {
 					rt.Fatalf("toggle twice changed the transcript:\n--- before\n%s\n--- after\n%s", stripANSI(before), stripANSI(after))
 				}
 				step = "toggle twice"

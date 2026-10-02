@@ -55,19 +55,30 @@ type ossaRuntime struct {
 	mu     sync.Mutex
 	prefix string // "bough-orb/<slug>:" once a build is armed
 	ctr    string // the container name once a start hold is armed
-	commit chan error
-	start  chan error
+	commit *ossaHold
+	start  *ossaHold
+}
+
+// A hold exists as soon as it is armed, before its runtime call arrives.
+// Cleanup can therefore answer even a Start still between Orb.run's
+// container-phase write and the actual call, without racing publication.
+type ossaHold struct {
+	reply    chan error
+	entered  bool
+	released bool
 }
 
 func (r *ossaRuntime) armBuild(slug string) {
 	r.mu.Lock()
 	r.prefix = "bough-orb/" + slug + ":"
+	r.commit = &ossaHold{reply: make(chan error, 1)}
 	r.mu.Unlock()
 }
 
 func (r *ossaRuntime) armStart(name string) {
 	r.mu.Lock()
 	r.ctr = name
+	r.start = &ossaHold{reply: make(chan error, 1)}
 	r.mu.Unlock()
 }
 
@@ -78,10 +89,10 @@ func (r *ossaRuntime) Commit(ctx context.Context, spec container.CommitSpec, log
 		return r.Fake.Commit(ctx, spec, log)
 	}
 	r.prefix = ""
-	ch := make(chan error)
-	r.commit = ch
+	hold := r.commit
+	hold.entered = true
 	r.mu.Unlock()
-	if err := <-ch; err != nil {
+	if err := r.wait(ctx, hold); err != nil {
 		fmt.Fprintf(log, "fake: build of %s: %v\n", spec.Tag, err)
 		return err
 	}
@@ -95,13 +106,27 @@ func (r *ossaRuntime) Start(ctx context.Context, spec container.RunSpec) error {
 		return r.Fake.Start(ctx, spec)
 	}
 	r.ctr = ""
-	ch := make(chan error)
-	r.start = ch
+	hold := r.start
+	hold.entered = true
 	r.mu.Unlock()
-	if err := <-ch; err != nil {
+	if err := r.wait(ctx, hold); err != nil {
 		return err
 	}
 	return r.Fake.Start(ctx, spec)
+}
+
+func (r *ossaRuntime) wait(ctx context.Context, hold *ossaHold) error {
+	defer func() {
+		r.mu.Lock()
+		hold.released = true
+		r.mu.Unlock()
+	}()
+	select {
+	case err := <-hold.reply:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // held is which of the two calls above is parked, "" for neither.
@@ -109,9 +134,9 @@ func (r *ossaRuntime) held() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch {
-	case r.commit != nil:
+	case r.commit != nil && r.commit.entered && !r.commit.released:
 		return "build"
-	case r.start != nil:
+	case r.start != nil && r.start.entered && !r.start.released:
 		return "start"
 	}
 	return ""
@@ -119,18 +144,19 @@ func (r *ossaRuntime) held() string {
 
 func (r *ossaRuntime) release(which string, err error) bool {
 	r.mu.Lock()
-	var ch chan error
+	defer r.mu.Unlock()
+	var hold *ossaHold
 	switch which {
 	case "build":
-		ch, r.commit = r.commit, nil
+		hold = r.commit
 	case "start":
-		ch, r.start = r.start, nil
+		hold = r.start
 	}
-	r.mu.Unlock()
-	if ch == nil {
+	if hold == nil || hold.released {
 		return false
 	}
-	ch <- err
+	hold.released = true
+	hold.reply <- err
 	return true
 }
 
@@ -187,9 +213,8 @@ func newOssaAdapter(t *testing.T) *ossaAdapter {
 	}
 	a.rt = &ossaRuntime{Fake: container.NewFake()}
 	a.rt.AddImage(projectdef.BaseTag())
-	// A walk that fails partway can leave a hold parked: let it go so
-	// h.close (t.Cleanup, registered per session in Init) does not wait
-	// forever on a goroutine nothing will ever release.
+	// An abandoned adapter must not leave a runtime call parked, even
+	// if cleanup runs before the armed call arrives.
 	t.Cleanup(func() {
 		a.rt.release("build", errors.New("test over"))
 		a.rt.release("start", errors.New("test over"))
@@ -362,6 +387,11 @@ func (a *ossaAdapter) BuildDone() error {
 	}
 	a.rt.armStart(container.OrbName(a.session))
 	a.rt.release("build", nil)
+	// Orb.run writes PhaseContainer before Inspect and Start. The next
+	// model step needs the actual hold, not just that earlier write.
+	if err := a.settleAny("the container start to be held", func() bool { return a.rt.held() == "start" }); err != nil {
+		return err
+	}
 	return a.settleUntil("the swap to reach the container", func(_, phase string, _ bool) bool { return phase == "container" })
 }
 

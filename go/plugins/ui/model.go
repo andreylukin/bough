@@ -118,6 +118,7 @@ type model struct {
 	deferRefresh bool // addEvent skips its render: more of the batch follows (eventsMsg)
 	send         func(string)
 	cfg          *atomic.Pointer[uiCfg]
+	spawnNow     func() time.Time // subagent clock test seam; nil = time.Now
 
 	blocks      []block
 	nextID      int

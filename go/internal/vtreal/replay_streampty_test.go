@@ -24,6 +24,7 @@ import (
 	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // streamPtyStep is one model call: its reply, and for a reply that
@@ -271,8 +272,37 @@ func streamPtyTmux(t *testing.T, cols, rows int, yml string) (*tmuxApp, *app) {
 	return tm, &app{t: t, home: home, cols: cols, rows: rows}
 }
 
+// The right-aligned keys hint acknowledges the application's width,
+// unlike a pane's clipped/restored old cells. The composer checks the
+// height too; the one-line drafts in these scenarios occupy its last row.
+func streamPtyFrameAtSize(s string, cols, rows int) bool {
+	ls := strings.Split(s, "\n")
+	if composerRow(ls) != rows-1 || len(ls) < rows {
+		return false
+	}
+	status := ls[rows-2]
+	return strings.HasSuffix(status, "? keys") && ansi.StringWidth(status) == cols-1
+}
+
+type streamPtyFrameSource interface {
+	waitUntil(func(string) bool, string)
+	settled() string
+}
+
+func streamPtySizedFrame(tm streamPtyFrameSource, cols, rows int) string {
+	var frame string
+	tm.waitUntil(func(s string) bool {
+		if !streamPtyFrameAtSize(s, cols, rows) {
+			return false
+		}
+		frame = tm.settled()
+		return streamPtyFrameAtSize(frame, cols, rows)
+	}, fmt.Sprintf("the application to redraw at %dx%d", cols, rows))
+	return frame
+}
+
 // streamPtyRedraw asserts the settled screen survives a forced full
-// repaint (a height change away and back) unchanged.
+// repaint (a size change away and back) unchanged.
 func streamPtyRedraw(tm *tmuxApp, cols, rows int, where string) {
 	tm.t.Helper()
 	// The frame to compare against must be the diff renderer's last,
@@ -286,10 +316,14 @@ func streamPtyRedraw(tm *tmuxApp, cols, rows int, where string) {
 			before, still = cur, time.Now()
 		}
 	}
-	tm.resize(cols, rows-1)
-	tm.settled()
+	// A height-only resize can restore the original cells before a late
+	// smaller-height frame arrives. Changing width as well gives each
+	// resize an application-drawn acknowledgement, so the second resize
+	// cannot overtake the first one's render.
+	tm.resize(cols-1, rows-1)
+	streamPtySizedFrame(tm, cols-1, rows-1)
 	tm.resize(cols, rows)
-	after := tm.settled()
+	after := streamPtySizedFrame(tm, cols, rows)
 	if before == after {
 		return
 	}

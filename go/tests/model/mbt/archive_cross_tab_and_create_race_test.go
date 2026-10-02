@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -96,6 +99,11 @@ type acrAdapter struct {
 	// reapAtOnce is the wrong-adapter bug: ArchiveB leaves the reap
 	// hold off, so the lease holder is gone at once, not dying.
 	reapAtOnce bool
+
+	// The signal and its observation are separate so a regression can
+	// hold delivery until the adapter actually waits for the stop.
+	stopSignal func(int) error
+	stopState  func(context.Context, int) (bool, error)
 }
 
 func newACRAdapter(t *testing.T) *acrAdapter {
@@ -486,11 +494,57 @@ func (a *acrAdapter) dropTurn() {
 }
 
 func (a *acrAdapter) pause(pid int) error {
-	if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
+	signal := a.stopSignal
+	if signal == nil {
+		signal = func(pid int) error { return syscall.Kill(pid, syscall.SIGSTOP) }
+	}
+	if err := signal(pid); err != nil {
 		return fmt.Errorf("pause child %d: %w", pid, err)
 	}
+	// Remember the signal even when observation fails, so Cleanup resumes
+	// the child. A successful kill only queues SIGSTOP on Linux: writing
+	// the next prompt immediately can let it reach history before the stop.
 	a.stopped = pid
-	return nil
+	stopped := a.stopState
+	if stopped == nil {
+		stopped = acrProcessStopped
+	}
+	ctx, cancel := actionCtx()
+	defer cancel()
+	for {
+		ok, err := stopped(ctx, pid)
+		if err != nil {
+			return fmt.Errorf("observe paused child %d: %w", pid, err)
+		}
+		if ok {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("child %d did not stop: %w", pid, ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func acrProcessStopped(ctx context.Context, pid int) (bool, error) {
+	args := []string{"-o", "state=", "-p", strconv.Itoa(pid)}
+	if runtime.GOOS == "linux" {
+		// Go's stdin reader need not be on the process leader. Observe
+		// every thread, not just /proc/<pid>/stat's leader state.
+		args = append([]string{"-L"}, args...)
+	}
+	// Darwin reports the process-wide SSTOP as T (SIGSTOP suspends its
+	// whole task); -M adds default columns and is not a portable -L.
+	out, err := exec.CommandContext(ctx, "ps", args...).Output()
+	if err != nil {
+		return false, fmt.Errorf("ps: %w", err)
+	}
+	states := strings.Fields(string(out))
+	if len(states) == 0 {
+		return false, errors.New("ps returned no process state")
+	}
+	return !slices.ContainsFunc(states, func(state string) bool { return !strings.HasPrefix(state, "T") }), nil
 }
 
 func (a *acrAdapter) waitGone(pid int, what string) error {
@@ -839,6 +893,75 @@ func TestArchiveCrossTabAndCreateRacePaths(t *testing.T) {
 	}
 	t.Logf("steps run: %v; refusals checked: %v", a.ran, a.probes)
 	a.checkHistories(t)
+}
+
+// Delay the second SIGSTOP until its state is observed. Without the
+// barrier, the real child consumes Send, reproducing the CI path's exact
+// "running, spec says sent" mismatch rather than merely racing a timer.
+func TestArchiveCrossTabAndCreateRacePauseWaitsForStop(t *testing.T) {
+	t.Parallel()
+	a := newACRAdapter(t)
+	t.Cleanup(func() {
+		if err := a.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	g, err := tracecheck.Load(filepath.Join("..", "testdata", "archive_cross_tab_and_create_race"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	walks := g.Walks(tracecheck.CoverStates, 0)
+	want := []string{"Init", "CreateStart", "HistoryFileAppears", "Claim", "Record", "Finish", "Send"}
+	if len(walks) == 0 || len(walks[0].Trace) < len(want) {
+		t.Fatal("the graph no longer contains the seven-step regression path")
+	}
+	trace := walks[0].Trace
+	if err := a.Init(); err != nil {
+		t.Fatal(err)
+	}
+	for i, name := range want {
+		step := trace[i]
+		if got := strings.TrimPrefix(step.Action, "Session#0."); got != name {
+			t.Fatalf("regression path step %d: got %s, want %s", i, got, name)
+		}
+		delivered := false
+		if name == "Send" {
+			a.stopSignal = func(int) error { return nil }
+			a.stopState = func(ctx context.Context, pid int) (bool, error) {
+				stopped, err := acrProcessStopped(ctx, pid)
+				if err != nil || delivered {
+					return stopped, err
+				}
+				if stopped {
+					return false, errors.New("delayed signal's child was already stopped")
+				}
+				delivered = true
+				return false, syscall.Kill(pid, syscall.SIGSTOP)
+			}
+		}
+		if i > 0 {
+			if _, err := acrActions["Session"][name](a, nil); err != nil {
+				t.Fatal(err)
+			}
+			if a.gate.off {
+				t.Fatalf("regression path: %s was not enabled", name)
+			}
+		}
+		if name == "Send" && !delivered {
+			// A removed stop barrier must fail on the observed transcript,
+			// even if GetSession would otherwise beat the child's stdin read.
+			control.WaitTaken(t, a.dir, a.name, actionTimeout)
+		}
+		got, err := a.GetState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range step.State {
+			if field, ok := strings.CutPrefix(k, "Session#0."); ok && got[field] != v {
+				t.Fatalf("path 0 %v: %s is %v, the spec says %v (state %v)", want[:i+1], field, got[field], v, got)
+			}
+		}
+	}
 }
 
 // A kill reaped at once where the spec has the holder dying shows on
