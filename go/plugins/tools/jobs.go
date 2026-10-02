@@ -389,8 +389,9 @@ func jobLimit(v any) (time.Duration, error) {
 	return defaultJobLimit, nil
 }
 
-// start detaches cmd as a background job.
-func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error) {
+// start detaches cmd as a background job. A foreground caller reserves its
+// claim before the waiter can publish a finish notice, even for an instant exit.
+func (j *Jobs) start(cmd string, limit time.Duration, until string, claimed bool) (*job, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("bash: limit must be positive")
 	}
@@ -429,7 +430,7 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 	owner := j.session()
 	j.mu.Lock()
 	j.next++
-	b := &job{id: j.next, owner: owner, cmd: cmd, limit: limit, until: re, started: time.Now(), cancel: cancel}
+	b := &job{id: j.next, owner: owner, cmd: cmd, limit: limit, until: re, claimed: claimed, started: time.Now(), cancel: cancel}
 	j.list = append(j.list, b)
 	j.mu.Unlock()
 
@@ -705,9 +706,6 @@ func (j *Jobs) claim(b *job) (out string, exit int, err string, finished bool) {
 			turn = rc.Done()
 		}
 	}
-	b.mu.Lock()
-	b.claimed = true
-	b.mu.Unlock()
 	deadline := time.Now().Add(j.grace)
 	for {
 		b.mu.Lock()

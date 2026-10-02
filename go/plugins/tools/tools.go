@@ -659,7 +659,7 @@ func (s *Stats) bashRun(cmd string, opts ...any) (string, error) {
 				until = u
 			}
 		}
-		b, err := s.jobs.start(cmd, limit, until)
+		b, err := s.jobs.start(cmd, limit, until, until == "" && s.jobs.grace > 0)
 		if err != nil {
 			return "", err
 		}
