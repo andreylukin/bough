@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -67,6 +68,13 @@ func RunningJobs(entries []history.Entry, childAlive bool) []Job {
 		t, _ := e.Data["text"].(string)
 		switch e.Kind {
 		case "result":
+			// The multiline anchor makes regexp scan every byte of a tool's
+			// output. Most results contain no job notice; ruling those out
+			// with literal searches keeps cold session lists out of the
+			// regexp VM without changing the legacy notification grammar.
+			if !strings.HasPrefix(t, "job ") && !strings.Contains(t, "\njob ") {
+				continue
+			}
 			for _, m := range jobStarted.FindAllStringSubmatch(t, -1) {
 				id, _ := strconv.Atoi(m[1])
 				open[id] = Job{ID: id, Cmd: m[2], Started: e.At}
