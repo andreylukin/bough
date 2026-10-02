@@ -35,6 +35,7 @@ const overflowText = "the conversation no longer fits the model's context window
 type Gate struct {
 	clmMu              sync.Mutex
 	contextID          string
+	contextPath        string // immutable after context() initializes this Gate
 	contextFork        string
 	contextForkMissing bool
 	editable           *clm.Context
@@ -275,10 +276,7 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	} else {
 		g.start(seq)
 		if g.r.cfg.CLM {
-			req, err = g.prepareContext(req)
-		}
-		if err == nil && g.r.cfg.CLM {
-			contextRevision, err = g.contextRevision()
+			req, contextRevision, err = g.prepareContext(req)
 		}
 		if err == nil {
 			resp, err = ad.Respond(child, req, o)

@@ -87,13 +87,15 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 	// cancelling Run's ctx would abandon them mid-flight.
 	runCtx, cancelRun := context.WithCancel(r.ctx)
 	defer cancelRun()
-	handler := r.newHandler(worker, nil)
-	defer handler.Close()
-	om := ops.New(runCtx, operation.NewLocalOperationManager(runCtx, handler), nil)
-
 	q := newFIFO()
 	gate := newGate(r, worker, nil)
 	gate.contextID = string(sid)
+	handler := r.newHandler(gate, worker, nil)
+	defer func() {
+		handler.Close()
+		gate.releaseContext()
+	}()
+	om := ops.New(runCtx, operation.NewLocalOperationManager(runCtx, handler), nil)
 	gate.maxSteps = req.MaxSteps
 	metas := map[string]project.Meta{}
 	stopped := ""

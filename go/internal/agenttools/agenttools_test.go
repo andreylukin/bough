@@ -9,6 +9,28 @@ import (
 
 func noop(context.Context, Call) (Result, error) { return Result{}, nil }
 
+func TestRegistrationIdentitySurvivesCopiesNotReplacement(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	unregister, err := r.Register(Tool{Name: "write", Call: noop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := r.Lookup("write")
+	if !first.SameRegistration(r.Tools()[0]) {
+		t.Fatal("copy lost its registration identity")
+	}
+	unregister()
+	// Even registering a copy of the prior tool must get a fresh token.
+	if _, err := r.Register(first); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := r.Lookup("write")
+	if first.SameRegistration(second) || (Tool{}).SameRegistration(Tool{}) {
+		t.Fatal("different or missing registrations compare as the same policy")
+	}
+}
+
 func TestRegistryRegisterLookupSorted(t *testing.T) {
 	t.Parallel()
 	r := NewRegistry()

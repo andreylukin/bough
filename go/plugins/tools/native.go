@@ -129,7 +129,10 @@ func (s *Stats) nativeTools(write bool) []agenttools.Tool {
 		}
 		tools = append(tools,
 			agenttools.Tool{
-				Name:        "write",
+				Name: "write",
+				WriteAllowed: func(ctx context.Context, path string) error {
+					return s.canWrite(native(ctx), "context", path)
+				},
 				Description: "Create or overwrite a whole file, making parent directories. Use it for new files and rewrites, never a shell heredoc.",
 				Schema: agenttools.Object([]string{"path", "content"}, map[string]any{
 					"path":    agenttools.Prop("string", "the file"),

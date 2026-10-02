@@ -47,7 +47,7 @@ func (a *API) sessionContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cwd := in.Cwd
-	cat := skills.DefaultFor(a.home, cwd).Catalog()
+	cat := a.skillSet(cwd).Catalog()
 	if cat == nil {
 		cat = []skills.SkillInfo{}
 	}

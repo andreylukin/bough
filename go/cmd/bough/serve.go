@@ -24,6 +24,7 @@ import (
 	"github.com/andreylukin/bough/internal/serveclient"
 	"github.com/andreylukin/bough/kernel"
 	orbplugin "github.com/andreylukin/bough/plugins/orb"
+	"github.com/andreylukin/bough/plugins/skills"
 )
 
 // defaultServeAddr is the control API's own port: not 7683 (the
@@ -408,6 +409,7 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 
 	api := serve.NewAPI(sup)
 	api.SetDefaults(configuredIn)
+	api.SetContextTools(contextToolsIn)
 	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure, host)}
 	// Shutdown waits for in-flight requests, and an event stream is in
 	// flight for as long as a tab is open: every restart used to sit out
@@ -514,6 +516,25 @@ func configuredIn(dir string) serve.ModelDefault {
 	configuredMemo[key] = d
 	configuredMu.Unlock()
 	return d
+}
+
+// Catalogue lookup follows the same per-directory overlay choice as a child.
+// Unlike session-list defaults, skills are requested only when opened, so
+// this reads the current rows instead of keeping another cache to invalidate.
+func contextToolsIn(dir string) bool {
+	var src configSource
+	paths := []string{filepath.Join(dir, "bough.yml")}
+	if home, err := os.UserHomeDir(); err == nil {
+		paths = append(paths, filepath.Join(home, ".bough", "bough.yml"))
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			src.path = path
+			break
+		}
+	}
+	rows, err := src.load()
+	return err == nil && skills.ContextToolkitEnabled(rows)
 }
 
 var (

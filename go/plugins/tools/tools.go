@@ -20,7 +20,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough"
 	"github.com/andreylukin/bough/internal/agenttools"
+	"github.com/andreylukin/bough/internal/contextkit"
 	"github.com/andreylukin/bough/internal/hookmeta"
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/kernel"
@@ -763,13 +765,17 @@ func (s *Stats) writeFile(ctx context.Context, path, content string) (string, er
 	if err := s.canWrite(ctx, "write", path); err != nil {
 		return "", err
 	}
-	before, hadFile := os.ReadFile(path)
-	if dir := filepath.Dir(path); dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", err
+	var before []byte
+	var hadFile error
+	if err := mutateFile(ctx, path, func() error {
+		before, hadFile = os.ReadFile(path)
+		if dir := filepath.Dir(path); dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
 		}
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return os.WriteFile(path, []byte(content), 0o644)
+	}); err != nil {
 		return "", err
 	}
 	s.wrote(path)
@@ -895,8 +901,10 @@ func (s *Stats) ReadAllowed(path string) error {
 func (s *Stats) viewFile(path string, rng ...int) (string, error) {
 	// A project session reads only what it may write: the host outside
 	// the orb (a loop's holdout among it) is not the project's.
-	if err := s.project.allowed("view", path); err != nil {
-		return "", err
+	if _, builtin := bough.BuiltinSkill(path); !builtin {
+		if err := s.project.allowed("view", path); err != nil {
+			return "", err
+		}
 	}
 	out, err := readView(path, rng...)
 	if err != nil {
@@ -922,6 +930,9 @@ func (s *Stats) viewFile(path string, rng ...int) (string, error) {
 // lines start..end (1-based, inclusive; end 0 = to the end). Numbers
 // make patch targets and error lines easy to refer to.
 func readView(path string, rng ...int) (string, error) {
+	if body, ok := bough.BuiltinSkill(path); ok {
+		return readViewLines(path, bufio.NewReader(strings.NewReader(body)), rng...)
+	}
 	if st, serr := os.Stat(path); serr == nil && st.IsDir() {
 		ents, rerr := os.ReadDir(path)
 		if rerr != nil {
@@ -960,6 +971,10 @@ func readView(path string, rng ...int) (string, error) {
 		}
 		return "", fmt.Errorf("view: %s is a binary file (%d bytes); inspect it with tools.bash (file, xxd, strings)", path, sz)
 	}
+	return readViewLines(path, r, rng...)
+}
+
+func readViewLines(path string, r *bufio.Reader, rng ...int) (string, error) {
 	start, stop := 1, 0
 	if len(rng) > 0 && rng[0] > 0 {
 		start = rng[0]
@@ -1152,18 +1167,40 @@ func nearestLines(data string, at, lines int) string {
 	return b.String()
 }
 
-// pathLocks serialises patches to one file across all agents in the
-// process; entries are never freed (one small mutex per patched path).
+// pathLocks serialises native/ordinary file mutations across agents;
+// entries are never freed (one small gate per mutated path).
 var pathLocks sync.Map
 
-func lockPath(path string) func() {
+func lockPath(ctx context.Context, path string) (func(), error) {
 	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
+		path = resolveExisting(abs)
 	}
-	m, _ := pathLocks.LoadOrStore(path, &sync.Mutex{})
-	mu := m.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	m, _ := pathLocks.LoadOrStore(path, make(chan struct{}, 1))
+	gate := m.(chan struct{})
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func mutateFile(ctx context.Context, path string, mutate func() error) error {
+	canonical, err := agenttools.CanonicalFile(path)
+	if err != nil {
+		return err
+	}
+	// Take the ordinary path gate first: an uncoordinated codemode write
+	// must not make us hold the context's commit lock while waiting here.
+	unlock, err := lockPath(ctx, canonical)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := contextkit.CheckCommit(ctx); err != nil {
+		return err
+	}
+	return agenttools.MutateFile(ctx, canonical, mutate)
 }
 
 // patch replaces one exact occurrence of old with new in path. old
@@ -1184,34 +1221,49 @@ func (s *Stats) patchFile(ctx context.Context, path, old, new string) (string, e
 	if err := s.canWrite(ctx, "patch", path); err != nil {
 		return "", err
 	}
-	// Every Stats (one per agent) shares this lock, so the
-	// read-modify-write below never interleaves with another patch.
-	unlock := lockPath(path)
-	defer unlock()
+	var created bool
+	err := mutateFile(ctx, path, func() error {
+		var err error
+		old, new, created, err = patchFile(path, old, new)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	s.wrote(path)
+	if created {
+		return fmt.Sprintf("created %s (%d bytes)", path, len(new)), nil
+	}
+	return fmt.Sprintf("patched %s (%+d lines)", path,
+		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new) + s.edited(path), nil
+}
+
+// patchFile performs only the guarded read/modify/write; diagnostics and
+// diff rendering happen after the owning context's commit lock is released.
+func patchFile(path, old, new string) (string, string, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && old != "" {
-		err = withNeighbours(path, err)
+		err = patchReadError{path: path, cause: err}
 	}
 	if old == "" {
 		if err == nil {
-			return "", fmt.Errorf("patch: %s exists; give the text to replace (old) or create a new path", path)
+			return old, new, false, fmt.Errorf("patch: %s exists; give the text to replace (old) or create a new path", path)
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
+			return old, new, false, err
 		}
 		if dir := filepath.Dir(path); dir != "." {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return "", err
+				return old, new, false, err
 			}
 		}
 		if err := os.WriteFile(path, []byte(new), 0o644); err != nil {
-			return "", err
+			return old, new, false, err
 		}
-		s.wrote(path)
-		return fmt.Sprintf("created %s (%d bytes)", path, len(new)), nil
+		return old, new, true, nil
 	}
 	if err != nil {
-		return "", err
+		return old, new, false, err
 	}
 	// view hides \r, so an LF old copied from a CRLF file never matches
 	// byte-for-byte: translate old and new to the file's line endings.
@@ -1222,26 +1274,40 @@ func (s *Stats) patchFile(ctx context.Context, path, old, new string) (string, e
 	}
 	switch n := strings.Count(string(data), old); n {
 	case 0:
-		if line, ok := closestMatch(string(data), old); ok {
-			if near := nearestLines(string(data), line, 2); near != "" {
-				return "", fmt.Errorf("patch: old text not found in %s (view it and copy the exact lines) — closest match near line %d:\n%s", path, line, near)
-			}
-		}
-		return "", fmt.Errorf("patch: old text not found in %s (view it and copy the exact lines)", path)
+		return old, new, false, patchMatchError{path: path, data: string(data), old: old}
 	case 1:
 	default:
-		return "", fmt.Errorf("patch: old text occurs %d times in %s; include more surrounding lines", n, path)
+		return old, new, false, fmt.Errorf("patch: old text occurs %d times in %s; include more surrounding lines", n, path)
 	}
 	if old == new {
-		return "", fmt.Errorf("patch: old and new text are identical — no change to %s", path)
+		return old, new, false, fmt.Errorf("patch: old and new text are identical — no change to %s", path)
 	}
 	out := strings.Replace(string(data), old, new, 1)
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-		return "", err
+		return old, new, false, err
 	}
-	s.wrote(path)
-	return fmt.Sprintf("patched %s (%+d lines)", path,
-		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new) + s.edited(path), nil
+	return old, new, false, nil
+}
+
+// Error rendering can scan a directory or find the closest text match;
+// neither belongs inside the context's file-commit critical section.
+type patchReadError struct {
+	path  string
+	cause error
+}
+
+func (e patchReadError) Error() string { return withNeighbours(e.path, e.cause).Error() }
+func (e patchReadError) Unwrap() error { return e.cause }
+
+type patchMatchError struct{ path, data, old string }
+
+func (e patchMatchError) Error() string {
+	if line, ok := closestMatch(e.data, e.old); ok {
+		if near := nearestLines(e.data, line, 2); near != "" {
+			return fmt.Sprintf("patch: old text not found in %s (view it and copy the exact lines) — closest match near line %d:\n%s", e.path, line, near)
+		}
+	}
+	return fmt.Sprintf("patch: old text not found in %s (view it and copy the exact lines)", e.path)
 }
 
 // shell builds the process for a foreground command: `sh script`, on

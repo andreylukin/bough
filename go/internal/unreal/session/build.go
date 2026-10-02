@@ -56,6 +56,9 @@ func (r *Runtime) snapshot() []agenttools.Tool {
 	}
 	var out []agenttools.Tool
 	for _, t := range r.d.Tools.Tools() {
+		if t.RequiresContext && !r.cfg.CLM {
+			continue
+		}
 		if t.Name == "run_js" && r.cfg.Tools != "both" {
 			continue
 		}
@@ -77,16 +80,26 @@ func renderCall(callID string, status tool.CallStatus, ops []operation.Operation
 }
 
 // newHandler is the bough.call handler for the main session or a child.
-func (r *Runtime) newHandler(worker string, progress func(id, text string)) *boughcall.Handler {
+func (r *Runtime) newHandler(gate *Gate, worker string, progress func(id, text string)) *boughcall.Handler {
 	lookup := func(string) (agenttools.Tool, bool) { return agenttools.Tool{}, false }
 	if r.d.Tools != nil {
 		lookup = func(name string) (agenttools.Tool, bool) {
 			t, ok := r.d.Tools.Lookup(name)
-			if ok && r.cfg.CLM && (name == "write" || name == "patch") {
+			if ok && t.RequiresContext && !r.cfg.CLM {
+				return agenttools.Tool{}, false
+			}
+			if ok && r.cfg.CLM {
 				call := t.Call
 				t.Call = func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
-					r.contextFileMu.Lock()
-					defer r.contextFileMu.Unlock()
+					ctx = r.toolPolicyContext(ctx, t)
+					ctx = agenttools.WithFileMutation(ctx, r.mutateContextFile)
+					if t.RequiresContext {
+						editable, err := gate.context()
+						if err != nil {
+							return agenttools.Result{}, err
+						}
+						c.Context = authorizedContext{Capability: editable, runtime: r, path: gate.contextPath}
+					}
 					return call(ctx, c)
 				}
 			}

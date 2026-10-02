@@ -44,6 +44,9 @@ type API struct {
 	// defaults names the llm row a child started in dir mounts
 	// (SetDefaults); nil = unknown.
 	defaults func(dir string) ModelDefault
+	// contextTools reports whether the child config offers the built-in
+	// CLM workflow. It is a catalogue decision, not an execution permission.
+	contextTools func(dir string) bool
 	// brief writes today's brief now (spawnBrief); a field for the same reason.
 	brief func() error
 	// briefs counts the brief processes this serve started that have not

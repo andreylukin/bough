@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/andreylukin/bough"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/ccplugins"
 	"github.com/andreylukin/bough/plugins/commands"
@@ -30,9 +31,38 @@ const maxBlocks = 3
 // the user's installed Claude Code plugins come first, so a pool skill
 // of the same name still wins.
 type Skills struct {
-	pools []string
-	home  string // user home; "" disables plugin skills and the off switch
-	work  string // the path being worked on, for project-scoped plugins
+	pools          []string
+	home           string      // user home; "" disables plugin skills and the off switch
+	work           string      // the path being worked on, for project-scoped plugins
+	contextToolkit func() bool // composed config can change while the row stays mounted
+}
+
+// WithContextToolkit enables the bundled workflow for a caller that knows
+// its composed config. Pool skills still override the built-in by name.
+func (s *Skills) WithContextToolkit(enabled bool) *Skills {
+	s.contextToolkit = func() bool { return enabled }
+	return s
+}
+
+// ContextToolkitEnabled reads composed rows rather than an engine service:
+// skills mounts before that service and must not remount the running loop.
+func ContextToolkitEnabled(rows []kernel.Row) bool {
+	clm, tools := false, false
+	for _, row := range rows {
+		if row.Disabled {
+			continue
+		}
+		clm = clm || row.ID == "loop" && row.Plugin == "engine-clm"
+		tools = tools || row.Plugin == "context-tools"
+	}
+	return clm && tools
+}
+
+func readSkill(path string) ([]byte, error) {
+	if body, ok := bough.BuiltinSkill(path); ok {
+		return []byte(body), nil
+	}
+	return os.ReadFile(path)
 }
 
 // New returns a Skills scanning the given pool directories.
@@ -117,7 +147,7 @@ func (s *Skills) Inject(input string) []string {
 		if len(blocks) >= maxBlocks {
 			continue
 		}
-		body, err := os.ReadFile(skills[name].path)
+		body, err := readSkill(skills[name].path)
 		if err != nil {
 			// Inject runs mid-turn with the TUI owning the tty: a raw
 			// stderr write lands inside its frame and tears the screen.
@@ -160,6 +190,9 @@ func (s *Skills) scan() map[string]found {
 	plugins := len(pools) - len(s.pools)
 
 	out := map[string]found{}
+	if s.contextToolkit != nil && s.contextToolkit() {
+		out["context-toolkit"] = found{path: "builtin:context-toolkit", source: "builtin"}
+	}
 	for i, pool := range pools {
 		source := "pool"
 		if i < plugins {
@@ -204,7 +237,7 @@ func slashCommand(input, name string) bool {
 // mention (`manual: true` in its frontmatter); it is still available
 // as /name.
 func manual(path string) bool {
-	data, err := os.ReadFile(path)
+	data, err := readSkill(path)
 	if err != nil {
 		return false
 	}
@@ -222,7 +255,7 @@ func manual(path string) bool {
 // description pulls the frontmatter "description:" line of a SKILL.md
 // for the palette summary; "" when absent.
 func description(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := readSkill(path)
 	if err != nil {
 		return ""
 	}
@@ -327,6 +360,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return fmt.Errorf("skills: home dir: %w", err)
 	}
 	s := Default(home)
+	s.contextToolkit = func() bool { return ContextToolkitEnabled(ctx.Desired()) }
 	s.registerCommands(ctx)
 	s.registerPluginCommands(ctx)
 	ctx.Provide("skills", s)
@@ -338,7 +372,7 @@ type SkillInfo struct {
 	ID      string `json:"id"` // the off-switch id: the skill's name
 	Name    string `json:"name"`
 	Summary string `json:"summary"`
-	Source  string `json:"source"` // "plugin" or "pool"
+	Source  string `json:"source"` // "plugin", "pool" or "builtin"
 	Off     bool   `json:"off"`
 	Manual  bool   `json:"manual"` // only ever runs as /name, never on a mention
 }
@@ -384,8 +418,10 @@ func (s *Skills) Listing() []Listed {
 			continue
 		}
 		path := skills[name].path
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
+		if _, builtin := bough.BuiltinSkill(path); !builtin {
+			if abs, err := filepath.Abs(path); err == nil {
+				path = abs
+			}
 		}
 		desc := strings.Join(strings.Fields(description(path)), " ")
 		if r := []rune(desc); len(r) > maxListedDescription {
