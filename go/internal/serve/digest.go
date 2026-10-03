@@ -178,6 +178,10 @@ func (a *API) digest(in history.SessionInfo) *rowDigest {
 	if err != nil {
 		entries = nil
 	}
+	return a.cacheDigest(in, entries)
+}
+
+func (a *API) cacheDigest(in history.SessionInfo, entries []history.Entry) *rowDigest {
 	d := digestOf(entries, in.ModTime)
 	digests.Lock()
 	if digests.m == nil {

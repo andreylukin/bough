@@ -298,7 +298,9 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 // listSessions answers newest-first. Archived sessions are hidden
 // unless asked for: archiving is the "stop showing me this" gesture.
 func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
-	infos, err := a.sup.List()
+	// A cold list already decodes each transcript for its metadata. Reuse
+	// that parse for the digest rather than reading every history twice.
+	infos, err := a.sup.list(func(in history.SessionInfo, entries []history.Entry) { a.cacheDigest(in, entries) })
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: list sessions: %w", err))
 		return

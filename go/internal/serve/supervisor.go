@@ -437,7 +437,11 @@ func (s *Supervisor) Unsaved(id string) bool {
 }
 
 func (s *Supervisor) List() ([]history.SessionInfo, error) {
-	infos, err := history.List(s.opt.HistDir)
+	return s.list(nil)
+}
+
+func (s *Supervisor) list(observe func(history.SessionInfo, []history.Entry)) ([]history.SessionInfo, error) {
+	infos, err := history.ListWithRead(s.opt.HistDir, observe)
 	if err != nil {
 		return nil, fmt.Errorf("serve: supervisor: list sessions: %w", err)
 	}
