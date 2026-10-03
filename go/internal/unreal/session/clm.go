@@ -87,7 +87,8 @@ func (g *Gate) prepareContext(req ullm.Request) (ullm.Request, string, error) {
 	if err != nil {
 		return req, "", err
 	}
-	return c.PrepareRevision(req)
+	req, task := extractTask(req)
+	return c.PrepareRevision(req, task...)
 }
 
 func (g *Gate) appendContext(out []ullm.Item) error {

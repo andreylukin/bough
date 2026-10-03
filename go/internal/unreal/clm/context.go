@@ -255,7 +255,9 @@ func (c *Context) Prepare(req ullm.Request) (ullm.Request, error) {
 }
 
 // PrepareRevision returns the content hash of this exact prepared projection.
-func (c *Context) PrepareRevision(req ullm.Request) (ullm.Request, string, error) {
+// task is the current admitted user task, supplied by the session boundary,
+// never inferred from notes, tool content, or the last user-role message.
+func (c *Context) PrepareRevision(req ullm.Request, task ...ullm.Item) (ullm.Request, string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.recover(); err != nil {
@@ -369,11 +371,29 @@ func (c *Context) PrepareRevision(req ullm.Request) (ullm.Request, string, error
 			}
 		}
 	}
+	// Keep the task and its steers in admission order even when only the
+	// latest steer is fresh. Count duplicates: two identical user inputs are
+	// still two inputs. Other fresh events retain their existing native role.
+	pinned := map[string]int{}
+	var admitted []ullm.Item
+	for _, raw := range task {
+		it, ok := clean(raw)
+		if m, user := it.Data.(ullm.Message); ok && user && m.Role == ullm.RoleUser {
+			admitted = append(admitted, it)
+			pinned[fingerprint(it)]++
+		}
+	}
 	for _, it := range fresh {
 		if m, ok := it.Data.(ullm.Message); ok && m.Role == ullm.RoleUser {
+			key := fingerprint(it)
+			if pinned[key] > 0 {
+				pinned[key]--
+				continue
+			}
 			in = append(in, it)
 		}
 	}
+	in = append(in, admitted...)
 	req.Input = in
 	return req, hashText(body), nil
 }
