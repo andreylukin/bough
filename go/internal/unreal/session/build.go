@@ -517,6 +517,9 @@ func (a *actorState) ensureRun() error {
 	}
 	model, provider := r.gate.Model()
 	b := prompt.Wrap(contextbuilder.NewBuilder(), system, prompt.Placeholder)
+	if r.cfg.CLM {
+		b = &taskBuilder{Builder: b, resolve: r.taskInput}
+	}
 	b.SetModel(ullm.Model{ID: orDefault(model, "engine")})
 	for _, def := range reg.StaticDefinitions() {
 		b.AddTool(def.Tool)

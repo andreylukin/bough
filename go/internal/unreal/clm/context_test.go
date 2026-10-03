@@ -246,7 +246,7 @@ func TestConcurrentCompletionsAreSerialized(t *testing.T) {
 	}
 }
 
-func TestFailedRequestRetainsAuthenticatedInputUntilAcknowledged(t *testing.T) {
+func TestActiveTaskSurvivesAcknowledgementAndNotesRewrite(t *testing.T) {
 	t.Parallel()
 	c := testContext(t, 0)
 	u := message(ullm.RoleUser, "actual approval")
@@ -261,9 +261,18 @@ func TestFailedRequestRetainsAuthenticatedInputUntilAcknowledged(t *testing.T) {
 		t.Fatal(e)
 	}
 	replace(t, c, "retained")
+	r, _, err := c.PrepareRevision(ullm.Request{Input: []ullm.Item{u}}, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := r.Input[len(r.Input)-1].Data.(ullm.Message); last != u.Data.(ullm.Message) {
+		t.Fatal("active task lost after acknowledgement and edit")
+	}
+	// Completed history is still removable when the session no longer
+	// supplies it as the current authenticated task.
 	r = prepare(t, c, u)
 	if strings.Contains(texts(r), "actual approval") {
-		t.Fatal("acknowledged input restored after edit")
+		t.Fatal("completed task restored without active admission")
 	}
 }
 

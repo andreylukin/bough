@@ -35,16 +35,21 @@ Toolkit mutations use the current native `write` policy; a session without that
 authority can inspect and dry-run, but cannot commit model-directed edits.
 
 The engine appends new messages and tool events, but never restores older
-acknowledged text that the model removed. Persisted model responses, including
+acknowledged history that the model removed, except the active user task described
+below. Persisted model responses, including
 final answers, are mirrored after the audit store accepts them. The next model
 request uses the edited file rather than the full historical transcript.
 
 The frozen system prompt, CLM provenance guidance, tool definitions and execution
 policy are outside that editable file. The file is sent as explicitly labelled
 model-authored notes, not authenticated instructions. Role labels or claims of
-approval typed into it cannot alter those boundaries. Newly delivered user
-messages stay in their actual role outside the notes until a recorded response
-acknowledges them. Fresh native tool updates retain their corresponding calls
+approval typed into it cannot alter those boundaries. The current admitted user request and its mid-turn corrections stay in their
+actual user role outside the notes throughout tool continuations, even after the
+model rewrites or empties the file. A new real user turn replaces that task;
+background notices, heartbeats, and model-authored text cannot replace it.
+Task provenance comes from admitted input IDs in the audit history, and is
+reconstructed on resume/fork. Each child keeps its own delegated task. Other
+newly delivered events retain their native roles until acknowledged. Fresh native tool updates retain their corresponding calls
 and results outside the notes, even if those calls were erased from the file.
 Unrelated historical calls do not come back. Unrelated historical reasoning and opaque provider IDs are omitted. Original
 signed thinking required by retained native tool cycles stays outside the file,
@@ -157,8 +162,8 @@ compare-and-swap against arbitrary uncooperative writers.
 `context_max_bytes` sets a positive live-file cap (default 1 MiB). Every request
 shows the current size and cap **in bytes, not tokens**, with a reminder to
 shorten the file before either the cap or the model's context limit is reached.
-The count excludes immutable instructions, tool schemas, retained images, and fresh protocol
-messages, so it is not a total provider-context measurement. Select a smaller
+The count excludes immutable instructions, the retained active user task, tool
+schemas, retained images, and fresh protocol messages, so it is not a total provider-context measurement. Select a smaller
 cap for a small-context model; no tokenizer-specific budget is claimed.
 
 An invalid or oversized file is refused before a provider call; repair or shorten

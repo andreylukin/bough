@@ -141,6 +141,12 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 	tools := childTools(r.snapshot(), req.Allow)
 	reg := toolreg.New(toolreg.Config{Tools: tools, ViewImage: r.viewImage(r.d.Cwd), MaxOutput: r.cfg.MaxOutput})
 	b := prompt.Wrap(contextbuilder.NewBuilder(), childSystem(r, req.System), prompt.Placeholder)
+	taskID := newInputID()
+	if r.cfg.CLM {
+		b = &taskBuilder{Builder: b, resolve: func(id string) (taskInput, bool) {
+			return taskInput{text: req.Task, start: true}, id == taskID
+		}}
+	}
 	model, _ := r.gate.Model()
 	b.SetModel(ullm.Model{ID: orDefault(model, "engine")})
 	for _, def := range reg.StaticDefinitions() {
@@ -158,7 +164,7 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 	go func() { exited <- co.Run(runCtx) }()
 
 	task, _ := json.Marshal(req.Task)
-	_ = in.Submit(runCtx, inbox.Input{ID: inbox.ID(newInputID()), Kind: inbox.InputExternal, Payload: jsontext.Value(task)})
+	_ = in.Submit(runCtx, inbox.Input{ID: inbox.ID(taskID), Kind: inbox.InputExternal, Payload: jsontext.Value(task)})
 	_ = in.Submit(runCtx, control(inbox.StopWhenIdle, "subagent finished"))
 
 	status := "done"
