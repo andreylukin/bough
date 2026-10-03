@@ -24,9 +24,9 @@ name: ci-go
 on:
   push:
     branches: [main]
-    paths: ['go/**', 'scripts/model-test.sh', '.github/workflows/ci-go.yml']
+    paths: ['go/**', 'scripts/model-test.sh', 'scripts/ci-required.py', 'scripts/ci_required_test.py', '.github/workflows/ci-go.yml']
+  # Required checks must be emitted for docs-only PRs, too.
   pull_request:
-    paths: ['go/**', 'scripts/model-test.sh', '.github/workflows/ci-go.yml']
   # Nightly: the model job's exhaustive run (every transition in the
   # browser and on the server, and the fizzbee-mbt random runs), too
   # slow to gate a push.
@@ -368,3 +368,18 @@ jobs:
           name: playwright-html-report
           path: go/tests/web/playwright-report/
           retention-days: 14
+
+  # One stable ruleset context, independent of matrix shard names. Reports
+  # can succeed after a failing shard, so require every job family directly.
+  ci-go-required:
+    if: ${{ always() }}
+    needs: [unit, cross, web-dist, model, model-history, web-e2e, web-e2e-report]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the required-check policy
+        run: python3 -m unittest discover -s scripts -p 'ci_required_test.py'
+      - name: Require every CI job to succeed
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci-required.py
