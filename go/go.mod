@@ -4,15 +4,15 @@ go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.0.9
+	charm.land/bubbletea/v2 v2.0.10
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
-	github.com/Gaurav-Gosain/sip v0.7.0
-	github.com/anthropics/anthropic-sdk-go v1.71.0
+	github.com/Gaurav-Gosain/sip v0.8.3
+	github.com/anthropics/anthropic-sdk-go v1.77.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/ultraviolet v0.0.0-20260903151058-ae99b731b8c5
 	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/charmbracelet/x/exp/golden v0.0.0-20251109135125-8916d276318f
+	github.com/charmbracelet/x/exp/golden v0.1.0
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260901172002-a5dee49b2863
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/vt v0.0.0-20260902165432-6f6ad8b37b0a
@@ -22,9 +22,9 @@ require (
 	github.com/fizzbee-io/fizzbee/mbt/lib/go v0.0.0-20251103175550-9e0bc037e5f4
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/rivo/uniseg v0.4.7
-	github.com/unreallabsai/unreal-agent v0.1.1 // b7c9bf1c5c2fa4127255c07727a7c8413e23944a (the pin; go/docs/unreal-engine.md §16)
+	github.com/unreallabsai/unreal-agent v0.2.0 // b7c9bf1c5c2fa4127255c07727a7c8413e23944a (the pin; go/docs/unreal-engine.md §16)
 	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0
@@ -51,13 +51,13 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dlclark/regexp2/v2 v2.7.1 // indirect
+	github.com/dunglas/httpsfv v1.1.1 // indirect
 	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/pprof v0.0.0-20260903180319-d6c3cb2f37ec // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.29 // indirect
@@ -71,8 +71,8 @@ require (
 	// http3.Server value API that quic-go v0.59 turned into a pointer,
 	// and v0.7.0 is sip's latest. Bumping past v0.58.1 fails the build
 	// until sip catches up.
-	github.com/quic-go/quic-go v0.58.1 // indirect
-	github.com/quic-go/webtransport-go v0.9.0 // indirect
+	github.com/quic-go/quic-go v0.63.0 // indirect
+	github.com/quic-go/webtransport-go v0.13.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
