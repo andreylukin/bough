@@ -12,9 +12,10 @@ func TestContextToolkitConfigDiscovery(t *testing.T) {
 		name, config string
 		want         bool
 	}{
-		{"default", "[]\n", true},
+		{"default", "[]\n", false},
 		{"unreal", "- id: loop\n  plugin: engine-unreal\n", false},
-		{"disabled", "- id: context-tools\n  disabled: true\n", false},
+		{"clm", "- id: loop\n  plugin: engine-clm\n", true},
+		{"disabled", "- id: loop\n  plugin: engine-clm\n- id: context-tools\n  disabled: true\n", false},
 		{"invalid", "not: [yaml", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

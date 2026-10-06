@@ -1,16 +1,17 @@
 # engine-clm: editable context on the unreal runtime
 
-CLM is the shipped default for the `loop` row. Run normally, or select it
-explicitly for a session:
+CLM is an optional engine for the `loop` row. Select it for a session:
 
 ```sh
 bough --set loop.plugin=engine-clm
 ```
 
-An existing overlay that names another engine is respected. To opt out, use
-`bough --set loop.plugin=engine-unreal` (or `plugin: engine-unreal` on the
-`loop` row). Its append-only request behavior is unchanged. The same native tools, providers, hooks, cancellation, budgets,
+An existing overlay that names another engine is respected. The default
+`engine-unreal` keeps append-only request behavior. The same native tools, providers, hooks, cancellation, budgets,
 async jobs, history, and UI are reused. Windows is unsupported, as with unreal.
+Sessions previously started on CLM resume on the new default unless their
+configuration explicitly selects `engine-clm`; their editable context files
+remain available if CLM is selected again.
 
 This is an independent, experimental **zero-shot** implementation of the core
 idea in [Context Language Models](https://arxiv.org/abs/2609.37725) (2026-09-29):

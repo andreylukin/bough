@@ -59,7 +59,7 @@ example in `plugins/example/`:
 | `drain`    | plugins/engine     | ui (headless, at stdin EOF) |
 
 `runner`, `inputs`, `cancel`, `steer` and `prompt-sections` come from
-whichever plugin the `loop` row runs: `loop`, `engine-unreal`, or the default `engine-clm` (below),
+whichever plugin the `loop` row runs: `loop`, `engine-clm`, or the default `engine-unreal` (below),
 with the same types, so ui, serve and the rest do not change.
 
 The optional seams are resolved at mount time and no-op cleanly when
@@ -180,13 +180,14 @@ where each registered tool is a JS function. Tool output feeds back to
 the LLM until it's done, and every step is emitted as a `loop/event`
 (`assistant`, `code`, `result`, `error`, `done`) that any UI renders.
 
-## The native engines (CLM by default)
+## The native engines (Unreal by default)
 
-The `loop` row defaults to `engine-clm`, which lets the model edit its own
-working-context file while preserving immutable system/tool contracts and the
-append-only audit transcript. See [docs/clm-engine.md](docs/clm-engine.md) for
-limits, image markers, provider compatibility, and recovery. Use
-`--set loop.plugin=engine-unreal` for the original append-only context engine.
+The `loop` row defaults to `engine-unreal`, which keeps an append-only
+context and audit transcript. Use `--set loop.plugin=engine-clm` for
+model-editable working context while preserving immutable system/tool
+contracts and the append-only audit transcript. See
+[docs/clm-engine.md](docs/clm-engine.md) for limits, image markers, provider
+compatibility, and recovery.
 CLM also ships six session-scoped `context_*` tools: bounded snapshot
 inspection/read/search, revision-checked batch edits and dry runs, and durable
 offload/restore. Read-only calls can run in parallel; commits coordinate only
