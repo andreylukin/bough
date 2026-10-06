@@ -169,16 +169,15 @@
 #     service: llm-small
 #     model: z-ai/glm-5.3-flash
 
-# Default engine: model-editable context on the unreal-agent harness.
-# See docs/clm-engine.md; --set loop.plugin=engine-unreal restores the
-# append-only context engine. Both use the same native asynchronous tools.
+# Default engine: append-only context on the unreal-agent harness.
+# See docs/unreal-engine.md; --set loop.plugin=engine-clm selects the
+# model-editable context engine. Both use the same native asynchronous tools.
 # The code-mode loop is still here: `--set loop.plugin=loop` (or
 # plugin: loop on this row) runs a session on it, same keys, same
 # history.
 - id: loop
-  plugin: engine-clm
+  plugin: engine-unreal
   # config:
-  #   context_max_bytes: 1048576 # editable context cap in bytes, not tokens
   #   tools: native           # native | both (both adds run_js: a JS block over the same tools)
   #   turn_settle: 60s        # a call still running this long after the model went quiet
   #                           # becomes a background job and the turn closes

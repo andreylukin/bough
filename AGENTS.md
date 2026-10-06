@@ -9,11 +9,11 @@ part that is easy to get wrong from reading the code alone.
 ## What this is
 
 bough is a coding agent for the terminal. The `loop` row runs
-`engine-clm`: model-editable context on the
+`engine-unreal`: append-only context on the
 [unreal-agent](https://github.com/unreallabsai/unreal-agent) harness
 with bough's tools as native tool calls that run asynchronously and in
-parallel ([`go/docs/clm-engine.md`](go/docs/clm-engine.md)).
-`--set loop.plugin=engine-unreal` retains the append-only unreal engine.
+parallel ([`go/docs/unreal-engine.md`](go/docs/unreal-engine.md)).
+`--set loop.plugin=engine-clm` selects the model-editable context engine.
 Everything above the kernel — the LLM provider, the engine, the tools,
 the UI, history, MCP, hooks, skills — is a row in `bough.yml` that can
 be swapped, disabled, or hot-reloaded while a session runs.
