@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { test, expect } from '../helpers/serve';
 
-for (const width of [1100, 390]) {
+test.describe('CLM toolkit', () => {
+  test.use({ serveOpts: { config: '- id: llm\n  plugin: llm-echo\n- id: loop\n  plugin: engine-clm\n' } });
+  for (const width of [1100, 390]) {
   test(`bundled context toolkit is discoverable and switchable at ${width}px`, async ({ serve, page }, info) => {
     await page.setViewportSize({ width, height: 844 });
     const id = await serve.newSession();
@@ -34,11 +36,12 @@ for (const width of [1100, 390]) {
     const enabled = await (await serve.api.get(`/api/skills?session=${id}`)).json();
     expect(enabled.skills.some((s: { name: string }) => s.name === 'context-toolkit')).toBe(true);
   });
-}
+  }
+});
 
 for (const [name, overlay] of [
-  ['append-only engine', '- id: loop\n  plugin: engine-unreal\n'],
-  ['disabled toolkit row', '- id: context-tools\n  disabled: true\n'],
+  ['default append-only engine', ''],
+  ['disabled toolkit row', '- id: loop\n  plugin: engine-clm\n- id: context-tools\n  disabled: true\n'],
 ] as const) {
   test.describe(name, () => {
     test.use({ serveOpts: { config: '- id: llm\n  plugin: llm-echo\n' + overlay } });
